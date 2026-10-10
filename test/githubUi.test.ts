@@ -1,15 +1,20 @@
 import { expect, test } from "bun:test";
 import type { GithubClone, GithubClonesResponse, GithubRepoEntry, GithubRepoList } from "../src/shared/types.ts";
-import { type AddGithubActions, AddGithubBody, AddGithubTrigger, type AddGithubView } from "../src/ui/addGithub.tsx";
+import { type AddGithubActions, AddGithubBody, AddGithubTrigger, type AddGithubView, closeAfterSubmit } from "../src/ui/addGithub.tsx";
+import { type CloneActions, CloneRow } from "../src/ui/cloneRow.tsx";
 import { NoRepos } from "../src/ui/empty.tsx";
 import { AddGithubButton } from "../src/ui/addGithub.tsx";
 import {
   AddGithubController,
   addGithubUnavailable,
   cloneOutcome,
+  cloneProgressView,
+  cloneStartedStatus,
   cloneTargets,
   createGithubClonesStore,
   filterGithubRepos,
+  formatBytes,
+  formatElapsed,
   listingNotice,
   pushedAge,
   shouldPoll,
@@ -45,10 +50,26 @@ function manualTimers() {
   return { timers, pending, fire: () => pending.shift()?.fn() };
 }
 
-test("polling runs only while a clone is cloning", () => {
+test("polling runs only while a clone is queued or cloning", () => {
   expect(shouldPoll([])).toBe(false);
-  expect(shouldPoll([{ state: "tracked" }, { state: "failed" }])).toBe(false);
+  expect(shouldPoll([{ state: "tracked" }, { state: "failed" }, { state: "cancelled" }])).toBe(false);
   expect(shouldPoll([{ state: "tracked" }, { state: "cloning" }])).toBe(true);
+  expect(shouldPoll([{ state: "queued" }])).toBe(true);
+});
+
+test("a queued clone that is cancelled counts as finished, and a cancel's answer replaces the entry at once", async () => {
+  const { timers } = manualTimers();
+  let answer: GithubClonesResponse = { clones: [clone({ id: "c1", state: "queued" })], gitAvailable: true };
+  const store = createGithubClonesStore(async () => answer, timers);
+  const finished: string[] = [];
+  store.onFinished((done) => finished.push(...done.map((c) => `${c.id}:${c.state}`)));
+  await store.refresh();
+  const seen: string[] = [];
+  store.subscribe(() => seen.push(store.get().clones[0].state));
+  answer = { clones: [clone({ id: "c1", state: "cancelled" })], gitAvailable: true };
+  await store.updated(clone({ id: "c1", state: "cancelled" }));
+  expect(seen[0]).toBe("cancelled");
+  expect(finished).toEqual(["c1:cancelled"]);
 });
 
 test("the store asks every second while a clone runs, stops once none does, and reports what finished", async () => {
@@ -153,7 +174,9 @@ test("targets show the full path and refuse bad names and duplicate folders", ()
 });
 
 test("each outcome reads in words", () => {
+  expect(cloneOutcome({ state: "queued" }).label).toBe("queued");
   expect(cloneOutcome({ state: "cloning" }).label).toBe("Cloning…");
+  expect(cloneOutcome({ state: "cancelled" }).label).toBe("clone cancelled");
   expect(cloneOutcome({ state: "tracked" }).label).toBe("tracked");
   expect(cloneOutcome({ state: "integratable" }).detail).toContain("Integrate");
   expect(cloneOutcome({ state: "failed", reason: "Repository not found." })).toMatchObject({ label: "clone failed", tone: "danger", detail: "Repository not found." });
@@ -263,9 +286,11 @@ test("Clone starts each target once; a refusal stays on its repository; another 
   expect(await dialog.submit("clone")).toBeUndefined(); // no root chosen yet
   dialog.setRoot("/w/acme");
   dialog.rename("acme/beta-soc", "beta-soc-gh");
-  await dialog.submit("clone");
+  const done = await dialog.submit("clone");
+  expect(done?.started.map((c) => c.repo)).toEqual(["acme/beta-soc"]);
   expect(dialog.get().refused["acme/taken"]).toContain("already exists");
-  expect(Object.keys(dialog.get().started)).toEqual(["acme/beta-soc"]);
+  // The accepted one leaves the choice; only the refused one stays, with its reason.
+  expect(dialog.get().chosen.map((c) => c.repo)).toEqual(["acme/taken"]);
   await dialog.submit("clone");
   expect(calls.filter((c) => c.startsWith("clone"))).toEqual(["clone acme/beta-soc /w/acme/beta-soc-gh", "clone acme/taken /w/acme/taken", "clone acme/taken /w/acme/taken"]);
 });
@@ -275,8 +300,8 @@ test("collect mode starts nothing and hands the targets back", async () => {
   const dialog = new AddGithubController(deps, ["/w/acme"]);
   dialog.setTyped("acme/beta-soc");
   dialog.addTyped();
-  const targets = await dialog.submit("collect");
-  expect(targets?.map((t) => t.path)).toEqual(["/w/acme/beta-soc"]);
+  const done = await dialog.submit("collect");
+  expect(done?.targets.map((t) => t.path)).toEqual(["/w/acme/beta-soc"]);
   expect(calls).toEqual([]);
 });
 
@@ -294,11 +319,9 @@ function body(patch: Partial<AddGithubView> = {}) {
     root: "/w/acme",
     submitting: false,
     refused: {},
-    started: {},
     mode: "clone",
     roots: ["/w/acme"],
     targets: cloneTargets([{ repo: "jdoe/alpha-infra", name: "alpha-infra" }], "/w/acme"),
-    clones: {},
     now: Date.parse("2026-10-10T10:00:00Z"),
     ...patch,
   };
@@ -316,6 +339,8 @@ test("the dialog lists repositories with their marks, the target path and Clone"
     ["jdoe/demo-ops, already added", true],
     ["Clone jdoe/alpha-infra", false],
   ]);
+  // Each row is a label, so the whole row toggles its checkbox.
+  expect(byTag(node, "label").filter((l) => l.props.class === "add-github-repo-row")).toHaveLength(2);
   const submit = byTag(node, "button").find((b) => b.props.type === "submit");
   expect(textOf(submit)).toBe("Clone 1");
   expect(submit?.props.disabled).toBe(false);
@@ -324,14 +349,137 @@ test("the dialog lists repositories with their marks, the target path and Clone"
   expect(calls).toEqual(["close"]);
 });
 
-test("a bad folder name blocks Clone; collect mode says Add; outcomes show per repository", () => {
+test("a row shows owner/name, its badges, the description on its own line and the last push", () => {
+  const repos = [entry("jdoe/demo-ops", { private: true, archived: true, description: "Operations", pushedAt: "2026-10-07T10:00:00Z" })];
+  const { node } = body({ repos, list: { status: "ok", owner: "jdoe", repos }, chosen: [], targets: [] });
+  const [row] = byTag(node, "li").filter((li) => String(li.props.class).startsWith("add-github-repo"));
+  expect(byTag(row, "span").filter((s) => String(s.props.class).startsWith("badge")).map(textOf)).toEqual(["private", "archived"]);
+  expect(textOf(byTag(row, "span").find((s) => s.props.class === "add-github-description"))).toBe("Operations");
+  expect(textOf(byTag(row, "span").find((s) => s.props.class === "add-github-pushed"))).toBe("pushed 3d ago");
+  expect(textOf(byTag(row, "span").find((s) => String(s.props.class).includes("add-github-repo-name")))).toBe("jdoe/demo-ops");
+});
+
+test("the To clone panel says so while nothing is chosen, and Clone is inactive", () => {
+  const { node } = body({ chosen: [], targets: [] });
+  const panel = byTag(node, "section").find((s) => s.props["aria-label"] === "To clone");
+  expect(textOf(panel)).toContain("Nothing chosen yet");
+  const submit = byTag(node, "button").find((b) => b.props.type === "submit");
+  expect(textOf(submit)).toBe("Clone");
+  expect(submit?.props.disabled).toBe(true);
+});
+
+test("each chosen repository has its folder, its full path, a remove control and its refusal", () => {
+  const chosen = [
+    { repo: "acme/beta-soc", name: "beta-soc" },
+    { repo: "acme/chat-groups", name: "chat-groups" },
+  ];
+  const { node, calls } = body({ chosen, targets: cloneTargets(chosen, "/w/acme"), refused: { "acme/chat-groups": "/w/acme/chat-groups already exists" } });
+  const targets = byTag(node, "li").filter((li) => String(li.props.class).startsWith("add-github-target"));
+  expect(targets.map((t) => textOf(byTag(t, "span").find((s) => String(s.props.class).includes("add-github-path"))))).toEqual(["/w/acme/beta-soc", "/w/acme/chat-groups"]);
+  expect(targets[1].props.class).toContain("refused");
+  expect(textOf(targets[1])).toContain("refused: /w/acme/chat-groups already exists");
+  expect(byTag(targets[0], "input")[0].props.value).toBe("beta-soc");
+  press(byTag(targets[1], "button").find((b) => b.props["aria-label"] === "Remove acme/chat-groups"));
+  expect(calls).toEqual(["remove acme/chat-groups"]);
+  expect(textOf(byTag(node, "button").find((b) => b.props.type === "submit"))).toBe("Clone 2");
+});
+
+test("a bad folder name blocks Clone; collect mode says Add", () => {
   const bad = body({ chosen: [{ repo: "jdoe/alpha-infra", name: "../x" }], targets: cloneTargets([{ repo: "jdoe/alpha-infra", name: "../x" }], "/w/acme") });
   expect(byTag(bad.node, "button").find((b) => b.props.type === "submit")?.props.disabled).toBe(true);
   expect(textOf(byTag(body({ mode: "collect" }).node, "button").find((b) => b.props.type === "submit"))).toBe("Add 1");
-  const done = body({ started: { "jdoe/alpha-infra": "c1" }, clones: { "jdoe/alpha-infra": clone({ id: "c1", repo: "jdoe/alpha-infra", state: "integratable" }) } });
-  expect(textOf(done.node)).toContain("cloned without OpenSpec");
-  expect(textOf(done.node)).toContain("Integrate it under Unmanaged projects");
-  expect(byTag(done.node, "button").find((b) => b.props.type === "submit")).toBeUndefined();
+});
+
+test("Clone closes the dialog once every clone was accepted and the overview says how many; a refusal keeps it open", async () => {
+  const { deps } = fakeDeps({});
+  const dialog = new AddGithubController(deps, ["/w/acme"]);
+  dialog.setTyped("acme/beta-soc");
+  dialog.addTyped();
+  dialog.setTyped("acme/chat-groups");
+  dialog.addTyped();
+  const host = () => {
+    const events: string[] = [];
+    return { events, onStarted: (n: number) => events.push(`started ${n}`), onClose: () => events.push("close"), onCollect: () => events.push("collect") };
+  };
+  const all = host();
+  closeAfterSubmit("clone", await dialog.submit("clone"), dialog.get(), all);
+  expect(all.events).toEqual(["started 2", "close"]);
+  expect(cloneStartedStatus(2)).toBe("Cloning 2 repositories — follow them under Unmanaged projects");
+  expect(cloneStartedStatus(1)).toBe("Cloning 1 repository — follow it under Unmanaged projects");
+
+  const refusing = new AddGithubController(deps, ["/w/acme"]);
+  refusing.setTyped("acme/beta-soc");
+  refusing.addTyped();
+  refusing.setTyped("acme/taken");
+  refusing.addTyped();
+  const some = host();
+  closeAfterSubmit("clone", await refusing.submit("clone"), refusing.get(), some);
+  expect(some.events).toEqual(["started 1"]);
+  expect(refusing.get().chosen.map((c) => c.repo)).toEqual(["acme/taken"]);
+
+  const collecting = new AddGithubController(deps, ["/w/acme"]);
+  collecting.setTyped("acme/beta-soc");
+  collecting.addTyped();
+  const collect = host();
+  closeAfterSubmit("collect", await collecting.submit("collect"), collecting.get(), collect);
+  expect(collect.events).toEqual(["collect", "close"]);
+});
+
+// ---- the clone row ----
+
+test("progress reads as phase, percent, amount and elapsed time; queued and connecting are indeterminate", () => {
+  const now = Date.parse("2026-10-10T10:00:40Z");
+  expect(cloneProgressView(clone({ id: "c1", state: "cloning", progress: { phase: "receiving", percent: 62, receivedBytes: 12.3 * 1024 * 1024, updatedAt: "2026-10-10T10:00:39Z" } }), now)).toEqual({
+    indeterminate: false,
+    percent: 62,
+    label: "receiving objects · 62% · 12.3 MiB · 40 s",
+    valueText: "receiving objects, 62 percent",
+  });
+  expect(cloneProgressView(clone({ id: "c1", state: "cloning", progress: { phase: "connecting", updatedAt: "2026-10-10T10:00:39Z" } }), now)).toMatchObject({ indeterminate: true, label: "connecting · 40 s", valueText: "connecting" });
+  expect(cloneProgressView(clone({ id: "c1", state: "queued" }), now)).toMatchObject({ indeterminate: true, valueText: "queued, waiting for a free slot" });
+  expect(cloneProgressView(clone({ id: "c1", state: "cloning", progress: { phase: "resolving", percent: 10, updatedAt: "2026-10-10T10:00:00Z" } }), now)?.stalled).toBe("no progress for 40 s");
+  expect(cloneProgressView(clone({ id: "c1", state: "tracked" }), now)).toBeUndefined();
+  expect(formatElapsed(125_000)).toBe("2 min 5 s");
+  expect(formatElapsed(3_780_000)).toBe("1 h 3 min");
+  expect(formatBytes(512)).toBe("512 bytes");
+  expect(formatBytes(8.11 * 1024)).toBe("8.11 KiB");
+});
+
+function cloneActions(calls: string[], busy: CloneActions["busy"] = {}): CloneActions {
+  return { busy, errors: {}, cancel: (c) => calls.push(`cancel ${c.id}`), retry: (c) => calls.push(`retry ${c.id}`), dismiss: (c) => calls.push(`dismiss ${c.id}`) };
+}
+
+test("the clone row shows each state with the actions it allows", () => {
+  const now = Date.parse("2026-10-10T10:00:40Z");
+  const row = (patch: Partial<GithubClone> & Pick<GithubClone, "state">, busy: CloneActions["busy"] = {}) => {
+    const calls: string[] = [];
+    const node = CloneRow({ clone: clone({ id: "c1", ...patch }), now, naming: "repo", actions: cloneActions(calls, busy) });
+    return { node, calls, buttons: byTag(node, "button").map(textOf), bars: byTag(node, "progress"), text: textOf(node) };
+  };
+  const queued = row({ state: "queued" });
+  expect(queued.buttons).toEqual(["Cancel"]);
+  expect(queued.bars).toHaveLength(1);
+  expect(queued.text).toContain("queued");
+  const running = row({ state: "cloning", progress: { phase: "checkout", percent: 30, updatedAt: "2026-10-10T10:00:40Z" } });
+  expect(running.buttons).toEqual(["Cancel"]);
+  expect(running.bars[0].props).toMatchObject({ value: 30, "aria-valuetext": "checking out files, 30 percent" });
+  press(byTag(running.node, "button")[0]);
+  expect(running.calls).toEqual(["cancel c1"]);
+  expect(row({ state: "cloning" }, { c1: "cancel" }).buttons).toEqual(["Cancelling…"]);
+  const tracked = row({ state: "tracked" });
+  expect(tracked.buttons).toEqual([]);
+  expect(tracked.bars).toEqual([]);
+  expect(tracked.text).toContain("tracked");
+  expect(row({ state: "integratable" }).text).toContain("Integrate it under Unmanaged projects");
+  const failed = row({ state: "failed", reason: "Repository not found." });
+  expect(failed.buttons).toEqual(["Retry", "Dismiss"]);
+  expect(failed.text).toContain("Repository not found.");
+  const cancelled = row({ state: "cancelled" });
+  expect(cancelled.buttons).toEqual(["Retry", "Dismiss"]);
+  expect(cancelled.text).toContain("clone cancelled");
+  // Named by owner/name here; by folder (with owner/name beside it) under Unmanaged projects.
+  expect(textOf(byTag(CloneRow({ clone: clone({ id: "c1", state: "queued" }), now }), "span").find((s) => s.props.class === "untracked-name"))).toBe("beta-soc");
+  expect(byTag(CloneRow({ clone: clone({ id: "c1", state: "queued" }), now }), "button")).toEqual([]);
 });
 
 test("the default timers work where setTimeout must not be called as another object's method, as in a browser", async () => {

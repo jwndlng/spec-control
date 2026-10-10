@@ -6,7 +6,7 @@ import { hasCheckoutInfo } from "./checkoutMarkers.ts";
 import { createDiscoveryStore, type DiscoveryState } from "./discoveryState.ts";
 import { NewProjectButton } from "./newProject.tsx";
 import { AddGithubButton } from "./addGithub.tsx";
-import { githubClones, useGithubClones } from "./githubClonesState.ts";
+import { githubClones, useCloneActions, useGithubClones } from "./githubClonesState.ts";
 import { relTime } from "./format.ts";
 import {
   filterRows,
@@ -47,7 +47,7 @@ import { branchNotice } from "./pullState.ts";
 import { repoPath } from "./routes.ts";
 import { useSessionUi } from "./sessions.tsx";
 import { summarize } from "./sharedConfigState.ts";
-import { type Tracking, UnmanagedSection, useCloneActions, useTracking } from "./untracked.tsx";
+import { type Tracking, UnmanagedSection, useTracking } from "./untracked.tsx";
 import { currentQuery, followInApp, href, hrefWithQuery, navigate, replaceQuery } from "./url.ts";
 
 /** Plain left-click only, so modifier-clicks and text selection keep their browser behaviour. */

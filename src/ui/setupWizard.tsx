@@ -7,8 +7,9 @@ import { agentInstallSteps } from "../shared/agentDefaults.ts";
 import { PROJECT_SETTINGS, type ProjectSetting, settingApplies } from "../shared/repoSettings.ts";
 import type { AgentAvailability, AgentProfile, Config, DiscoverResult, EnvironmentReport, GithubClone, InstructionStep, RepoConfig, SetupState, Snapshot } from "../shared/types.ts";
 import { AddGithubDialog } from "./addGithub.tsx";
-import { githubClones, useGithubClones } from "./githubClonesState.ts";
-import { cloneOutcome } from "./githubState.ts";
+import { type CloneActions, CloneRow } from "./cloneRow.tsx";
+import { githubClones, useCloneActions, useGithubClones } from "./githubClonesState.ts";
+import { cloneOutcome, isCloneActive, joinPath } from "./githubState.ts";
 import { AgentSessionsStatement } from "./agentSettings.tsx";
 import { api } from "./api.ts";
 import { CommandSteps } from "./commandSteps.tsx";
@@ -274,6 +275,7 @@ export function WorkspaceStep({
   onAddGithub = () => {},
   onRemoveGithub = () => {},
   onRetryGithub = () => {},
+  onRenameGithub = () => {},
 }: {
   view: WorkspaceView;
   onInput: (text: string) => void;
@@ -288,6 +290,8 @@ export function WorkspaceStep({
   onAddGithub?: () => void;
   onRemoveGithub?: (path: string) => void;
   onRetryGithub?: (path: string) => void;
+  /** A refused repository's folder name, edited before trying again. */
+  onRenameGithub?: (path: string, name: string) => void;
 }) {
   const candidates = view.discovery?.candidates ?? [];
   const integratable = view.discovery?.integratable.length ?? 0;
@@ -400,8 +404,17 @@ export function WorkspaceStep({
                 const outcome = clone ? cloneOutcome(clone) : undefined;
                 const failed = refused !== undefined || clone?.state === "failed";
                 return (
-                  <li key={r.path} class={failed ? "missing" : ""}>
+                  <li key={`${r.repo} ${r.root}`} class={failed ? "missing" : ""}>
                     <code>{r.repo}</code>
+                    {refused !== undefined && (
+                      <input
+                        class="input setup-github-folder"
+                        value={r.name}
+                        aria-label={`Folder name for ${r.repo}`}
+                        title="Rename the folder, then continue or retry"
+                        onInput={(e) => onRenameGithub(r.path, (e.target as HTMLInputElement).value)}
+                      />
+                    )}
                     <span class="hint mono">→ {r.path}</span>
                     {outcome ? (
                       <span class={`badge ${outcome.tone}`} title={outcome.detail}>
@@ -977,7 +990,22 @@ const STEP_ICON = Object.fromEntries(WELCOME_FLOW.map(({ name, Icon }) => [name,
  * The ending: a headline with a large check mark, one card per step with its icon, outcome and mark, and what comes
  * next. `firstStart` adds that the tour follows.
  */
-export function DoneStep({ summary, firstStart = false, home }: { summary: SetupSummary; firstStart?: boolean; home?: string }) {
+export function DoneStep({
+  summary,
+  firstStart = false,
+  home,
+  clones = [],
+  cloneActions,
+  now = Date.now(),
+}: {
+  summary: SetupSummary;
+  firstStart?: boolean;
+  home?: string;
+  /** The clones setup started, with their progress or outcome. */
+  clones?: readonly GithubClone[];
+  cloneActions?: CloneActions;
+  now?: number;
+}) {
   const cards = doneCards(summary, home);
   const left = leftToFix(summary);
   return (
@@ -1016,35 +1044,26 @@ export function DoneStep({ summary, firstStart = false, home }: { summary: Setup
           );
         })}
       </ul>
+      {clones.length > 0 && (
+        <section class="setup-done-clones" aria-label="GitHub clones">
+          <h3 class="setup-done-clones-title">GitHub clones</h3>
+          <ul class="untracked-list clone-list">
+            {clones.map((clone) => (
+              <CloneRow key={clone.id} clone={clone} now={now} naming="repo" actions={cloneActions} />
+            ))}
+          </ul>
+        </section>
+      )}
       <p class="setup-done-next">
-        <strong>What's next:</strong> Finish opens the projects overview{firstStart ? ", and the first time a short tour of the board" : ""}. Change any of this later in
-        Settings or behind a project's gear, or run setup again from Help.
+        <strong>What's next:</strong> Finish opens the projects overview{firstStart ? ", and the first time a short tour of the board" : ""}.
+        {summary.clonesRunning > 0 && ` ${summary.clonesRunning === 1 ? "The clone still running goes" : "The clones still running go"} on; follow ${summary.clonesRunning === 1 ? "it" : "them"} under Unmanaged projects.`} Change
+        any of this later in Settings or behind a project's gear, or run setup again from Help.
       </p>
     </div>
   );
 }
 
 const STEP = { welcome: 0, system: 1, workspace: 2, agents: 3, console: 4, projects: 5, done: 6 } as const;
-
-/** Resolves with the clones `ids` once none of them is cloning any more, as the clone list reports them. */
-function waitForClones(ids: readonly string[]): Promise<Map<string, GithubClone>> {
-  const settled = () => {
-    const known = new Map(githubClones.get().clones.map((c) => [c.id, c]));
-    return ids.every((id) => known.get(id)?.state !== "cloning") ? known : undefined;
-  };
-  if (ids.length === 0) return Promise.resolve(new Map());
-  return new Promise((resolve) => {
-    const check = () => {
-      const done = settled();
-      if (!done) return false;
-      unsubscribe();
-      resolve(done);
-      return true;
-    };
-    const unsubscribe = githubClones.subscribe(() => void check());
-    if (!check()) void githubClones.refresh();
-  });
-}
 
 /**
  * The wizard. `onSaved` receives every configuration a step saved; `onClose` is told whether setup could be marked done
@@ -1085,6 +1104,16 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
   const [cloneIds, setCloneIds] = useState<Record<string, string>>({});
   const [cloneRefused, setCloneRefused] = useState<Record<string, string>>({});
   const clones = useGithubClones();
+  const cloneActions = useCloneActions();
+  // A clone setup started that uses OpenSpec was tracked by the server: read the configuration it changed, so the later
+  // steps see the project.
+  useEffect(
+    () =>
+      githubClones.onFinished((done) => {
+        if (done.some((c) => c.state === "tracked")) void api.config().then(onSaved, () => {});
+      }),
+    [onSaved],
+  );
 
   // Agents.
   const [availability, setAvailability] = useState<{ agents: AgentAvailability[]; presets: AgentAvailability[] }>();
@@ -1339,7 +1368,6 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
             setCloneIds((was) => ({ ...was, [clone.path]: clone.id }));
             void githubClones.started(clone);
           },
-          waitForClones,
           onSaved,
         },
       );
@@ -1357,8 +1385,9 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
         rootsCreated: [...was.rootsCreated, ...result.created],
         tracked: was.tracked + result.tracked,
         cloned: [...was.cloned, ...result.cloned],
+        clonePaths: [...was.clonePaths, ...result.clonePaths],
       }));
-      // Saved: what was entered is configured now, whether or not the clones keep the step open.
+      // Saved: what was entered is configured now, whether or not a refused clone keeps the step open.
       if (result.saved) {
         setEntered([]);
         setUnchecked(new Set());
@@ -1542,6 +1571,12 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
           }}
           onAddGithub={() => setGithubOpen(true)}
           onRemoveGithub={(path) => setListed(listed.filter((r) => r.path !== path))}
+          onRenameGithub={(path, name) => {
+            const to = joinPath(listed.find((r) => r.path === path)?.root ?? "", name.trim());
+            setListed(listed.map((r) => (r.path === path ? { ...r, name: name.trim(), path: to } : r)));
+            // The refusal follows the row, so its reason stays in view while the name is edited.
+            setCloneRefused(({ [path]: reason, ...rest }) => (reason === undefined ? rest : { ...rest, [to]: reason }));
+          }}
           onRetryGithub={(path) => {
             const r = listed.find((l) => l.path === path);
             if (r) void startClone(r);
@@ -1642,9 +1677,18 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
       </WizardFrame>
     );
   }
+  // The clones setup started, as the clone list reports them now; a retry keeps the folder, so they are found by path.
+  const setupClones = clones.clones.filter((c) => saved.clonePaths.includes(c.path));
   return (
     <WizardFrame {...frame} onContinue={() => void finish()} continueLabel="Finish">
-      <DoneStep summary={setupSummary(config, saved, report, missingAgents.map((c) => c.name))} firstStart={info?.pending === true} home={info?.home} />
+      <DoneStep
+        summary={setupSummary(config, saved, report, missingAgents.map((c) => c.name), setupClones.filter(isCloneActive).length)}
+        firstStart={info?.pending === true}
+        home={info?.home}
+        clones={setupClones}
+        cloneActions={cloneActions}
+        now={Date.now()}
+      />
     </WizardFrame>
   );
 }

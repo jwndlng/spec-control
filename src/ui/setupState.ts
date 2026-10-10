@@ -354,13 +354,15 @@ export interface SetupSaved {
   /** The roots among `rootsAdded` that setup created as new folders. */
   rootsCreated: string[];
   tracked: number;
-  /** `owner/name` of every GitHub repository setup cloned. */
+  /** `owner/name` of every GitHub repository whose clone setup started. */
   cloned: string[];
+  /** Their target folders, which a retry keeps: how the Done step finds them in the clone list. */
+  clonePaths: string[];
   agentsAdded: string[];
   projectsChanged: number;
 }
 
-export const NOTHING_SAVED: SetupSaved = { rootsAdded: [], rootsCreated: [], tracked: 0, cloned: [], agentsAdded: [], projectsChanged: 0 };
+export const NOTHING_SAVED: SetupSaved = { rootsAdded: [], rootsCreated: [], tracked: 0, cloned: [], clonePaths: [], agentsAdded: [], projectsChanged: 0 };
 
 /** What the Done step reports: what setup saved, and the checks and agents still needing attention. */
 export interface SetupSummary extends SetupSaved {
@@ -376,15 +378,18 @@ export interface SetupSummary extends SetupSaved {
   remaining: string[];
   /** Names of the checked agents whose executable the Agents step last found missing. */
   agentsMissing: string[];
+  /** How many of the clones setup started are still queued or running. */
+  clonesRunning: number;
 }
 
-export function setupSummary(config: Config | null, saved: SetupSaved, report?: EnvironmentReport, agentsMissing: readonly string[] = []): SetupSummary {
+export function setupSummary(config: Config | null, saved: SetupSaved, report?: EnvironmentReport, agentsMissing: readonly string[] = [], clonesRunning = 0): SetupSummary {
   const sessions = config?.agentSessions;
   return {
     rootsAdded: [...saved.rootsAdded],
     rootsCreated: [...saved.rootsCreated],
     tracked: saved.tracked,
     cloned: [...saved.cloned],
+    clonePaths: [...saved.clonePaths],
     agentsAdded: [...saved.agentsAdded],
     projectsChanged: saved.projectsChanged,
     agentSessions: sessions?.enabled === true,
@@ -394,6 +399,7 @@ export function setupSummary(config: Config | null, saved: SetupSaved, report?: 
     checked: report !== undefined,
     remaining: (report?.checks ?? []).filter((c) => c.status === "problem" || c.status === "warning").map((c) => c.label),
     agentsMissing: [...agentsMissing],
+    clonesRunning,
   };
 }
 
@@ -449,11 +455,20 @@ export function doneCards(summary: SetupSummary, home?: string): DoneCard[] {
     {
       step: "Workspace",
       mark: workspaceChanged ? "done" : "unchanged",
-      outcome: summary.tracked > 0 ? plural(summary.tracked, "project", "projects") : summary.cloned.length > 0 ? `${summary.cloned.length} cloned` : "No change",
+      outcome:
+        summary.tracked > 0
+          ? plural(summary.tracked, "project", "projects")
+          : summary.cloned.length > 0
+            ? `${summary.cloned.length} ${summary.clonesRunning > 0 ? "cloning" : "cloned"}`
+            : "No change",
       detail: [
         workspaceDetail,
         summary.rootsCreated.length > 0 ? `created ${listed(summary.rootsCreated.map(short))}` : "",
-        summary.cloned.length > 0 ? `cloned ${listed(summary.cloned)} from GitHub` : "",
+        summary.cloned.length > 0
+          ? summary.clonesRunning > 0
+            ? `cloning ${listed(summary.cloned)} from GitHub, ${summary.clonesRunning} still running`
+            : `cloned ${listed(summary.cloned)} from GitHub`
+          : "",
       ]
         .filter(Boolean)
         .join("; ")
@@ -510,7 +525,7 @@ export interface WorkspaceContinueInput {
   listed: readonly ListedRepo[];
   /** Clones started for listed paths on an earlier Continue or a retry. */
   cloneIds: Readonly<Record<string, string>>;
-  /** Listed paths whose clone the server refused to start; tried again only by a retry. */
+  /** Listed paths whose clone the server refused to start; tried again on the next Continue or a retry. */
   cloneRefused: Readonly<Record<string, string>>;
 }
 
@@ -522,8 +537,6 @@ export interface WorkspaceContinueDeps {
   cloneGithub(repo: string, root: string, name: string): Promise<GithubClone>;
   /** Tells the clone list a clone started, so it is polled. */
   started(clone: GithubClone): void;
-  /** Resolves once none of `ids` is cloning, with every clone the list knows. */
-  waitForClones(ids: readonly string[]): Promise<Map<string, GithubClone>>;
   /** Every configuration saved on the way. */
   onSaved(config: Config): void;
 }
@@ -542,8 +555,10 @@ export interface WorkspaceContinueResult {
   tracked: number;
   cloneIds: Record<string, string>;
   cloneRefused: Record<string, string>;
-  /** `owner/name` of the clones that succeeded, once the step moves on. */
+  /** `owner/name` of the clones started for the listed repositories, once the step moves on. */
   cloned: string[];
+  /** Their target folders. */
+  clonePaths: string[];
 }
 
 const failureText = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -551,12 +566,28 @@ const isTaken = (err: unknown) => (err as { status?: number })?.status === 409 &
 
 /**
  * The Workspace step's Continue, in the order the setup-wizard spec gives: create each folder marked to be created,
- * save the roots, track the checked projects, then clone each listed repository not tried yet and wait for every clone
- * of the step. A refused creation — or a folder that turned out to be there already — saves nothing. A clone that is
- * refused or fails keeps the step open; the next Continue then moves on without cloning what succeeded.
+ * save the roots, track the checked projects, then start the clone of each listed repository not accepted yet — and
+ * move on without waiting for any of them: the clones go on in the background, and the Done step shows them. A refused
+ * creation — or a folder that turned out to be there already — saves nothing. A clone the server refuses to start keeps
+ * the step open; the next Continue tries it again (its folder may have been renamed) without starting again what was
+ * already accepted.
  */
 export async function continueWorkspaceStep(input: WorkspaceContinueInput, deps: WorkspaceContinueDeps): Promise<WorkspaceContinueResult> {
-  const result: WorkspaceContinueResult = { outcome: "stay", saved: false, created: [], nowThere: [], createErrors: new Map(), rootsAdded: [], tracked: 0, cloneIds: { ...input.cloneIds }, cloneRefused: { ...input.cloneRefused }, cloned: [] };
+  const listedPaths = new Set(input.listed.map((r) => r.path));
+  const result: WorkspaceContinueResult = {
+    outcome: "stay",
+    saved: false,
+    created: [],
+    nowThere: [],
+    createErrors: new Map(),
+    rootsAdded: [],
+    tracked: 0,
+    cloneIds: { ...input.cloneIds },
+    // A refusal of a folder no longer listed — renamed or removed since — is forgotten.
+    cloneRefused: Object.fromEntries(Object.entries(input.cloneRefused).filter(([path]) => listedPaths.has(path))),
+    cloned: [],
+    clonePaths: [],
+  };
   let appeared = false;
   for (const root of input.entered.filter((r) => input.toCreate.has(r))) {
     try {
@@ -587,30 +618,20 @@ export async function continueWorkspaceStep(input: WorkspaceContinueInput, deps:
   if (result.tracked > 0) deps.onSaved(current);
   result.saved = true;
 
-  const attempted = input.listed.filter((r) => !result.cloneIds[r.path] && result.cloneRefused[r.path] === undefined);
-  let refusedNow = false;
-  for (const r of attempted) {
+  for (const r of input.listed.filter((l) => !result.cloneIds[l.path])) {
     try {
       const clone = await deps.cloneGithub(r.repo, r.root, r.name);
       result.cloneIds[r.path] = clone.id;
+      delete result.cloneRefused[r.path];
       deps.started(clone);
     } catch (err) {
       result.cloneRefused[r.path] = failureText(err);
-      refusedNow = true;
     }
   }
-  const ids = input.listed.flatMap((r) => (result.cloneIds[r.path] ? [result.cloneIds[r.path]] : []));
-  const outcomes = ids.length > 0 ? await deps.waitForClones(ids) : new Map<string, GithubClone>();
-  const failedNow = attempted.some((r) => result.cloneIds[r.path] && outcomes.get(result.cloneIds[r.path])?.state === "failed");
-  if (refusedNow || failedNow) return result;
-  const succeeded = input.listed.flatMap((r) => {
-    const clone = result.cloneIds[r.path] ? outcomes.get(result.cloneIds[r.path]) : undefined;
-    return clone && (clone.state === "tracked" || clone.state === "integratable") ? [clone] : [];
-  });
-  // A clone that uses OpenSpec was tracked by the server: read the configuration it changed.
-  if (succeeded.length > 0) deps.onSaved(await deps.config());
-  result.cloned = succeeded.map((c) => c.repo);
-  result.tracked += succeeded.filter((c) => c.state === "tracked").length;
+  if (Object.keys(result.cloneRefused).length > 0) return result;
+  const started = input.listed.filter((r) => result.cloneIds[r.path]);
+  result.cloned = started.map((r) => r.repo);
+  result.clonePaths = started.map((r) => r.path);
   result.outcome = "next";
   return result;
 }
