@@ -106,6 +106,8 @@ export interface Api {
   cloneGithub(repo: string, root: string, name: string): Promise<GithubClone>;
   /** Read-only, in memory: the clones since the dashboard started, and whether git is on this machine. */
   githubClones(): Promise<GithubClonesResponse>;
+  /** Cancels a queued or running clone; answers its entry once it is `cancelled`. */
+  cancelGithubClone(id: string): Promise<GithubClone>;
   /** Drops a finished clone's entry; the folder is never touched. */
   dismissGithubClone(id: string): Promise<{ clones: GithubClone[] }>;
   /** What the server last learned about newer releases (openspec/specs/update-notice). Contacts no network. */
@@ -283,6 +285,7 @@ export const httpApi: Api = {
   listGithubRepos: (owner) => call<GithubRepoList>("/api/github/repos", { method: "POST", body: JSON.stringify(owner ? { owner } : {}) }),
   cloneGithub: (repo, root, name) => call<GithubClone>("/api/github/clone", { method: "POST", body: JSON.stringify({ repo, root, name }) }),
   githubClones: () => call<GithubClonesResponse>("/api/github/clones"),
+  cancelGithubClone: (id) => call<GithubClone>("/api/github/clones/cancel", { method: "POST", body: JSON.stringify({ id }) }),
   dismissGithubClone: (id) => call<{ clones: GithubClone[] }>("/api/github/clones/dismiss", { method: "POST", body: JSON.stringify({ id }) }),
   updateStatus: () => call<UpdateStatus>("/api/update"),
   checkForUpdate: () => call<UpdateStatus>("/api/update/check", { method: "POST" }),
@@ -379,6 +382,7 @@ export const api: Api = {
   listGithubRepos: (owner) => current.listGithubRepos(owner),
   cloneGithub: (...args) => current.cloneGithub(...args),
   githubClones: () => current.githubClones(),
+  cancelGithubClone: (id) => current.cancelGithubClone(id),
   dismissGithubClone: (id) => current.dismissGithubClone(id),
   updateStatus: () => current.updateStatus(),
   checkForUpdate: () => current.checkForUpdate(),

@@ -4,7 +4,7 @@ import { labelKey, labelProblem, MAX_LABEL_COLORS } from "../../shared/labels.ts
 import { availableName } from "../../shared/nameHints.ts";
 import { summarizeWorkInProgress } from "../../shared/workInProgress.ts";
 import { AUTO_FETCH_SECONDS, DEFAULT_AUTO_FETCH_SECONDS } from "../../shared/types.ts";
-import type { ChangeSnapshot, Config, DismissFile, DismissPreview, FolderPickResult, GithubClone, GithubRepoEntry, IntegratableRepo, PullBlockingFile, PullResult, RepoConfig, RepoSharedConfig, RepoSnapshot, SharedConfigApplyResult, SharedConfigPreview, SharedProfile, Snapshot, UpdateStatus } from "../../shared/types.ts";
+import type { ChangeSnapshot, Config, DismissFile, DismissPreview, FolderPickResult, GithubClone, GithubCloneProgress, GithubRepoEntry, IntegratableRepo, PullBlockingFile, PullResult, RepoConfig, RepoSharedConfig, RepoSnapshot, SharedConfigApplyResult, SharedConfigPreview, SharedProfile, Snapshot, UpdateStatus } from "../../shared/types.ts";
 import { parseGithubRepo } from "../../shared/github.ts";
 import { isProjectName } from "../../shared/types.ts";
 import { ApiError, type Api, labelLists } from "../api.ts";
@@ -260,8 +260,18 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
   const clonedWithoutOpenSpec: IntegratableRepo[] = [];
   const createdFolders = new Set<string>();
   let cloneSeq = 1;
-  /** Long enough to see "Cloning…" on the overview. */
-  const CLONE_MS = latencyMs * 10;
+  /** Long enough to watch the progress bar on the overview. */
+  const CLONE_MS = latencyMs * 30;
+  /** Made-up progress, one report per step, spread over `CLONE_MS`. */
+  const CLONE_STEPS: Omit<GithubCloneProgress, "updatedAt">[] = [
+    { phase: "connecting" },
+    ...[12, 31, 54, 78, 100].map((percent) => ({ phase: "receiving" as const, percent, receivedBytes: Math.round(percent * 48_000) })),
+    { phase: "resolving", percent: 60 },
+    { phase: "resolving", percent: 100 },
+    { phase: "checkout", percent: 100 },
+  ];
+  /** The pending step of each running clone, so Cancel can stop it. */
+  const cloneTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** A cloned repository's board: the integrated sample repository's changes, under the clone's own id and path. */
   const clonedBoard = (id: string, name: string, path: string): RepoSnapshot => {
     const base = sample.integrated[0];
@@ -401,13 +411,15 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
         if (!isProjectName(name)) throw new ApiError(400, "the folder name must start with a letter or digit and use only letters, digits, '.', '_' and '-'");
         if (!config.scanRoots.includes(root)) throw new ApiError(404, "that is not one of the configured workspace roots");
         const path = `${root.replace(/\/+$/, "")}/${name}`;
-        const failedHere = githubClones.findIndex((c) => c.path === path && c.state === "failed");
-        if (failedHere >= 0) githubClones.splice(failedHere, 1);
+        const finishedHere = githubClones.findIndex((c) => c.path === path && (c.state === "failed" || c.state === "cancelled"));
+        if (finishedHere >= 0) githubClones.splice(finishedHere, 1);
         if (takenPaths().has(path)) throw new ApiError(409, `${path} already exists`);
         const clone: GithubClone = { id: `clone-${cloneSeq++}`, repo: parsed.repo, root, name, path, state: "cloning", startedAt: new Date(now()).toISOString() };
         githubClones.push(clone);
         const known = DEMO_GITHUB_REPOS.find((r) => r.name === parsed.name);
-        setTimeout(() => {
+        const finish = () => {
+          cloneTimers.delete(clone.id);
+          clone.progress = undefined;
           clone.finishedAt = new Date(now()).toISOString();
           if (known?.fails) {
             clone.state = "failed";
@@ -425,16 +437,34 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
             clonedWithoutOpenSpec.push({ id, path, name });
             clone.state = "integratable";
           }
-        }, CLONE_MS);
+        };
+        // A failing one gives up while still connecting, as git does when GitHub refuses.
+        const steps = known?.fails ? CLONE_STEPS.slice(0, 1) : CLONE_STEPS;
+        const advance = (step: number) => {
+          if (step >= steps.length) return finish();
+          clone.progress = { ...steps[step], updatedAt: new Date(now()).toISOString() };
+          cloneTimers.set(clone.id, setTimeout(() => advance(step + 1), CLONE_MS / steps.length));
+        };
+        advance(0);
         // As the server answers: the entry as it was when the clone started.
-        return { ...clone };
+        return structuredClone(clone);
+      }),
+    cancelGithubClone: (id) =>
+      attempt(() => {
+        const clone = githubClones.find((c) => c.id === id);
+        if (!clone) throw new ApiError(404, "no such clone");
+        if (clone.state !== "cloning" && clone.state !== "queued") throw new ApiError(409, "the clone has already finished");
+        clearTimeout(cloneTimers.get(clone.id));
+        cloneTimers.delete(clone.id);
+        Object.assign(clone, { state: "cancelled", progress: undefined, finishedAt: new Date(now()).toISOString() });
+        return structuredClone(clone);
       }),
     githubClones: () => reply({ clones: githubClones, gitAvailable: true }),
     dismissGithubClone: (id) =>
       attempt(() => {
         const at = githubClones.findIndex((c) => c.id === id);
         if (at < 0) throw new ApiError(404, "no such clone");
-        if (githubClones[at].state === "cloning") throw new ApiError(409, "the clone is still running");
+        if (githubClones[at].state === "cloning" || githubClones[at].state === "queued") throw new ApiError(409, "the clone is still running");
         githubClones.splice(at, 1);
         return { clones: githubClones };
       }),

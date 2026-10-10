@@ -432,14 +432,14 @@ test("cloning a repository with OpenSpec tracks it with sample changes; one with
   const { api } = demo();
   const started = await api.cloneGithub("acme/ledger-sync", DEMO_ROOT, "ledger-sync");
   expect(started.state).toBe("cloning");
-  await Bun.sleep(5);
+  await Bun.sleep(40);
   expect((await api.githubClones()).clones[0].state).toBe("tracked");
   const repo = (await api.state()).repos.find((r) => r.path === `${DEMO_ROOT}/ledger-sync`);
   expect(repo?.changes.length).toBeGreaterThan(0);
   expect(repo?.changes.every((c) => c.repoId === repo.id)).toBe(true);
 
   await api.cloneGithub("acme/brand-assets", DEMO_ROOT, "brand-assets");
-  await Bun.sleep(5);
+  await Bun.sleep(40);
   expect((await api.discover()).integratable.map((r) => r.path)).toContain(`${DEMO_ROOT}/brand-assets`);
   expect((await api.config()).repos.some((r) => r.path === `${DEMO_ROOT}/brand-assets`)).toBe(false);
 });
@@ -447,14 +447,14 @@ test("cloning a repository with OpenSpec tracks it with sample changes; one with
 test("one fictional repository fails; it can be retried and dismissed, and refusals are the server's", async () => {
   const { api } = demo();
   const failing = await api.cloneGithub("acme/legacy-billing", DEMO_ROOT, "legacy-billing");
-  await Bun.sleep(5);
+  await Bun.sleep(40);
   const [failed] = (await api.githubClones()).clones;
   expect(failed.state).toBe("failed");
   expect(failed.reason).toContain("gh auth setup-git");
   // Retry replaces the failed entry.
   await api.cloneGithub("acme/legacy-billing", DEMO_ROOT, "legacy-billing");
   expect((await api.githubClones()).clones).toHaveLength(1);
-  await Bun.sleep(5);
+  await Bun.sleep(40);
   const [again] = (await api.githubClones()).clones;
   expect((await api.dismissGithubClone(again.id)).clones).toEqual([]);
   await expect(api.dismissGithubClone(failing.id)).rejects.toMatchObject({ status: 404 });
@@ -476,9 +476,36 @@ test("everything Add from GitHub did is gone after a reload", async () => {
   const { api } = demo();
   await api.cloneGithub("acme/ledger-sync", DEMO_ROOT, "ledger-sync");
   await api.createWorkspaceFolder("~/Workspace");
-  await Bun.sleep(5);
+  await Bun.sleep(40);
   const fresh = demo().api;
   expect((await fresh.githubClones()).clones).toEqual([]);
   expect((await fresh.state()).repos.some((r) => r.path.endsWith("/ledger-sync"))).toBe(false);
   expect((await fresh.discover(["/home/demo/Workspace"])).errors).toHaveLength(1);
+});
+
+test("a demo clone reports progress through the phases and can be cancelled, retried and dismissed", async () => {
+  const api = createDemoApi({ latencyMs: 10 });
+  const started = await api.cloneGithub("acme/ledger-sync", DEMO_ROOT, "ledger-sync");
+  expect(started.progress?.phase).toBe("connecting");
+  await Bun.sleep(120);
+  const [running] = (await api.githubClones()).clones;
+  expect(running.state).toBe("cloning");
+  expect(running.progress?.phase).toBe("receiving");
+  expect(running.progress?.percent).toBeGreaterThan(0);
+  const cancelled = await api.cancelGithubClone(running.id);
+  expect(cancelled.state).toBe("cancelled");
+  await Bun.sleep(350);
+  // Nothing was tracked, and the cancelled entry stays cancelled.
+  expect((await api.githubClones()).clones.map((c) => c.state)).toEqual(["cancelled"]);
+  expect((await api.config()).repos.some((r) => r.path === `${DEMO_ROOT}/ledger-sync`)).toBe(false);
+  await expect(api.cancelGithubClone(running.id)).rejects.toMatchObject({ status: 409 });
+  await expect(api.cancelGithubClone("clone-404")).rejects.toMatchObject({ status: 404 });
+  // Retry replaces it and runs to the end.
+  const retried = await api.cloneGithub("acme/ledger-sync", DEMO_ROOT, "ledger-sync");
+  await expect(api.dismissGithubClone(retried.id)).rejects.toMatchObject({ status: 409 });
+  await Bun.sleep(400);
+  const [done] = (await api.githubClones()).clones;
+  expect(done).toMatchObject({ id: retried.id, state: "tracked" });
+  expect(done.progress).toBeUndefined();
+  expect((await api.dismissGithubClone(done.id)).clones).toEqual([]);
 });

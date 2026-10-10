@@ -1,9 +1,9 @@
 // Add from GitHub's decisions (openspec/specs/github-repositories), pure so they are tested without a DOM: when the
 // action is unavailable, what the repository list shows, which chosen repositories can be cloned where, how an outcome
-// reads, and the one store of running and finished clones that the dialog, the wizard and the overview all read — polled
-// every second while a clone runs, and not at all otherwise.
+// reads, how a running clone's progress reads, and the one store of clones that the dialog, the wizard and the overview
+// all read — polled every second while a clone is queued or runs, and not at all otherwise.
 import { defaultCloneFolder, isGithubOwner, parseGithubRepo } from "../shared/github.ts";
-import { type Config, type GithubClone, type GithubClonesResponse, type GithubRepoEntry, type GithubRepoList, isProjectName } from "../shared/types.ts";
+import { type Config, type GithubClone, type GithubClonePhase, type GithubClonesResponse, type GithubRepoEntry, type GithubRepoList, isProjectName } from "../shared/types.ts";
 import { relTime } from "./format.ts";
 
 /** Why **Add from GitHub** cannot be used, or `undefined`. Agent sessions play no part: a clone starts no agent. */
@@ -82,15 +82,88 @@ export function canClone(targets: readonly CloneTarget[], root: string): boolean
 /** How a clone's state reads in the dialog, the wizard and the overview. */
 export function cloneOutcome(clone: Pick<GithubClone, "state" | "reason">): { label: string; tone: "" | "success" | "warning" | "danger"; detail: string } {
   switch (clone.state) {
+    case "queued":
+      return { label: "queued", tone: "", detail: "Waiting for one of the two clone slots; git has not started yet. Cancel takes it out of the queue." };
     case "cloning":
-      return { label: "Cloning…", tone: "", detail: "git clone is running; this goes on when the dialog is closed." };
+      return { label: "Cloning…", tone: "", detail: "git clone is running in the background. Cancel stops it and removes the folder if git left it empty." };
     case "tracked":
       return { label: "tracked", tone: "success", detail: "Cloned; it uses OpenSpec, so it is tracked and on the overview." };
     case "integratable":
       return { label: "cloned without OpenSpec", tone: "warning", detail: "Cloned; it does not use OpenSpec yet — Integrate it under Unmanaged projects on the overview." };
     case "failed":
       return { label: "clone failed", tone: "danger", detail: clone.reason ?? "git gave no reason" };
+    case "cancelled":
+      return { label: "clone cancelled", tone: "", detail: clone.reason ?? "Cancelled; the empty folder was removed. Retry clones it again into the same folder." };
   }
+}
+
+/** Queued or running: the states that offer Cancel and keep the store polling. */
+export const isCloneActive = (clone: Pick<GithubClone, "state">) => clone.state === "queued" || clone.state === "cloning";
+
+/** Failed or cancelled: the states that offer Retry and Dismiss. */
+export const isCloneRetryable = (clone: Pick<GithubClone, "state">) => clone.state === "failed" || clone.state === "cancelled";
+
+/** The phase in words, as the bar and assistive technology say it. */
+export const PHASE_LABELS: Record<GithubClonePhase, string> = {
+  connecting: "connecting",
+  receiving: "receiving objects",
+  resolving: "resolving deltas",
+  checkout: "checking out files",
+};
+
+/** "40 s", "2 min 5 s", "1 h 3 min". */
+export function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s} s`;
+  if (s < 3600) return `${Math.floor(s / 60)} min ${s % 60} s`;
+  return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+}
+
+/** "12.3 MiB", in git's own units. */
+export function formatBytes(bytes: number): string {
+  const units = ["bytes", "KiB", "MiB", "GiB", "TiB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return unit === 0 ? `${value} bytes` : `${value.toFixed(value < 10 ? 2 : 1)} ${units[unit]}`;
+}
+
+/** After this long without a new report, the bar says so. */
+export const STALLED_MS = 30_000;
+
+export interface CloneProgressView {
+  /** No percentage yet (queued, connecting): the bar shows activity, not a value. */
+  indeterminate: boolean;
+  percent?: number;
+  /** What is written beside the bar: phase, percentage, amount received, elapsed time. */
+  label: string;
+  /** `aria-valuetext`: "receiving objects, 45 percent". */
+  valueText: string;
+  /** "no progress for 45 s" once git has been quiet for a while. */
+  stalled?: string;
+}
+
+/** The bar of a queued or running clone, from its entry and the page's clock; `undefined` once it has an outcome. */
+export function cloneProgressView(clone: Pick<GithubClone, "state" | "progress" | "startedAt">, now = Date.now()): CloneProgressView | undefined {
+  const started = Date.parse(clone.startedAt);
+  const elapsed = Number.isNaN(started) ? "" : formatElapsed(now - started);
+  const parts = (...items: (string | undefined)[]) => items.filter(Boolean).join(" · ");
+  if (clone.state === "queued") return { indeterminate: true, label: parts("waiting for a free slot", elapsed), valueText: "queued, waiting for a free slot" };
+  if (clone.state !== "cloning") return undefined;
+  const progress = clone.progress ?? { phase: "connecting" as const, updatedAt: clone.startedAt };
+  const phase = PHASE_LABELS[progress.phase];
+  const percent = progress.percent;
+  const quiet = now - Date.parse(progress.updatedAt);
+  return {
+    indeterminate: percent === undefined,
+    ...(percent !== undefined ? { percent } : {}),
+    label: parts(phase, percent !== undefined ? `${percent}%` : undefined, progress.receivedBytes !== undefined ? formatBytes(progress.receivedBytes) : undefined, elapsed),
+    valueText: percent !== undefined ? `${phase}, ${percent} percent` : phase,
+    ...(quiet >= STALLED_MS ? { stalled: `no progress for ${formatElapsed(quiet)}` } : {}),
+  };
 }
 
 // ---- the clones store ----
@@ -102,9 +175,9 @@ export interface GithubClonesState {
   error?: string;
 }
 
-/** Polled only while something runs: a finished list is never asked for again by itself. */
+/** Polled only while something is queued or runs: a finished list is never asked for again by itself. */
 export function shouldPoll(clones: readonly Pick<GithubClone, "state">[]): boolean {
-  return clones.some((c) => c.state === "cloning");
+  return clones.some(isCloneActive);
 }
 
 export interface Timers {
@@ -118,6 +191,8 @@ export interface GithubClonesStore {
   refresh(): Promise<void>;
   /** A clone the server just accepted: listed as running at once, so its outcome is reported even if it is quick. */
   started(clone: GithubClone): Promise<void>;
+  /** A clone the server answered for (cancelled): replaced in the list at once, then asked again. */
+  updated(clone: GithubClone): Promise<void>;
   subscribe(listener: () => void): () => void;
   /** Told about clones that were running at the last answer and have an outcome now — to rediscover and re-read the config. */
   onFinished(listener: (finished: GithubClone[]) => void): () => void;
@@ -157,9 +232,9 @@ export function createGithubClonesStore(load: () => Promise<GithubClonesResponse
       try {
         const answer = await load();
         // Read after the answer, so a clone `started` while it was on its way counts as running.
-        const running = new Set(state.clones.filter((c) => c.state === "cloning").map((c) => c.id));
+        const running = new Set(state.clones.filter(isCloneActive).map((c) => c.id));
         set({ clones: answer.clones, gitAvailable: answer.gitAvailable });
-        const finished = answer.clones.filter((c) => running.has(c.id) && c.state !== "cloning");
+        const finished = answer.clones.filter((c) => running.has(c.id) && !isCloneActive(c));
         if (finished.length > 0) for (const listener of finishedListeners) listener(finished);
       } catch (err) {
         set({ ...state, error: err instanceof Error ? err.message : String(err) });
@@ -181,6 +256,12 @@ export function createGithubClonesStore(load: () => Promise<GithubClonesResponse
     started(clone) {
       set({ ...state, clones: [...state.clones.filter((c) => c.id !== clone.id && c.path !== clone.path), clone] });
       if (inFlight) askAgain = true;
+      return refresh();
+    },
+    updated(clone) {
+      const was = state.clones.find((c) => c.id === clone.id);
+      set({ ...state, clones: state.clones.map((c) => (c.id === clone.id ? clone : c)) });
+      if (was && isCloneActive(was) && !isCloneActive(clone)) for (const listener of finishedListeners) listener([clone]);
       return refresh();
     },
     subscribe(listener) {
@@ -218,9 +299,20 @@ export interface AddGithubState {
   submitting: boolean;
   /** Per chosen repository: why the server refused it. */
   refused: Record<string, string>;
-  /** Per chosen repository: the clone the server accepted (clone mode). */
-  started: Record<string, string>;
 }
+
+/** What Clone or Add did: the targets confirmed and, in clone mode, the clones the server accepted. */
+export interface AddGithubSubmitted {
+  targets: CloneTarget[];
+  started: GithubClone[];
+}
+
+/** What the overview says once the dialog closed on Clone: polite, and gone after a few seconds. */
+export function cloneStartedStatus(count: number): string {
+  return `Cloning ${count} ${count === 1 ? "repository" : "repositories"} — follow ${count === 1 ? "it" : "them"} under Unmanaged projects`;
+}
+
+export const CLONE_STATUS_MS = 6000;
 
 export interface AddGithubDeps {
   listGithubRepos(owner?: string): Promise<GithubRepoList>;
@@ -245,7 +337,7 @@ export class AddGithubController {
     roots: readonly string[],
     private readonly taken: () => readonly string[] = () => [],
   ) {
-    this.state = { owner: "", repos: [], loading: false, query: "", typed: "", chosen: [], root: roots.length === 1 ? roots[0] : "", submitting: false, refused: {}, started: {} };
+    this.state = { owner: "", repos: [], loading: false, query: "", typed: "", chosen: [], root: roots.length === 1 ? roots[0] : "", submitting: false, refused: {} };
   }
 
   get(): AddGithubState {
@@ -350,29 +442,28 @@ export class AddGithubController {
   }
 
   /**
-   * Clone mode: starts each chosen repository not started yet, one request after another; a refusal is shown on its
-   * repository and the others still start. Collect mode: starts nothing and returns the targets. Undefined when
-   * something is still wrong.
+   * Clone mode: starts each chosen repository, one request after another; an accepted one leaves the choice, a refused
+   * one stays with its reason while the others still start. Collect mode: starts nothing and returns the targets.
+   * Undefined when something is still wrong.
    */
-  async submit(mode: AddGithubMode): Promise<CloneTarget[] | undefined> {
+  async submit(mode: AddGithubMode): Promise<AddGithubSubmitted | undefined> {
     const targets = this.targets();
     if (this.state.submitting || !canClone(targets, this.state.root)) return undefined;
-    if (mode === "collect") return targets;
+    if (mode === "collect") return { targets, started: [] };
     this.set({ submitting: true });
     const refused: Record<string, string> = {};
-    const started = { ...this.state.started };
+    const started: GithubClone[] = [];
     for (const target of targets) {
-      if (started[target.repo]) continue;
       try {
         const clone = await this.deps.cloneGithub(target.repo, this.state.root, target.name);
-        started[target.repo] = clone.id;
+        started.push(clone);
         this.deps.started(clone);
       } catch (err) {
         refused[target.repo] = errorText(err);
       }
     }
-    this.set({ submitting: false, refused, started });
-    return targets;
+    this.set({ submitting: false, refused, chosen: this.state.chosen.filter((c) => refused[c.repo] !== undefined) });
+    return { targets, started };
   }
 }
 

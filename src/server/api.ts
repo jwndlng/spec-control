@@ -1083,6 +1083,16 @@ async function postGithubClone(state: AppState, req: Request): Promise<Response>
   }
 }
 
+/** Cancel on the user's request: answers the entry once it is `cancelled`; `409` once it has an outcome. */
+async function postGithubCloneCancel(state: AppState, req: Request): Promise<Response> {
+  try {
+    return json(await githubClones(state).cancel((await readJson(req)).id));
+  } catch (err) {
+    if (err instanceof NewFolderError || err instanceof SessionError) return json({ error: err.message }, err.status);
+    throw err;
+  }
+}
+
 async function postGithubCloneDismiss(state: AppState, req: Request): Promise<Response> {
   try {
     const clones = githubClones(state);
@@ -1139,6 +1149,7 @@ export function createFetchHandler({ state, indexHtml }: AppOptions): (req: Requ
       if (req.method === "POST" && pathname === "/api/github/clone") return postGithubClone(state, req);
       // Read-only and in memory: starts no process. `gitAvailable` is a PATH lookup, so Add from GitHub can say git is missing.
       if (req.method === "GET" && pathname === "/api/github/clones") return json({ clones: state.githubClones?.list() ?? [], gitAvailable: whichOnPath("git") !== undefined });
+      if (req.method === "POST" && pathname === "/api/github/clones/cancel") return postGithubCloneCancel(state, req);
       if (req.method === "POST" && pathname === "/api/github/clones/dismiss") return postGithubCloneDismiss(state, req);
       if (req.method === "GET" && pathname === "/api/config") return json(state.config);
       if (req.method === "PUT" && pathname === "/api/config") return putConfig(state, req);

@@ -71,6 +71,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             <strong> Enable</strong> starts tracking one, and its changes appear on the boards.
           </li>
           <li>
+            Projects on GitHub? <strong>Add from GitHub</strong> on the projects overview, or in setup, clones the ones you
+            choose into a workspace root with git. The clones run in the background: Unmanaged projects, and setup's last
+            step, show each one's progress, and <strong>Cancel</strong> stops one. A clone that uses OpenSpec is tracked once
+            it has finished.
+          </li>
+          <li>
             A git repository that does not use OpenSpec yet offers <strong>Integrate</strong>: your agent runs{" "}
             <code>openspec init</code> in it, and the dashboard tracks it once <code>openspec/config.yaml</code> exists. This
             needs agent sessions to be on.
