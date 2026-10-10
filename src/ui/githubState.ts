@@ -262,6 +262,8 @@ export function createGithubClonesStore(load: () => Promise<GithubClonesResponse
       const was = state.clones.find((c) => c.id === clone.id);
       set({ ...state, clones: state.clones.map((c) => (c.id === clone.id ? clone : c)) });
       if (was && isCloneActive(was) && !isCloneActive(clone)) for (const listener of finishedListeners) listener([clone]);
+      // As for `started`: an answer already on its way predates this one and must not undo it.
+      if (inFlight) askAgain = true;
       return refresh();
     },
     subscribe(listener) {
