@@ -333,3 +333,46 @@ test("a bad folder name blocks Clone; collect mode says Add; outcomes show per r
   expect(textOf(done.node)).toContain("Integrate it under Unmanaged projects");
   expect(byTag(done.node, "button").find((b) => b.props.type === "submit")).toBeUndefined();
 });
+
+test("the default timers work where setTimeout must not be called as another object's method, as in a browser", async () => {
+  const real = globalThis.setTimeout;
+  // Like a browser's: refuses any `this` but the global object.
+  const strict = function (this: unknown, fn: () => void, ms?: number) {
+    if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+    return real(fn, ms);
+  };
+  globalThis.setTimeout = strict as unknown as typeof setTimeout;
+  try {
+    let asked = 0;
+    const store = createGithubClonesStore(async () => {
+      asked++;
+      return { clones: [clone({ id: "c1", state: asked < 2 ? "cloning" : "tracked" })], gitAvailable: true };
+    }, undefined, 5);
+    await store.refresh();
+    await Bun.sleep(40);
+    expect(asked).toBe(2);
+    expect(store.get().clones[0].state).toBe("tracked");
+  } finally {
+    globalThis.setTimeout = real;
+  }
+});
+
+test("a clone started while a poll is on its way is asked about again, so it keeps being polled", async () => {
+  const { timers, pending } = manualTimers();
+  let release: (value: GithubClonesResponse) => void = () => {};
+  let asked = 0;
+  const store = createGithubClonesStore(() => {
+    asked++;
+    if (asked === 1) return new Promise((resolve) => (release = resolve));
+    return Promise.resolve({ clones: [clone({ id: "c2", state: "cloning" })], gitAvailable: true });
+  }, timers);
+  const first = store.refresh();
+  const started = store.started(clone({ id: "c2", state: "cloning" }));
+  // The older answer does not know c2 yet.
+  release({ clones: [], gitAvailable: true });
+  await first;
+  await started;
+  expect(asked).toBe(2);
+  expect(store.get().clones.map((c) => c.id)).toEqual(["c2"]);
+  expect(pending).toHaveLength(1);
+});

@@ -127,10 +127,18 @@ export interface GithubClonesStore {
 
 export const CLONE_POLL_MS = 1000;
 
-export function createGithubClonesStore(load: () => Promise<GithubClonesResponse>, timers: Timers = { setTimeout, clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) }, intervalMs = CLONE_POLL_MS): GithubClonesStore {
+/**
+ * The page's own timers, called as plain functions: a browser refuses `setTimeout` called as a method of another object
+ * ("Illegal invocation"), which would stop the polling after its first answer.
+ */
+const BROWSER_TIMERS: Timers = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) };
+
+export function createGithubClonesStore(load: () => Promise<GithubClonesResponse>, timers: Timers = BROWSER_TIMERS, intervalMs = CLONE_POLL_MS): GithubClonesStore {
   let state: GithubClonesState = { clones: [] };
   let timer: unknown;
   let inFlight: Promise<void> | undefined;
+  /** A clone was started while a request was on its way, whose answer cannot know it yet: ask once more after it. */
+  let askAgain = false;
   const listeners = new Set<() => void>();
   const finishedListeners = new Set<(finished: GithubClone[]) => void>();
   const set = (next: GithubClonesState) => {
@@ -158,6 +166,11 @@ export function createGithubClonesStore(load: () => Promise<GithubClonesResponse
       } finally {
         inFlight = undefined;
       }
+      if (askAgain) {
+        askAgain = false;
+        await refresh();
+        return;
+      }
       schedule();
     })();
     return inFlight;
@@ -167,6 +180,7 @@ export function createGithubClonesStore(load: () => Promise<GithubClonesResponse
     refresh,
     started(clone) {
       set({ ...state, clones: [...state.clones.filter((c) => c.id !== clone.id && c.path !== clone.path), clone] });
+      if (inFlight) askAgain = true;
       return refresh();
     },
     subscribe(listener) {
