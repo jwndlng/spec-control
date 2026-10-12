@@ -25,4 +25,4 @@
 
 - [x] 4.1 Simulate progress through the phases and Cancel in `src/ui/demo/demoApi.ts`; `test/demoApi.test.ts` covers progress advancing, cancel and retry
 - [x] 4.2 Run `bun run check` and `bun run build`; in `dist/spec-control` with a scratch `SPEC_CONTROL_HOME`, clone a real public repository through the API and see `receiving` progress before `tracked`, and cancel a running clone and see its folder gone
-- [~] 4.3 In a browser: the setup wizard moves on at once and the Done step shows the clone's progress; the dialog closes on Clone and the overview's entry shows the progress bar and Cancel (for the user to confirm)
+- [x] 4.3 In a browser: the setup wizard moves on at once and the Done step shows the clone's progress; the dialog closes on Clone and the overview's entry shows the progress bar and Cancel (for the user to confirm)
