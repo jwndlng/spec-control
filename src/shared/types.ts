@@ -1359,10 +1359,25 @@ export interface GithubRepoList {
   repos: GithubRepoEntry[];
 }
 
+/** The phase of a running clone, from git's own `--progress` reports. */
+export type GithubClonePhase = "connecting" | "receiving" | "resolving" | "checkout";
+
+/** What a running clone last reported: parsed values only, never git's text. */
+export interface GithubCloneProgress {
+  phase: GithubClonePhase;
+  /** git's percentage for this phase; absent while it has given none (`connecting`). */
+  percent?: number;
+  /** Bytes received so far, when git reports them (`receiving`). */
+  receivedBytes?: number;
+  /** When the progress last changed. */
+  updatedAt: string;
+}
+
 /**
  * A clone started since the dashboard started (`GET /api/github/clones`). Kept in memory only; never an input to
- * scanning, columns or actions. `tracked`: it holds `openspec/config.yaml` and was added to the configuration;
- * `integratable`: cloned without it; `failed`: git refused or timed out.
+ * scanning, columns or actions. `queued`: waiting for one of the two slots, git not started; `tracked`: it holds
+ * `openspec/config.yaml` and was added to the configuration; `integratable`: cloned without it; `failed`: git refused
+ * or timed out; `cancelled`: the user stopped it.
  */
 export interface GithubClone {
   id: string;
@@ -1371,8 +1386,10 @@ export interface GithubClone {
   root: string;
   name: string;
   path: string;
-  state: "cloning" | "tracked" | "integratable" | "failed";
-  /** Why it failed, credentials masked. */
+  state: "queued" | "cloning" | "tracked" | "integratable" | "failed" | "cancelled";
+  /** Present while `cloning`. */
+  progress?: GithubCloneProgress;
+  /** Why it failed, credentials masked; for a cancelled clone only when its folder was left in place. */
   reason?: string;
   startedAt: string;
   finishedAt?: string;

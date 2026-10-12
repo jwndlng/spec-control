@@ -52,7 +52,7 @@ const found: DiscoverResult = {
 };
 
 function cloneActions(calls: string[], state: Partial<Pick<CloneActions, "busy" | "errors">> = {}): CloneActions {
-  return { busy: state.busy ?? {}, errors: state.errors ?? {}, retry: (e) => calls.push(`retry ${e.id}`), dismiss: (e) => calls.push(`dismiss ${e.id}`) };
+  return { busy: state.busy ?? {}, errors: state.errors ?? {}, cancel: (c) => calls.push(`cancel ${c.id}`), retry: (c) => calls.push(`retry ${c.id}`), dismiss: (c) => calls.push(`dismiss ${c.id}`) };
 }
 
 function section(patch: Partial<UntrackedSectionProps> = {}) {
@@ -213,13 +213,13 @@ const clone = (patch: Partial<GithubClone> & Pick<GithubClone, "id" | "repo" | "
   ...patch,
 });
 
-test("a running clone and a failed one are listed with their owner/name and path; only the failed one offers Retry and Dismiss", () => {
+test("a running clone and a failed one are listed with their owner/name and path; the running one offers Cancel, the failed one Retry and Dismiss", () => {
   const clones = [
-    clone({ id: "clone-1", repo: "acme/beta-soc", name: "beta-soc-gh", state: "cloning" }),
+    clone({ id: "clone-1", repo: "acme/beta-soc", name: "beta-soc-gh", state: "cloning", progress: { phase: "receiving", percent: 62, updatedAt: "2026-10-10T10:00:40Z" } }),
     clone({ id: "clone-2", repo: "acme/missing-repo", name: "missing-repo", state: "failed", reason: "Repository not found." }),
     clone({ id: "clone-3", repo: "acme/done-repo", name: "done-repo", state: "tracked" }),
   ];
-  const { view, calls } = section({ entries: untrackedEntries(config, found, clones) });
+  const { view, calls } = section({ entries: untrackedEntries(config, found, clones), now: Date.parse("2026-10-10T10:00:40Z") });
   expect(textOf(byTag(view, "h2")[0])).toBe("Unmanaged projects · 5");
   const labels = byTag(view, "span").filter((s) => String(s.props.class).includes("untracked-kind"));
   expect(labels.map(textOf)).toEqual(["OpenSpec", "Cloning…", "no OpenSpec", "disabled", "clone failed"]);
@@ -229,10 +229,35 @@ test("a running clone and a failed one are listed with their owner/name and path
   expect(text).toContain("Repository not found.");
   expect(text).not.toContain("done-repo");
   const running = byTag(view, "li")[1];
-  expect(byTag(running, "button")).toEqual([]);
+  expect(byTag(running, "button").map(textOf)).toEqual(["Cancel"]);
+  const [bar] = byTag(running, "progress");
+  expect(bar.props).toMatchObject({ max: 100, value: 62, "aria-valuetext": "receiving objects, 62 percent" });
+  expect(textOf(running)).toContain("receiving objects · 62% · 40 s");
+  expect(byTag(view, "progress")).toHaveLength(1);
+  click(button(view, "Cancel"));
   click(button(view, "Retry"));
   click(button(view, "Dismiss"));
-  expect(calls).toEqual(["retry clone-2", "dismiss clone-2"]);
+  expect(calls).toEqual(["cancel clone-1", "retry clone-2", "dismiss clone-2"]);
+});
+
+test("a queued clone offers Cancel with a waiting bar; a cancelled one is labelled and offers Retry and Dismiss", () => {
+  const clones = [
+    clone({ id: "clone-4", repo: "acme/alpha-tools", name: "alpha-tools", state: "queued" }),
+    clone({ id: "clone-5", repo: "acme/zeta-docs", name: "zeta-docs", state: "cancelled" }),
+  ];
+  const calls: string[] = [];
+  const { view } = section({ entries: untrackedEntries(config, found, clones), clones: cloneActions(calls, { busy: { "clone-4": "cancel" } }), now: Date.parse("2026-10-10T10:00:12Z") });
+  const labels = byTag(view, "span").filter((s) => String(s.props.class).includes("untracked-kind"));
+  expect(labels.map(textOf)).toEqual(["queued", "OpenSpec", "no OpenSpec", "disabled", "clone cancelled"]);
+  const queued = byTag(view, "li")[0];
+  expect(button(queued, "Cancelling…").props.disabled).toBe(true);
+  const [bar] = byTag(queued, "progress");
+  expect(bar.props.value).toBeUndefined();
+  expect(bar.props["aria-valuetext"]).toBe("queued, waiting for a free slot");
+  expect(textOf(queued)).toContain("waiting for a free slot · 12 s");
+  const cancelled = byTag(view, "li").at(-1);
+  expect(byTag(cancelled, "progress")).toEqual([]);
+  expect(byTag(cancelled, "button").map(textOf)).toEqual(["Retry", "Dismiss"]);
 });
 
 test("a retry in progress blocks the failed entry; its failure is shown on it", () => {

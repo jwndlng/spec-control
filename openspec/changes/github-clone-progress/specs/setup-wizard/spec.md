@@ -83,6 +83,10 @@ nothing.
 - **WHEN** the user lists a repository whose clone takes five minutes and continues
 - **THEN** the wizard shows the Agents step as soon as the clone has been accepted, and the clone goes on
 
+#### Scenario: A clone fails
+- **WHEN** the user lists `acme/beta-soc` and `acme/missing-repo`, continues, and the clone of `acme/missing-repo` later fails
+- **THEN** the wizard had already moved to the Agents step, and the Done step lists `acme/missing-repo` with its reason and a retry, while `acme/beta-soc` was cloned once
+
 #### Scenario: A clone is refused
 - **WHEN** the user lists `acme/beta-soc` and `acme/chat-groups`, continues, and `/w/acme/chat-groups` already exists
 - **THEN** the step stays open, `acme/beta-soc` is being cloned, and `acme/chat-groups` shows the reason with its folder name editable; after renaming it to `chat-groups-gh` and continuing, its clone starts, `acme/beta-soc` is not started a second time, and the wizard moves on

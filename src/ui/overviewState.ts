@@ -274,7 +274,7 @@ export function pendingRows(config: Config | null, snapshot: Snapshot | null): P
 }
 
 /** What an unmanaged project is, which decides the actions it is offered. */
-export type UntrackedKind = "disabled" | "discovered" | "integratable" | "cloning" | "cloneFailed";
+export type UntrackedKind = "disabled" | "discovered" | "integratable" | "clone";
 
 export interface UntrackedEntry {
   kind: UntrackedKind;
@@ -284,8 +284,8 @@ export interface UntrackedEntry {
   hint?: string;
   /** Discovered entries only: other known repositories with the same `origin`. */
   sameRemoteAs?: DiscoveredRepo["sameRemoteAs"];
-  /** Clone entries only: the clone, with its `owner/name`, root and folder, and why it failed. */
-  clone?: Pick<GithubClone, "id" | "repo" | "root" | "name" | "reason">;
+  /** Clone entries only: the clone as the clone list reports it. */
+  clone?: GithubClone;
 }
 
 /**
@@ -303,10 +303,10 @@ export function untrackedEntries(config: Config | null, discover: DiscoverResult
     ...(discover?.integratable ?? [])
       .filter((r) => !configured.has(r.id))
       .map((r): UntrackedEntry => ({ kind: "integratable", id: r.id, name: r.name, path: r.path })),
-    // Running and failed clones; a finished one is a repository like any other, found by discovery or tracked.
+    // Queued, running, failed and cancelled clones; a finished one is a repository like any other, found by discovery or tracked.
     ...clones
-      .filter((c) => c.state === "cloning" || c.state === "failed")
-      .map((c): UntrackedEntry => ({ kind: c.state === "cloning" ? "cloning" : "cloneFailed", id: c.id, name: c.name, path: c.path, clone: { id: c.id, repo: c.repo, root: c.root, name: c.name, reason: c.reason } })),
+      .filter((c) => c.state !== "tracked" && c.state !== "integratable")
+      .map((c): UntrackedEntry => ({ kind: "clone", id: c.id, name: c.name, path: c.path, clone: c })),
   ];
   return entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.path.localeCompare(b.path));
 }

@@ -1070,6 +1070,9 @@ button.badge.worktree-path.done { color: var(--success); }
 .setup-done-outcome { font-size: 16px; font-weight: 700; color: var(--fg-heading); overflow-wrap: anywhere; }
 .setup-done-detail { font-size: 13px; line-height: 1.4; color: var(--fg-subtle); overflow-wrap: anywhere; }
 .setup-done-next { padding-top: 4px; color: var(--fg-body); }
+.setup-done-clones { display: flex; flex-direction: column; gap: 8px; }
+.setup-done-clones-title { margin: 0; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-heading); }
+.setup-github-folder { width: 12rem; max-width: 100%; height: 26px; padding: 0 8px; font-size: 12px; }
 @media (max-width: 720px) and (min-width: 561px) {
   .setup-done-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .setup-done-card, .setup-done-card:nth-child(n + 4) { grid-column: auto; }
@@ -1236,14 +1239,68 @@ button.badge.worktree-path.done { color: var(--success); }
 .issue-import .issue-imported { margin: 0 0 0 26px; color: var(--fg-subtle); }
 .new-change .issue-import-name { margin-left: 26px; flex-direction: column; }
 .new-change .issue-import-name input.input { padding: 6px 9px; }
-.add-github .add-github-owner { display: flex; align-items: center; gap: 6px; font-size: 13px; }
-.add-github .add-github-owner input.input { width: 11em; }
-.add-github .add-github-description { margin: 0 0 0 26px; }
-.add-github .add-github-typed input.input { flex: 1 1 auto; min-width: 0; }
-.add-github-chosen { max-height: 260px; }
-.add-github-chosen li { flex-wrap: wrap; }
-.add-github-chosen .issue-import-name { margin-left: 0; flex-direction: row; align-items: baseline; gap: 6px; }
-.add-github-chosen .add-github-path { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+/* Add from GitHub (addGithub.tsx): the list on the left, the To clone panel on the right; stacked when narrow. */
+.modal.wide:has(.add-github) { width: min(1040px, 100%); }
+.add-github { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; padding: 20px 24px; min-height: 0; overflow-y: auto; }
+.add-github-list-panel, .add-github-panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.add-github-panel { padding: 14px; background: var(--bg-section); border: 1px solid var(--border-light); border-radius: var(--radius-lg); align-self: start; }
+.add-github-panel-title { margin: 0; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-heading); }
+.add-github-count { color: var(--fg-subtle); font-weight: 400; }
+.add-github-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.add-github-bar .btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.add-github-owner { display: inline-flex; align-items: center; gap: 6px; flex: 1 1 auto; font-size: 12px; color: var(--fg-subtle); }
+.add-github-owner span { font-weight: 600; color: var(--fg-body); }
+.add-github-owner input.input { flex: 1 1 auto; min-width: 8em; padding: 6px 9px; font-size: 13px; }
+.add-github input.input, .add-github select.input { padding: 7px 10px; border-radius: var(--radius); font-size: 13px; font-family: inherit; min-width: 0; }
+.add-github-search { width: 100%; }
+.add-github-status-line { margin: 0; min-height: 1.3em; color: var(--fg-subtle); }
+.add-github-repos { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; max-height: min(48vh, 420px); overflow-y: auto; border: 1px solid var(--border-light); border-radius: var(--radius); background: var(--bg-section); }
+.add-github-repo { border-bottom: 1px solid var(--border-light); }
+.add-github-repo:last-child { border-bottom: 0; }
+.add-github-repo.chosen { background: var(--brand-softer); }
+.add-github-repo-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; cursor: pointer; }
+.add-github-repo.added .add-github-repo-row { cursor: default; }
+.add-github-repo-row input[type="checkbox"] { margin: 3px 0 0; flex: none; }
+.add-github-repo-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.add-github-repo-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; }
+.add-github-repo-name { color: var(--fg-heading); font-size: 13px; overflow-wrap: anywhere; }
+.add-github-repo.added .add-github-repo-name { color: var(--fg-subtle); }
+.add-github-pushed { margin-left: auto; color: var(--fg-subtle); font-size: 12px; white-space: nowrap; }
+.add-github-description { color: var(--fg-subtle); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.add-github-empty { padding: 8px 10px; color: var(--fg-subtle); font-size: 13px; margin: 0; }
+.add-github-typed { display: flex; gap: 8px; }
+.add-github-typed input.input { flex: 1 1 auto; }
+.add-github-root { display: flex; flex-direction: column; gap: 4px; margin: 0; font-size: 12px; color: var(--fg-subtle); }
+.add-github-root span:first-child { font-weight: 600; color: var(--fg-body); }
+p.add-github-root { display: block; }
+.add-github-targets { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; max-height: min(40vh, 340px); overflow-y: auto; }
+.add-github-target { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; background: var(--bg-base); border: 1px solid var(--border-light); border-radius: var(--radius); }
+.add-github-target.refused { border-color: var(--danger-border); }
+.add-github-target-head { display: flex; align-items: center; gap: 6px; }
+.add-github-target-head .add-github-repo-name { flex: 1; min-width: 0; }
+.add-github-folder { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg-subtle); }
+.add-github-folder span { font-weight: 600; color: var(--fg-body); }
+.add-github-folder input.input { flex: 1; padding: 5px 8px; }
+.add-github-path { color: var(--fg-subtle); font-size: 12px; overflow-wrap: anywhere; }
+.add-github-problem { color: var(--danger); font-size: 12px; }
+.add-github-panel .row.actions { display: flex; gap: 8px; }
+@media (max-width: 760px) {
+  .add-github { grid-template-columns: minmax(0, 1fr); padding: 16px; }
+}
+/* The overview's short confirmation after Clone: under the button, gone after a few seconds. */
+.add-github-anchor { position: relative; display: inline-flex; }
+.add-github-status { position: absolute; top: calc(100% + 6px); right: 0; z-index: 5; max-width: min(360px, 80vw); padding: 0; font-size: 12px; color: var(--fg-body); }
+.add-github-status.shown { padding: 6px 10px; background: var(--bg-base); border: 1px solid var(--brand-soft); border-radius: var(--radius); box-shadow: var(--shadow-lg); }
+/* A clone's row (cloneRow.tsx) in Unmanaged projects and the setup wizard's Done step. */
+.clone-progress { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.clone-progress progress { flex: 0 1 18rem; min-width: 6rem; height: 6px; appearance: none; -webkit-appearance: none; border: 0; border-radius: 999px; background: var(--border-light); accent-color: var(--brand); overflow: hidden; }
+.clone-progress progress::-webkit-progress-bar { background: var(--border-light); border-radius: 999px; }
+.clone-progress progress::-webkit-progress-value { background: var(--brand); border-radius: 999px; transition: width 300ms ease-out; }
+.clone-progress progress::-moz-progress-bar { background: var(--brand); border-radius: 999px; }
+.clone-progress-label { color: var(--fg-subtle); font-size: 12px; font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
+.clone-progress-stalled { color: var(--warning); }
+.clone-note { grid-column: 1 / -1; color: var(--fg-subtle); font-size: 11px; }
+.clone-list { margin: 0; }
 .new-change-results li .mono { overflow-wrap: anywhere; }
 .new-change-results li { display: flex; gap: 10px; align-items: baseline; padding: 3px 10px; font-size: 13px; }
 .new-change-results .repo { font-weight: 600; color: var(--fg-heading); min-width: 0; }

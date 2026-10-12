@@ -174,6 +174,29 @@ test("a failed clone is listed as failed and leaves no folder; it can be dismiss
   await settled(slow.body.id);
 });
 
+test("cancel answers the cancelled entry, 409 once finished and 404 when unknown; the list carries progress", async () => {
+  const slow = await post("/api/github/clone", { repo: github.slowRepo, root, name: "slow-cancel" });
+  expect(slow.status).toBe(202);
+  const listed = (await clones()).find((c) => c.id === slow.body.id);
+  expect(listed?.state).toBe("cloning");
+  expect(listed?.progress?.phase).toBe("connecting");
+  expect(listed?.progress?.updatedAt).toBeDefined();
+  const cancelled = await post("/api/github/clones/cancel", { id: slow.body.id });
+  expect(cancelled.status).toBe(200);
+  expect(cancelled.body.state).toBe("cancelled");
+  expect(existsSync(join(root, "slow-cancel"))).toBe(false);
+  expect((await post("/api/github/clones/cancel", { id: slow.body.id })).status).toBe(409);
+  expect((await post("/api/github/clones/cancel", { id: "clone-404" })).status).toBe(404);
+  // A cancelled clone is dismissed like a failed one.
+  expect((await post("/api/github/clones/dismiss", { id: slow.body.id })).status).toBe(200);
+
+  const tracked = (await clones()).find((c) => c.state === "tracked");
+  expect(tracked).toBeDefined();
+  const before = await treeFingerprint(tracked?.path ?? "");
+  expect((await post("/api/github/clones/cancel", { id: tracked?.id })).status).toBe(409);
+  expect(await treeFingerprint(tracked?.path ?? "")).toBe(before);
+});
+
 test("refusals answer 400, 404 and 409 and create nothing and start no process", async () => {
   await mkdir(join(root, "taken"));
   const before = await readdir(root);
@@ -210,6 +233,12 @@ test("cross-site requests are refused with 403 and start nothing", async () => {
   expect(existsSync(join(root, "evil"))).toBe(false);
   expect(await gh.calls()).toEqual([]);
   expect(await gitCalls()).toEqual([]);
+  // A cross-site cancel leaves a running clone running.
+  const slow = await post("/api/github/clone", { repo: github.slowRepo, root, name: "slow-foreign" });
+  expect((await post("/api/github/clones/cancel", { id: slow.body.id }, foreign)).status).toBe(403);
+  expect((await clones()).find((c) => c.id === slow.body.id)?.state).toBe("cloning");
+  expect(existsSync(join(root, "slow-foreign"))).toBe(true);
+  await post("/api/github/clones/cancel", { id: slow.body.id });
 });
 
 // ---- no side effects (5.2) ----

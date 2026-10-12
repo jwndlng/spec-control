@@ -306,6 +306,7 @@ test("the Done step names what was saved and what is left", () => {
     rootsCreated: [],
     tracked: 2,
     cloned: [],
+    clonePaths: [],
     agentsAdded: ["Codex"],
     projectsChanged: 3,
     agentSessions: true,
@@ -315,6 +316,7 @@ test("the Done step names what was saved and what is left", () => {
     checked: true,
     remaining: ["GitHub CLI"],
     agentsMissing: [],
+    clonesRunning: 0,
   });
   expect(setupSummary(config, NOTHING_SAVED, report, ["Antigravity"]).agentsMissing).toEqual(["Antigravity"]);
   const withConsole: Config = { ...config, agentSessions: { ...config.agentSessions, agents: [CLAUDE_PROFILE, CODEX_PROFILE], consoleAgent: "codex" } };
@@ -325,7 +327,7 @@ test("the Done step names what was saved and what is left", () => {
 });
 
 test("the Done step's cards say how each step came out; only the System check and Agents can need attention", () => {
-  const base = { ...NOTHING_SAVED, rootsAdded: ["/w/acme"], tracked: 2, agentsAdded: ["Codex"], agentSessions: true, defaultAgent: "Claude Code", agents: 2, checked: true, remaining: [], agentsMissing: [] };
+  const base = { ...NOTHING_SAVED, rootsAdded: ["/w/acme"], tracked: 2, agentsAdded: ["Codex"], agentSessions: true, defaultAgent: "Claude Code", agents: 2, checked: true, remaining: [], agentsMissing: [], clonesRunning: 0 };
   expect(doneCards(base).map((c) => [c.step, c.mark, c.outcome])).toEqual([
     ["System check", "done", "All in place"],
     ["Workspace", "done", "2 projects"],
@@ -346,7 +348,7 @@ test("the Done step's cards say how each step came out; only the System check an
   expect(missing[2].mark).toBe("attention");
   expect(missing[2].detail).toContain("Antigravity not found");
   expect(leftToFix({ ...base, remaining: ["GitHub CLI"], agentsMissing: ["Antigravity"] })).toBe(2);
-  const nothing = doneCards({ ...NOTHING_SAVED, agentSessions: false, agents: 1, checked: false, remaining: [], agentsMissing: [] });
+  const nothing = doneCards({ ...NOTHING_SAVED, agentSessions: false, agents: 1, checked: false, remaining: [], agentsMissing: [], clonesRunning: 0 });
   expect(nothing.map((c) => c.mark)).toEqual(["attention", "unchanged", "unchanged", "unchanged", "unchanged"]);
   expect(nothing[3].detail).toBe("Available once agent sessions are on");
 });
@@ -375,16 +377,19 @@ test("~/Workspace is proposed only with no root configured and no well-known fol
 });
 
 test("the Workspace card names created folders and cloned repositories", () => {
-  const base = { ...NOTHING_SAVED, agentSessions: true, defaultAgent: "Claude Code", agents: 1, checked: true, remaining: [], agentsMissing: [] };
+  const base = { ...NOTHING_SAVED, agentSessions: true, defaultAgent: "Claude Code", agents: 1, checked: true, remaining: [], agentsMissing: [], clonesRunning: 0 };
   const card = doneCards({ ...base, rootsAdded: ["/home/demo/Workspace"], rootsCreated: ["/home/demo/Workspace"], tracked: 1, cloned: ["acme/beta-soc", "acme/chat-groups"] }, "/home/demo")[1];
   expect(card).toEqual({ step: "Workspace", mark: "done", outcome: "1 project", detail: "Tracked, from ~/Workspace; created ~/Workspace; cloned acme/beta-soc and acme/chat-groups from GitHub" });
   const onlyCloned = doneCards({ ...base, cloned: ["acme/chat-groups"] })[1];
   expect(onlyCloned).toMatchObject({ mark: "done", outcome: "1 cloned", detail: "Cloned acme/chat-groups from GitHub" });
+  // The clones setup started, and how many of them still run.
+  const running = doneCards({ ...base, cloned: ["acme/beta-soc", "acme/chat-groups"], clonesRunning: 1 })[1];
+  expect(running).toMatchObject({ mark: "done", outcome: "2 cloning", detail: "Cloning acme/beta-soc and acme/chat-groups from GitHub, 1 still running" });
 });
 
 // ---- the Workspace step's Continue with folders to create and GitHub repositories ----
 
-function continueHarness(options: { existing?: string[]; refuse?: Record<string, string>; failing?: string[]; refuseClone?: string[] } = {}) {
+function continueHarness(options: { existing?: string[]; refuse?: Record<string, string>; refuseClone?: string[] } = {}) {
   const calls: string[] = [];
   let config: Config = { ...defaultConfig() };
   let next = 1;
@@ -409,21 +414,13 @@ function continueHarness(options: { existing?: string[]; refuse?: Record<string,
     },
     cloneGithub: async (repo, root, name) => {
       calls.push(`clone ${repo}`);
-      if (options.refuseClone?.includes(repo)) throw Object.assign(new Error(`${root}/${name} already exists`), { status: 409 });
+      if (options.refuseClone?.includes(`${repo} ${name}`) || options.refuseClone?.includes(repo)) throw Object.assign(new Error(`${root}/${name} already exists`), { status: 409 });
       const id = `c${next++}`;
       const clone: GithubClone = { id, repo, root, name, path: `${root}/${name}`, state: "cloning", startedAt: "" };
       clones.set(id, clone);
       return clone;
     },
-    started: () => {},
-    waitForClones: async (ids) => {
-      calls.push(`wait ${ids.join(",")}`);
-      for (const id of ids) {
-        const c = clones.get(id);
-        if (c && c.state === "cloning") clones.set(id, { ...c, state: options.failing?.includes(c.repo) ? "failed" : c.repo.endsWith("beta-soc") ? "tracked" : "integratable" });
-      }
-      return clones;
-    },
+    started: (clone) => void calls.push(`started ${clone.id}`),
     onSaved: () => {},
   };
   return { calls, deps, config: () => config };
@@ -432,15 +429,16 @@ function continueHarness(options: { existing?: string[]; refuse?: Record<string,
 const listedRepo = (repo: string, root = "/home/demo/Workspace"): ListedRepo => ({ repo, root, name: repo.split("/")[1], path: `${root}/${repo.split("/")[1]}` });
 const workspaceInput = (patch: Partial<WorkspaceContinueInput> = {}): WorkspaceContinueInput => ({ entered: [], toCreate: new Set(), missing: new Set(), checked: [], listed: [], cloneIds: {}, cloneRefused: {}, ...patch });
 
-test("GitHub repositories into a new workspace: create, save, clone, and move on", async () => {
+test("GitHub repositories into a new workspace: create, save, start the clones and move on at once", async () => {
   const h = continueHarness();
   const root = "/home/demo/Workspace";
   const result = await continueWorkspaceStep(
     workspaceInput({ entered: [root], toCreate: new Set([root]), missing: new Set([root]), listed: [listedRepo("acme/beta-soc"), listedRepo("acme/chat-groups")] }),
     h.deps,
   );
-  expect(h.calls).toEqual([`create ${root}`, `save ${root}`, "clone acme/beta-soc", "clone acme/chat-groups", "wait c1,c2"]);
-  expect(result).toMatchObject({ outcome: "next", saved: true, created: [root], rootsAdded: [root], tracked: 1, cloned: ["acme/beta-soc", "acme/chat-groups"] });
+  // Nothing waits for a clone to finish: both are started and the step moves on.
+  expect(h.calls).toEqual([`create ${root}`, `save ${root}`, "clone acme/beta-soc", "started c1", "clone acme/chat-groups", "started c2"]);
+  expect(result).toMatchObject({ outcome: "next", saved: true, created: [root], rootsAdded: [root], tracked: 0, cloned: ["acme/beta-soc", "acme/chat-groups"], clonePaths: [`${root}/beta-soc`, `${root}/chat-groups`] });
 });
 
 test("a refused creation saves nothing and clones nothing", async () => {
@@ -464,23 +462,30 @@ test("a folder that appeared meanwhile is not created again and is saved on the 
   expect(h.calls).toEqual([`create ${root}`, `save ${root}`]);
 });
 
-test("a failed clone keeps the step open; the next Continue moves on without cloning what succeeded", async () => {
-  const h = continueHarness({ failing: ["acme/missing-repo"] });
-  const listed = [listedRepo("acme/beta-soc"), listedRepo("acme/missing-repo")];
+test("a refused clone keeps the step open with its reason; after a rename the next Continue starts it and not the accepted one again", async () => {
+  const h = continueHarness({ refuseClone: ["acme/chat-groups chat-groups"] });
+  const listed = [listedRepo("acme/beta-soc"), listedRepo("acme/chat-groups")];
   const first = await continueWorkspaceStep(workspaceInput({ listed }), h.deps);
   expect(first.outcome).toBe("stay");
   expect(first.saved).toBe(true);
-  const again = await continueWorkspaceStep(workspaceInput({ listed, cloneIds: first.cloneIds, cloneRefused: first.cloneRefused }), h.deps);
+  expect(Object.keys(first.cloneIds)).toEqual(["/home/demo/Workspace/beta-soc"]);
+  expect(first.cloneRefused["/home/demo/Workspace/chat-groups"]).toContain("already exists");
+  expect(first.cloned).toEqual([]);
+  // The user renames the refused folder; its refusal follows the row.
+  const renamed = [listed[0], { ...listed[1], name: "chat-groups-gh", path: "/home/demo/Workspace/chat-groups-gh" }];
+  const again = await continueWorkspaceStep(workspaceInput({ listed: renamed, cloneIds: first.cloneIds, cloneRefused: { "/home/demo/Workspace/chat-groups-gh": "x" } }), h.deps);
   expect(again.outcome).toBe("next");
-  expect(again.cloned).toEqual(["acme/beta-soc"]);
-  expect(h.calls.filter((c) => c.startsWith("clone"))).toEqual(["clone acme/beta-soc", "clone acme/missing-repo"]);
+  expect(again.cloneRefused).toEqual({});
+  expect(again.cloned).toEqual(["acme/beta-soc", "acme/chat-groups"]);
+  expect(again.clonePaths).toEqual(["/home/demo/Workspace/beta-soc", "/home/demo/Workspace/chat-groups-gh"]);
+  expect(h.calls.filter((c) => c.startsWith("clone"))).toEqual(["clone acme/beta-soc", "clone acme/chat-groups", "clone acme/chat-groups"]);
 });
 
-test("a refused clone keeps the step open with its reason", async () => {
-  const h = continueHarness({ refuseClone: ["acme/beta-soc"] });
-  const result = await continueWorkspaceStep(workspaceInput({ listed: [listedRepo("acme/beta-soc")] }), h.deps);
-  expect(result.outcome).toBe("stay");
-  expect(result.cloneRefused["/home/demo/Workspace/beta-soc"]).toContain("already exists");
+test("a refusal of a repository no longer listed is forgotten", async () => {
+  const h = continueHarness();
+  const result = await continueWorkspaceStep(workspaceInput({ listed: [listedRepo("acme/beta-soc")], cloneRefused: { "/home/demo/Workspace/gone": "already exists" } }), h.deps);
+  expect(result.outcome).toBe("next");
+  expect(result.cloneRefused).toEqual({});
 });
 
 test("continuing with a configured root and nothing entered, checked or listed saves, creates and clones nothing", async () => {

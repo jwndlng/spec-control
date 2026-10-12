@@ -1,16 +1,18 @@
 // The projects overview's Unmanaged projects section: one list of everything the user can bring into the overview —
-// disabled repositories, discovered OpenSpec repositories, git repositories without OpenSpec and GitHub clones running or
-// failed — each labelled with what it is and offered the actions that fit it (Enable, Ignore, Integrate, and Retry and
-// Dismiss for a failed clone), each saved at once. The view is hook-free so tests can walk it; `useTracking` and
-// `useCloneActions` hold what changes.
+// disabled repositories, discovered OpenSpec repositories, git repositories without OpenSpec and GitHub clones queued,
+// running, failed or cancelled — each labelled with what it is and offered the actions that fit it (Enable, Ignore,
+// Integrate; for a clone, Cancel while it is queued or runs and Retry and Dismiss once it failed or was cancelled), each
+// saved at once. The view is hook-free so tests can walk it; `useTracking` and `useCloneActions` hold what changes.
 import { useState } from "preact/hooks";
 import type { AutoFetchSeconds, Config, PrTitleConvention, RepoConfig } from "../shared/types.ts";
 import { api, type RepoAgentPatch } from "./api.ts";
-import { githubClones } from "./githubClonesState.ts";
+import { type CloneActions, CloneRow } from "./cloneRow.tsx";
 import { IconEyeOff } from "./icons.tsx";
 import type { DiscoveryState } from "./discoveryState.ts";
 import type { UntrackedEntry, UntrackedKind } from "./overviewState.ts";
 import { useSessionUi } from "./sessions.tsx";
+
+export type { CloneActions } from "./cloneRow.tsx";
 import { followInApp, hrefWithQuery } from "./url.ts";
 
 export type TrackingAction = "enable" | "disable" | "ignore" | "integrate" | "forget" | "rename" | "agent" | "labels" | "prTitles" | "autoFetch";
@@ -160,44 +162,6 @@ export function useTracking({ onConfig, rediscover }: { onConfig: (config: Confi
   };
 }
 
-/** Retry and Dismiss of a failed clone, by entry id. Retry clones again into the same folder under the same rules. */
-export interface CloneActions {
-  busy: Record<string, "retry" | "dismiss">;
-  errors: Record<string, string>;
-  retry(entry: UntrackedEntry): void;
-  dismiss(entry: UntrackedEntry): void;
-}
-
-export function useCloneActions(): CloneActions {
-  const [busy, setBusy] = useState<Record<string, "retry" | "dismiss">>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const run = async (id: string, action: "retry" | "dismiss", work: () => Promise<void>) => {
-    if (busy[id]) return;
-    setBusy((b) => ({ ...b, [id]: action }));
-    setErrors(({ [id]: _old, ...rest }) => rest);
-    try {
-      await work();
-    } catch (err) {
-      setErrors((e) => ({ ...e, [id]: err instanceof Error ? err.message : String(err) }));
-    } finally {
-      setBusy(({ [id]: _done, ...rest }) => rest);
-    }
-  };
-  return {
-    busy,
-    errors,
-    retry: (entry) => {
-      const clone = entry.clone;
-      if (clone) void run(entry.id, "retry", async () => githubClones.started(await api.cloneGithub(clone.repo, clone.root, clone.name)));
-    },
-    dismiss: (entry) =>
-      void run(entry.id, "dismiss", async () => {
-        await api.dismissGithubClone(entry.id);
-        await githubClones.refresh();
-      }),
-  };
-}
-
 /** Each entry says in words what it is; the tooltip says what that means and what its actions do. */
 export const KIND_LABELS: Record<UntrackedKind, { label: string; title: string }> = {
   disabled: { label: "disabled", title: "Managed before and switched off: not scanned and not on the boards. Enable brings it back." },
@@ -206,8 +170,8 @@ export const KIND_LABELS: Record<UntrackedKind, { label: string; title: string }
     label: "no OpenSpec",
     title: "A git repository that does not use OpenSpec yet. Integrate starts your agent in it to run openspec init — in the checkout itself, with no branch and no undo; it is managed once openspec/config.yaml exists.",
   },
-  cloning: { label: "Cloning…", title: "Being cloned from GitHub. One that uses OpenSpec is managed once the clone has finished; one without it is listed here to integrate." },
-  cloneFailed: { label: "clone failed", title: "Cloning from GitHub failed. Retry clones it again into the same folder; Dismiss removes this entry and nothing else." },
+  // A clone's row says its own state (`cloneOutcome`): queued, Cloning…, clone failed or clone cancelled.
+  clone: { label: "clone", title: "Being cloned from GitHub. One that uses OpenSpec is managed once the clone has finished; one without it is listed here to integrate." },
 };
 
 export const FORGET_HINT =
@@ -226,6 +190,8 @@ export interface UntrackedSectionProps {
   /** Why Integrate cannot be offered at all; stated once for the section. */
   integrateOff?: string;
   clones: CloneActions;
+  /** The page's clock, for a clone's elapsed time; refreshed by the clone list's poll. */
+  now?: number;
   /** The running integration session for a folder, if any. */
   runningIntegration: (path: string) => string | undefined;
   showIntegration: (id: string) => void;
@@ -240,48 +206,9 @@ function SettingsRootsLink({ children }: { children: string }) {
   );
 }
 
-/** A running or failed GitHub clone: what it is and where it goes; a failed one offers Retry and Dismiss, nothing else. */
-function CloneEntry({ entry, clones }: { entry: UntrackedEntry; clones: CloneActions }) {
-  const busy = clones.busy[entry.id];
-  const error = clones.errors[entry.id];
-  const failed = entry.kind === "cloneFailed";
-  return (
-    <li class={`untracked-entry ${entry.kind}`}>
-      <span class="untracked-label">
-        <span class="untracked-name">{entry.name}</span>
-        <span class={`badge untracked-kind ${entry.kind}${failed ? " danger" : ""}`} title={failed && entry.clone?.reason ? `${KIND_LABELS[entry.kind].title}\n${entry.clone.reason}` : KIND_LABELS[entry.kind].title}>
-          {KIND_LABELS[entry.kind].label}
-        </span>
-      </span>
-      {entry.clone && <span class="untracked-meta mono">{entry.clone.repo}</span>}
-      <code class="untracked-path" title={entry.path}>
-        {entry.path}
-      </code>
-      <span class="untracked-actions">
-        {failed && (
-          <>
-            <button type="button" class="btn sm" disabled={busy !== undefined} title={`Clone ${entry.clone?.repo} into ${entry.path} again`} onClick={() => clones.retry(entry)}>
-              {busy === "retry" ? "Retrying…" : "Retry"}
-            </button>
-            <button type="button" class="btn sm ghost" disabled={busy !== undefined} title="Remove this entry; nothing on disk changes" onClick={() => clones.dismiss(entry)}>
-              {busy === "dismiss" ? "Dismissing…" : "Dismiss"}
-            </button>
-          </>
-        )}
-      </span>
-      {failed && entry.clone?.reason && <span class="untracked-error">{entry.clone.reason}</span>}
-      {error && (
-        <span class="untracked-error" role="alert">
-          {error}
-        </span>
-      )}
-    </li>
-  );
-}
-
 function Entry({ entry, props }: { entry: UntrackedEntry; props: UntrackedSectionProps }) {
   const { tracking, integrateOff } = props;
-  if (entry.kind === "cloning" || entry.kind === "cloneFailed") return <CloneEntry entry={entry} clones={props.clones} />;
+  if (entry.clone) return <CloneRow clone={entry.clone} now={props.now ?? Date.now()} actions={props.clones} />;
   const busy = tracking.busy[entry.id];
   const error = tracking.errors[entry.id];
   const running = entry.kind === "integratable" ? props.runningIntegration(entry.path) : undefined;

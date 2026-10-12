@@ -419,7 +419,7 @@ test("all in place is said plainly, and Re-check shows that it works", () => {
 });
 
 test("Done is a visual ending: a headline, one card per step with its icon and mark, and what comes next", () => {
-  const summary = { ...NOTHING_SAVED, rootsAdded: ["/w/acme"], tracked: 2, agentsAdded: ["Codex", "Antigravity"], projectsChanged: 3, agentSessions: true, defaultAgent: "Codex", agents: 3, checked: true, remaining: [], agentsMissing: [] };
+  const summary = { ...NOTHING_SAVED, rootsAdded: ["/w/acme"], tracked: 2, agentsAdded: ["Codex", "Antigravity"], projectsChanged: 3, agentSessions: true, defaultAgent: "Codex", agents: 3, checked: true, remaining: [], agentsMissing: [], clonesRunning: 0 };
   const done = DoneStep({ summary, firstStart: true });
   expect(textOf(done)).toContain("You're all set");
   expect(textOf(done)).toContain("ready for your 2 projects");
@@ -521,6 +521,51 @@ test("GitHub repositories are listed with their target, removable before Continu
   // A repository whose clone started can no longer be removed.
   expect(buttons.some((b) => b.props["aria-label"] === "Remove acme/beta-soc")).toBe(false);
   expect(calls).toEqual(["open", "retry /w/acme/missing-repo", "remove /w/acme/chat-groups"]);
+});
+
+test("a refused repository keeps its reason with its folder name editable", () => {
+  const renamed: string[] = [];
+  const listed = [{ repo: "acme/chat-groups", root: "/w/acme", name: "chat-groups", path: "/w/acme/chat-groups" }];
+  const step = WorkspaceStep({
+    view: workspace({ github: githubView({ listed, refused: { "/w/acme/chat-groups": "/w/acme/chat-groups already exists" } }) }),
+    onInput: noop,
+    onAdd: noop,
+    onRemove: noop,
+    onToggle: noop,
+    onPick: noop,
+    onRenameGithub: (path, name) => renamed.push(`${path} ${name}`),
+  });
+  expect(textOf(step)).toContain("/w/acme/chat-groups already exists");
+  const folder = byTag(step, "input").find((i) => i.props["aria-label"] === "Folder name for acme/chat-groups");
+  expect(folder?.props.value).toBe("chat-groups");
+  ((folder as NonNullable<typeof folder>).props.onInput as (e: unknown) => void)({ target: { value: "chat-groups-gh" } });
+  expect(renamed).toEqual(["/w/acme/chat-groups chat-groups-gh"]);
+  expect(byTag(step, "button").some((b) => textOf(b) === "Retry")).toBe(true);
+});
+
+test("the Done step lists the clones setup started with their progress, Cancel and Retry, and Finish says they go on", () => {
+  const now = Date.parse("2026-10-10T10:00:40Z");
+  const clones = [
+    { id: "c1", repo: "acme/beta-soc", root: "/w/acme", name: "beta-soc", path: "/w/acme/beta-soc", state: "cloning" as const, progress: { phase: "receiving" as const, percent: 40, updatedAt: "2026-10-10T10:00:40Z" }, startedAt: "2026-10-10T10:00:00Z" },
+    { id: "c2", repo: "acme/chat-groups", root: "/w/acme", name: "chat-groups", path: "/w/acme/chat-groups", state: "failed" as const, reason: "Repository not found.", startedAt: "2026-10-10T10:00:00Z" },
+  ];
+  const calls: string[] = [];
+  const actions = { busy: {}, errors: {}, cancel: (c: { id: string }) => calls.push(`cancel ${c.id}`), retry: (c: { id: string }) => calls.push(`retry ${c.id}`), dismiss: (c: { id: string }) => calls.push(`dismiss ${c.id}`) };
+  const summary = { ...NOTHING_SAVED, cloned: ["acme/beta-soc", "acme/chat-groups"], clonePaths: clones.map((c) => c.path), agentSessions: false, agents: 1, checked: true, remaining: [], agentsMissing: [], clonesRunning: 1 };
+  const done = DoneStep({ summary, clones, cloneActions: actions, now });
+  const section = byTag(done, "section").find((el) => el.props["aria-label"] === "GitHub clones");
+  const [running, failed] = byTag(section, "li");
+  expect(byTag(running, "progress")[0].props).toMatchObject({ value: 40, "aria-valuetext": "receiving objects, 40 percent" });
+  expect(textOf(running)).toContain("acme/beta-soc");
+  expect(textOf(failed)).toContain("Repository not found.");
+  press(byTag(running, "button").find((b) => textOf(b) === "Cancel"));
+  press(byTag(failed, "button").find((b) => textOf(b) === "Retry"));
+  expect(calls).toEqual(["cancel c1", "retry c2"]);
+  const workspaceCard = byTag(byTag(done, "ul")[0], "li")[1];
+  expect(textOf(workspaceCard)).toContain("1 still running");
+  expect(textOf(done)).toContain("The clone still running goes on; follow it under Unmanaged projects.");
+  // Nothing started: no clone section.
+  expect(byTag(DoneStep({ summary: { ...summary, cloned: [], clonePaths: [], clonesRunning: 0 } }), "section")).toEqual([]);
 });
 
 test("Add from GitHub in the step is inactive with its reason", () => {
