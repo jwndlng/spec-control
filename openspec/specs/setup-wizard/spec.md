@@ -128,12 +128,12 @@ capability with the configured and entered roots to choose from, in which confir
 **GitHub repositories** list in the step instead of cloning them at once; each listed repository SHALL show the path it
 will be cloned into and can be removed again before **Continue**. **Continue** SHALL be unavailable, saying why, while no
 workspace root is configured, entered or marked to be created. **Continue** SHALL create each root marked to be created,
-save the configuration with the entered roots added, track each checked project, and then clone each listed GitHub
-repository under the rules of that capability, at most two at a time, showing each one's progress and outcome; a clone
-holding `openspec/config.yaml` is tracked, and one without it is reported as cloned without OpenSpec, to be integrated
-from the projects overview. When every clone succeeded the wizard SHALL move to the next step; when any failed, the step
-SHALL stay open showing each failure with its reason and offering to retry it, and activating **Continue** again SHALL
-move on without cloning what already succeeded. **Continue** SHALL NOT remove any root, ignore path or repository, and
+save the configuration with the entered roots added, track each checked project, and then start the clone of each
+listed GitHub repository under the rules of that capability, and SHALL move to the next step as soon as every clone has
+been accepted, without waiting for any of them to finish; the clones go on in the background while the user completes
+setup, as the Done step shows. A clone the server refuses to start — its folder exists, say — SHALL keep the step open
+with the reason on that repository and nothing started for it, the folder name editable and a retry offered; activating
+**Continue** again SHALL move on without starting again what was already accepted. **Continue** SHALL NOT remove any root, ignore path or repository, and
 SHALL NOT change any repository's name or enabled state other than tracking the checked projects and the cloned
 repositories that use OpenSpec. If saving fails, the step SHALL stay open, show the error and keep the
 entries. Continuing with a configured root and nothing entered, checked or listed SHALL save nothing, create nothing and clone
@@ -181,11 +181,19 @@ nothing.
 
 #### Scenario: GitHub repositories into a new workspace
 - **WHEN** no root is configured, the user marks `~/Workspace` to be created, lists `acme/beta-soc`, which uses OpenSpec, and `acme/chat-groups`, which does not, and continues
-- **THEN** `~/Workspace` is created and saved as a root, both are cloned into it, `beta-soc` is tracked and enabled, `chat-groups` is reported as cloned without OpenSpec, and the wizard moves to the Agents step
+- **THEN** `~/Workspace` is created and saved as a root, both clones are started into it and the wizard moves to the Agents step at once; once they have finished, `beta-soc` is tracked and enabled and `chat-groups` is reported as cloned without OpenSpec
+
+#### Scenario: Continue does not wait
+- **WHEN** the user lists a repository whose clone takes five minutes and continues
+- **THEN** the wizard shows the Agents step as soon as the clone has been accepted, and the clone goes on
 
 #### Scenario: A clone fails
-- **WHEN** the user lists `acme/beta-soc` and `acme/missing-repo`, continues, and the clone of `acme/missing-repo` fails
-- **THEN** the step stays open, shows `acme/beta-soc` as tracked and `acme/missing-repo` with its reason and a retry, and activating **Continue** again moves to the Agents step without cloning `acme/beta-soc` a second time
+- **WHEN** the user lists `acme/beta-soc` and `acme/missing-repo`, continues, and the clone of `acme/missing-repo` later fails
+- **THEN** the wizard had already moved to the Agents step, and the Done step lists `acme/missing-repo` with its reason and a retry, while `acme/beta-soc` was cloned once
+
+#### Scenario: A clone is refused
+- **WHEN** the user lists `acme/beta-soc` and `acme/chat-groups`, continues, and `/w/acme/chat-groups` already exists
+- **THEN** the step stays open, `acme/beta-soc` is being cloned, and `acme/chat-groups` shows the reason with its folder name editable; after renaming it to `chat-groups-gh` and continuing, its clone starts, `acme/beta-soc` is not started a second time, and the wizard moves on
 
 ### Requirement: The Agents step can switch agent sessions on with a chosen default agent
 The Agents step SHALL state, as the Agent sessions section of Settings does, that enabling agent sessions lets the
@@ -325,7 +333,7 @@ The dashboard SHALL NOT run any command shown in the instructions.
 
 ### Requirement: The Done step summarises and ends setup
 The Done step SHALL summarise what setup saved: the roots added and which of them it created, the number of projects
-tracked, the GitHub repositories cloned, whether agent
+tracked, the GitHub repositories whose clones setup started, whether agent
 sessions are on, the agents added, the default agent, the console agent and the number of projects whose settings were
 changed. It SHALL also say what is left, naming the checks of a setup-view report requested when the Done step is shown that are
 still `problem` or `warning`, and each checked agent whose executable the Agents step last found missing. It SHALL present this
@@ -337,7 +345,11 @@ SHALL need attention only for the System check, when a check is `problem` or `wa
 agent is not found. Below the cards it SHALL say
 what comes next: the projects overview, and the tour on a first start. The cards SHALL be exposed to assistive
 technology as a list, each read as its name, mark and outcome, and the headline's animation, if any, SHALL not play when
-the user prefers reduced motion. It SHALL offer **Finish**. Finishing, and **Skip setup** at any step, SHALL mark setup as done on the server and close the wizard,
+the user prefers reduced motion. Below the cards it SHALL list every clone setup started, each as the `github-repositories` capability shows a
+clone — queued, cloning with its progress, tracked, cloned without OpenSpec, failed with its reason or cancelled — with
+Cancel for a queued or running one and Retry for a failed or cancelled one, updating while the step is open; the
+Workspace card SHALL count the clones started and say how many are still running. Clones still running SHALL NOT keep
+the user from finishing: **Finish** SHALL say that they go on and can be followed under Unmanaged projects. It SHALL offer **Finish**. Finishing, and **Skip setup** at any step, SHALL mark setup as done on the server and close the wizard,
 keeping everything earlier steps saved. If marking setup as done fails, the wizard SHALL close anyway and open by itself
 again on the next page load. After the wizard closed on a first start, the onboarding tour SHALL start under its own
 rules.
@@ -369,6 +381,14 @@ rules.
 #### Scenario: An agent still missing
 - **WHEN** the user checked Antigravity, `agy` is still not found, and every check of the setup view is `ok`
 - **THEN** the Agents card is marked as needing attention and names Antigravity, and the System check card is done
+
+#### Scenario: Clones on the Done step
+- **WHEN** setup started the clones of `acme/beta-soc`, which is at 40%, and `acme/chat-groups`, which failed
+- **THEN** the Done step lists `acme/beta-soc` with its progress bar and Cancel, and `acme/chat-groups` with its reason and Retry, and the Workspace card says one clone is still running
+
+#### Scenario: Finishing while cloning
+- **WHEN** a clone is still running and the user activates **Finish**
+- **THEN** the wizard closes, the clone goes on, and the projects overview lists it under Unmanaged projects with its progress
 
 ### Requirement: Setup can be run again
 Running setup again from Help SHALL open the wizard at its first step whether or not setup is pending, with the current
