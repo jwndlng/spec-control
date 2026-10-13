@@ -4,7 +4,7 @@ import { LabelChips } from "./labels.tsx";
 import { boardColumns, isComplete } from "../shared/columns.ts";
 import { waitingNote } from "../shared/dependencies.ts";
 import { linkedPullRequest } from "../shared/pullRequestLink.ts";
-import { autoFetchInterval, frameworkInfo, type ChangeSnapshot, type Config, type PullRequest, type PullRequestsResponse, type RepoSnapshot, type Snapshot } from "../shared/types.ts";
+import { autoFetchInterval, frameworkInfo, type ChangeSession, type ChangeSnapshot, type Config, type PullRequest, type PullRequestsResponse, type RepoSnapshot, type Snapshot } from "../shared/types.ts";
 import { NoRepos } from "./empty.tsx";
 import { parseFilters, resolveLayout, serializeFilters, STACK_BELOW_PX, type Filters } from "./filters.ts";
 import { FilterBar } from "./boardFilters.tsx";
@@ -18,13 +18,13 @@ import { ImportIssuesDialog, SourceIssueLink } from "./importIssues.tsx";
 import { NewChangeDialog } from "./newChangeForm.tsx";
 import { FetchNoteBadge, PullButton } from "./pull.tsx";
 import { branchNotice } from "./pullState.ts";
-import { changeRef, daysSince, relTime } from "./format.ts";
+import { changeRef, relTime } from "./format.ts";
 import { isMinimized, loadGroupState, saveGroupState, toggleGroup, type GroupOverrides } from "./groupState.ts";
 import { assignRepoHues, dependencyChoices, groupByRepo, newChangeTargets, recentArchived } from "./repoGroups.ts";
 import { columnKind } from "./boardMarks.ts";
 import { IconCheck, IconChevronRight, IconCircleDot, IconCopy, IconPlus, IconTerminal } from "./icons.tsx";
 import { SessionControls, useSessionUi } from "./sessions.tsx";
-import { archivedShown, cardSessionControls, cardWorkingState, type CardWorkingState, consoleTabAvailable, projectConsoleUnavailable } from "./sessionState.ts";
+import { archivedShown, cardSessionControls, hasRunningSession, cardWorkingState, type CardWorkingState, consoleTabAvailable, projectConsoleUnavailable } from "./sessionState.ts";
 import { boardFrom, changePath, CONSOLE_TAB, repoPath, serializeDetailQuery } from "./routes.ts";
 import { currentQuery, followInApp, href, navigate, replaceQuery } from "./url.ts";
 import { ProjectConsoleButton } from "./projectConsole.tsx";
@@ -247,15 +247,21 @@ export function ConsoleLink({ card, from }: { card: Card; from: string }) {
   );
 }
 
-/** The cards the filters let through: repositories (on the combined board), the search text and the idle threshold. */
-export function visibleCards(cards: Card[], filters: Filters, single: boolean, now: number): Card[] {
+const DAY_MS = 24 * 60 * 60_000;
+
+/**
+ * The cards the filters let through: repositories (on the combined board), the search text and the recent-activity
+ * threshold. That threshold hides only what it knows to be old: a card whose activity time is unknown stays, and so does
+ * one whose change has a running agent session — the same exception **Hide merged** makes.
+ */
+export function visibleCards(cards: Card[], filters: Filters, single: boolean, now: number, sessions: readonly ChangeSession[] = []): Card[] {
   const q = filters.q.trim().toLowerCase();
   return cards.filter((c) => {
     if (!single && filters.repos.length && !filters.repos.includes(c.repoId)) return false;
     if (q && !c.name.toLowerCase().includes(q) && !c.repoName.toLowerCase().includes(q)) return false;
-    if (filters.staleDays > 0) {
-      const age = daysSince(c.lastActivityAt, now);
-      if (age === undefined || age < filters.staleDays) return false;
+    if (filters.activeDays > 0) {
+      const at = c.lastActivityAt ? Date.parse(c.lastActivityAt) : Number.NaN;
+      if (!Number.isNaN(at) && now - at >= filters.activeDays * DAY_MS && !hasRunningSession(c, sessions)) return false;
     }
     return true;
   });
@@ -557,7 +563,7 @@ export function Kanban({ snapshot, config, repoId, query, onReload }: { snapshot
     [cards, prs.data, prsRunning, hidden, watch, lastSettledAt],
   );
 
-  const visible = useMemo(() => visibleCards(cards, filters, single, now), [cards, filters, single, now]);
+  const visible = useMemo(() => visibleCards(cards, filters, single, now, sessions), [cards, filters, single, now, sessions]);
 
   // A single-repository board follows that repository's own schemas, not the majority across all repos.
   const columns = useMemo(() => (snapshot ? boardColumns({ ...snapshot, repos }) : []), [snapshot, repos]);

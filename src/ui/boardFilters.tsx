@@ -1,9 +1,9 @@
 // The board's filter bar (kanban-board: "The board's filters form one filter bar"): search, a Repositories menu, the
-// Stale selector, the Hide archived and Hide merged switches, removable tags for what is filtered, and the count of changes shown.
+// Activity selector, the Hide archived and Hide merged switches, removable tags for what is filtered, and the count of changes shown.
 // Same filters and URL format as before; only the controls are new.
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { RepoSnapshot } from "../shared/types.ts";
-import { activeTags, EMPTY_FILTERS, type Filters, hasActiveFilters, staleOptions } from "./filters.ts";
+import { activeTags, EMPTY_FILTERS, type Filters, hasActiveFilters, activityOptions } from "./filters.ts";
 import { IconChevronDown, IconClock, IconColumns, IconFolderGit, IconRotateCcw, IconRows, IconSearch, IconX } from "./icons.tsx";
 
 /** Sets --repo-hue for the `repo-tint` class. */
@@ -119,11 +119,11 @@ export function FilterBar({
           )}
         </label>
         {!single && <RepoMenu repos={repos} hues={hues} selected={filters.repos} onChange={(ids) => setFilters({ repos: ids })} />}
-        <label class={`control select-control ${filters.staleDays ? "on" : ""}`}>
+        <label class={`control select-control ${filters.activeDays ? "on" : ""}`}>
           <IconClock />
-          <span>Stale</span>
-          <select value={filters.staleDays} onChange={(e) => setFilters({ staleDays: Number(e.currentTarget.value) || 0 })}>
-            {staleOptions(filters.staleDays).map((o) => (
+          <span>Activity</span>
+          <select value={filters.activeDays} onChange={(e) => setFilters({ activeDays: Number(e.currentTarget.value) || 0 })}>
+            {activityOptions(filters.activeDays).map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>

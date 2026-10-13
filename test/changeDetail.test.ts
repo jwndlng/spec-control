@@ -118,7 +118,7 @@ test("the overlay is a modal dialog named after the change, on a backdrop", () =
 test("close control, backdrop and Escape all lead to the same board", () => {
   for (const [from, expected] of [
     ["/board?q=sync", { path: "/board", query: "?q=sync" }],
-    ["/repo/r1?stale=5", { path: "/repo/r1", query: "?stale=5" }],
+    ["/repo/r1?active=5", { path: "/repo/r1", query: "?active=5" }],
     ["https://example.com/", { path: "/repo/r1", query: "" }],
     [undefined, { path: "/repo/r1", query: "" }],
   ] as const) {
