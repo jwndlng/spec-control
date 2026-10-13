@@ -867,8 +867,6 @@ button.badge.worktree-path.done { color: var(--success); }
 .crumb-link { color: var(--fg-subtle); font-weight: 400; }
 .crumb-link:hover { color: var(--brand-fg); }
 .repo-head .crumbs .sep { color: var(--fg-disabled); font-weight: 400; }
-.repo-head .path { color: var(--fg-subtle); gap: 4px; }
-.repo-head .path code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 /* Inline "new change" form on the repository board header. */
 /* A modal dialog (modal.tsx): a titled panel over the dimmed page, like the change detail view. */

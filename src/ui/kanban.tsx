@@ -18,7 +18,7 @@ import { ImportIssuesDialog, SourceIssueLink } from "./importIssues.tsx";
 import { NewChangeDialog } from "./newChangeForm.tsx";
 import { FetchNoteBadge, PullButton } from "./pull.tsx";
 import { branchNotice } from "./pullState.ts";
-import { cdCommand, changeRef, daysSince, relTime } from "./format.ts";
+import { changeRef, daysSince, relTime } from "./format.ts";
 import { isMinimized, loadGroupState, saveGroupState, toggleGroup, type GroupOverrides } from "./groupState.ts";
 import { assignRepoHues, dependencyChoices, groupByRepo, newChangeTargets, recentArchived } from "./repoGroups.ts";
 import { columnKind } from "./boardMarks.ts";
@@ -400,7 +400,7 @@ function RepoHeader({ repo, config, now, stats, onCreated }: { repo: RepoSnapsho
               Projects
             </a>
             <span class="sep">/</span>
-            {repo.name}
+            <span title={repo.path}>{repo.name}</span>
           </h1>
           <span class="divider" aria-hidden="true" />
           <BoardStats open={stats.open} toArchive={stats.toArchive} />
@@ -428,10 +428,6 @@ function RepoHeader({ repo, config, now, stats, onCreated }: { repo: RepoSnapsho
               updated {updated === "just now" ? updated : `${updated} ago`}
             </span>
           )}
-        </div>
-        <div class="row path">
-          <code>{repo.path}</code>
-          <CopyButton text={cdCommand(repo.path)} label="Copy cd" />
         </div>
       </div>
       {(canGit || repo.ok || consoleOffered) && (
