@@ -221,6 +221,11 @@ export const configSchema = z
       .boolean()
       .optional()
       .transform((on) => (on === false ? (false as const) : undefined)),
+    // Likewise: Keep awake while agents work is on unless it is stored as `false` (openspec/specs/keep-awake).
+    keepAwake: z
+      .boolean()
+      .optional()
+      .transform((on) => (on === false ? (false as const) : undefined)),
     // Only `"pending"` is stored, and only by `freshConfig`; anything else reads as "set up".
     setup: z
       .unknown()

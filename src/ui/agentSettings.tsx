@@ -3,7 +3,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { AGENT_PRESETS } from "../shared/agentDefaults.ts";
-import { DEFAULT_INTEGRATE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, STARTER_PROMPT_KEYS, type AgentAvailability, type AgentProfile, type AgentSessionsConfig, type Config, type PromptKey, type Shortcut, type StarterPromptKey } from "../shared/types.ts";
+import { DEFAULT_INTEGRATE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, STARTER_PROMPT_KEYS, type AgentAvailability, type AgentProfile, type AgentSessionsConfig, type Config, type KeepAwakeStatus, type PromptKey, type Shortcut, type StarterPromptKey } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { addShortcut, moveShortcut, removeShortcut, restoredShortcuts } from "./quickReplies.ts";
 import { newAgentProfile, parseArgLines } from "./sessionState.ts";
@@ -323,18 +323,27 @@ export function PerProjectNote() {
   );
 }
 
+/** How often Settings asks again whether the machine is being kept awake, while it is open. */
+const KEEP_AWAKE_POLL_MS = 15_000;
+
 export function AgentSettings({ draft, update }: Props) {
   const [found, setFound] = useState<AgentAvailability[]>([]);
   const [presets, setPresets] = useState<AgentAvailability[] | undefined>(undefined);
-  // Availability only: session worktrees are listed, with their work status, in Open work.
+  const [keepAwake, setKeepAwake] = useState<KeepAwakeStatus | undefined>(undefined);
+  // Availability and keep-awake only: session worktrees are listed, with their work status, in Open work.
   useEffect(() => {
-    api
-      .sessions()
-      .then((r) => {
-        setFound(r.agents);
-        setPresets(r.presets);
-      })
-      .catch(() => undefined);
+    const load = () =>
+      api
+        .sessions()
+        .then((r) => {
+          setFound(r.agents);
+          setPresets(r.presets);
+          setKeepAwake(r.keepAwake);
+        })
+        .catch(() => undefined);
+    void load();
+    const timer = setInterval(() => void load(), KEEP_AWAKE_POLL_MS);
+    return () => clearInterval(timer);
   }, []);
 
   const settings = draft.agentSessions;
@@ -431,7 +440,49 @@ export function AgentSettings({ draft, update }: Props) {
 
         <PerProjectNote />
       </fieldset>
+
+      {/* Outside the fieldset: it is a machine setting, shown whether or not sessions are enabled. */}
+      <KeepAwakeSetting status={keepAwake} on={draft.keepAwake !== false} onToggle={(on) => update({ keepAwake: on ? undefined : false })} />
     </section>
+  );
+}
+
+/**
+ * What keep-awake is doing, in words, from the server's status; undefined when there is nothing to say (the demo sends
+ * no status). `on` is the switch as drafted, saved or not.
+ */
+export function keepAwakeState(status: KeepAwakeStatus | undefined, on: boolean): string | undefined {
+  if (!status) return undefined;
+  if (!status.available) return "Works on macOS only: nothing is started on this machine.";
+  if (!on) return "Turned off: the machine sleeps as usual.";
+  if (!status.enabled) return "Save to turn it on.";
+  const sessions = `${status.sessions} busy ${status.sessions === 1 ? "session" : "sessions"}`;
+  if (status.active) return `Keeping this Mac awake right now, for ${sessions}.`;
+  if (status.sessions > 0) return `${sessions[0].toUpperCase()}${sessions.slice(1)}, but caffeinate is not running; it is tried again within a minute.`;
+  return "Not keeping the machine awake right now: no agent is busy.";
+}
+
+/** The Keep awake switch (openspec/specs/keep-awake). Hook-free: the switch belongs to the draft, the status to the server. */
+export function KeepAwakeSetting({ status, on, onToggle }: { status: KeepAwakeStatus | undefined; on: boolean; onToggle: (on: boolean) => void }) {
+  const state = keepAwakeState(status, on);
+  return (
+    <>
+      <h3>Keep awake</h3>
+      <label class="check">
+        <input type="checkbox" checked={on} onChange={(e) => onToggle(e.currentTarget.checked)} />
+        Keep awake while agents work
+      </label>
+      <p class="hint">
+        While an agent is busy — it reported <code>working</code>, or its terminal printed something in the last five minutes — macOS's own <code>caffeinate</code> keeps
+        this Mac from going to sleep on its own, and lets it sleep again once no agent is busy. The display can still sleep, and closing the lid or choosing Sleep still
+        sleeps the machine. An agent whose hooks report <code>working</code> through <code>SPEC_CONTROL_STATE_FILE</code> is kept awake through long silent steps too.
+      </p>
+      {state !== undefined && (
+        <p class="hint" aria-live="polite">
+          {state}
+        </p>
+      )}
+    </>
   );
 }
 
