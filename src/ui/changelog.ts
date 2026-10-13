@@ -15,6 +15,12 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-13-version-in-header",
+    date: "2026-10-13",
+    title: "See which version you run",
+    summary: "The header now shows the release you run next to **Spec Control**, linked to its release notes — in the browser and in the macOS app.",
+  },
+  {
     id: "2026-10-10-add-from-github",
     date: "2026-10-10",
     title: "Add your GitHub repositories",
