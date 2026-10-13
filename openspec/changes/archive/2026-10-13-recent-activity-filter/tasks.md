@@ -12,4 +12,4 @@
 
 ## 3. Check
 
-- [~] 3.1 `grep -rn "staleDays\|staleLabel\|staleOptions\|STALE_PRESETS\|stale=" src test` returns nothing, `bun run check` passes, and `bun run dev` shows a board where `Last 7 days` hides changes idle for more than a week and keeps the recent ones
+- [x] 3.1 `grep -rn "staleDays\|staleLabel\|staleOptions\|STALE_PRESETS\|stale=" src test` returns nothing, `bun run check` passes, and `bun run dev` shows a board where `Last 7 days` hides changes idle for more than a week and keeps the recent ones
