@@ -533,3 +533,11 @@ test("a config reset because it was invalid asks for setup", async () => {
   expect(warning).toContain("reset to defaults");
   expect(config.setup).toBe("pending");
 });
+
+test("keepAwake: only false is stored; absent and true write no key; anything else is refused", () => {
+  const stored = (keepAwake?: unknown) => JSON.parse(JSON.stringify(validateConfig(keepAwake === undefined ? defaultConfig() : { ...defaultConfig(), keepAwake })));
+  expect("keepAwake" in stored()).toBe(false);
+  expect("keepAwake" in stored(true)).toBe(false);
+  expect(stored(false).keepAwake).toBe(false);
+  expect(() => validateConfig({ ...defaultConfig(), keepAwake: "off" })).toThrow(ConfigValidationError);
+});

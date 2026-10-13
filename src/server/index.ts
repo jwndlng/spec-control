@@ -7,6 +7,7 @@ import { AutoFetcher } from "./autoFetch.ts";
 import { readSnapshot } from "./cache.ts";
 import { configuredPort, loadConfig } from "./config.ts";
 import { describeOutcome, startHomeMigration } from "./homeMigration.ts";
+import { KeepAwake } from "./keepAwake.ts";
 import { explicitHome, newDefaultHome, oldDefaultHome } from "./paths.ts";
 import { Scanner } from "./scanner.ts";
 import { confirmIntegration } from "./integration.ts";
@@ -108,8 +109,17 @@ async function main(): Promise<void> {
     onActivity: (session, what) => void activity.append([sessionEvent(session, state.config.repos.find((r) => r.id === session.repoId)?.name ?? session.repoId, what)]),
     // The marker, not the agent's word: if `openspec/config.yaml` is there now, the repository becomes tracked.
     onIntegrationEnded: (session) => void confirmIntegration(state, session.folder).catch(() => undefined),
+    onRunningChanged: () => state.keepAwake?.evaluate(),
   });
   await state.sessions.init();
+  // Holds idle sleep off while an agent is busy, with the system's own `caffeinate` (macOS only; off in Settings).
+  const sessions = state.sessions;
+  state.keepAwake = new KeepAwake({
+    getConfig: () => state.config,
+    busyCount: (now) => sessions.busyCount(now),
+    anyRunning: () => sessions.anyRunning(),
+    readReports: () => sessions.readReports(),
+  });
   // Every minute by default, for each enabled git project with a remote whose auto fetch the user did not switch off.
   state.autoFetcher = new AutoFetcher({
     getConfig: () => state.config,
@@ -138,6 +148,8 @@ async function main(): Promise<void> {
     state.scanner.stop();
     state.autoFetcher?.stop();
     state.updateChecker?.stop();
+    // Before the sessions end, so no ending session can start it again; `-w` ends it with us anyway.
+    state.keepAwake?.stop();
     // Children must not outlive the dashboard; sessions in flight become `interrupted` and can be resumed.
     void (state.sessions?.shutdown() ?? Promise.resolve()).finally(() => {
       server.stop(true);

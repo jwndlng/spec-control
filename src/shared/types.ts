@@ -364,8 +364,22 @@ export interface Config {
   labelColors?: Record<string, number>;
   /** `false` when the user turned Check for new versions off; absent means on (openspec/specs/update-notice). */
   updateCheck?: false;
+  /** `false` when the user turned Keep awake while agents work off; absent means on (openspec/specs/keep-awake). */
+  keepAwake?: false;
   /** Only on a configuration created on first start or after a reset: the setup wizard has not been finished or skipped. */
   setup?: "pending";
+}
+
+/** What `GET /api/sessions` says about keep-awake (openspec/specs/keep-awake). */
+export interface KeepAwakeStatus {
+  /** macOS with `/usr/bin/caffeinate`. */
+  available: boolean;
+  /** Keep awake while agents work is on. */
+  enabled: boolean;
+  /** Idle system sleep is prevented right now. */
+  active: boolean;
+  /** Sessions that count as busy. */
+  sessions: number;
 }
 
 /** What `GET /api/setup` answers (setup-wizard): whether setup is pending, and folders worth offering as roots. */

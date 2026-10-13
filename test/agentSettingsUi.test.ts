@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE } from "../src/shared/agentDefaults.ts";
-import type { AgentAvailability, AgentProfile, AgentSessionsConfig, PromptKey } from "../src/shared/types.ts";
+import type { AgentAvailability, AgentProfile, AgentSessionsConfig, KeepAwakeStatus, PromptKey } from "../src/shared/types.ts";
 import { defaultConfig, validateConfig } from "../src/server/config.ts";
-import { AgentEditor, ConsoleAgentPicker, PerProjectNote, PresetPicker, ShortcutEditor, withoutAgent } from "../src/ui/agentSettings.tsx";
+import { AgentEditor, ConsoleAgentPicker, KeepAwakeSetting, keepAwakeState, PerProjectNote, PresetPicker, ShortcutEditor, withoutAgent } from "../src/ui/agentSettings.tsx";
 import { byTag, elements, textOf } from "./vnode.ts";
 
 const profile = (patch: Partial<AgentProfile> = {}): AgentProfile => ({ id: "fake", name: "Fake Agent", command: ["fake", "{prompt}"], prompts: { implement: "implement {change}" }, ...patch });
@@ -256,4 +256,37 @@ test("the Console group offers the agent picker after the folder and says which 
   expect([...at].sort((a, b) => a - b)).toEqual(at);
   expect(body).toContain("opens the agent chosen here");
   expect(body).not.toContain("opens your default agent");
+});
+
+const keepAwake = (patch: Partial<KeepAwakeStatus> = {}): KeepAwakeStatus => ({ available: true, enabled: true, active: false, sessions: 0, ...patch });
+
+test("the keep-awake hint says what the server is doing right now, and nothing without a status", () => {
+  expect(keepAwakeState(keepAwake({ active: true, sessions: 2 }), true)).toBe("Keeping this Mac awake right now, for 2 busy sessions.");
+  expect(keepAwakeState(keepAwake({ active: true, sessions: 1 }), true)).toBe("Keeping this Mac awake right now, for 1 busy session.");
+  expect(keepAwakeState(keepAwake(), true)).toBe("Not keeping the machine awake right now: no agent is busy.");
+  expect(keepAwakeState(keepAwake({ sessions: 1 }), true)).toContain("caffeinate is not running");
+  expect(keepAwakeState(keepAwake({ available: false }), true)).toBe("Works on macOS only: nothing is started on this machine.");
+  expect(keepAwakeState(keepAwake({ enabled: false, sessions: 1 }), false)).toBe("Turned off: the machine sleeps as usual.");
+  expect(keepAwakeState(keepAwake({ enabled: false }), true)).toBe("Save to turn it on.");
+  expect(keepAwakeState(undefined, true)).toBeUndefined(); // the demo sends none
+});
+
+test("Keep awake while agents work reads ticked until switched off, says display and lid still sleep, and stores only false", async () => {
+  const toggled: boolean[] = [];
+  const tree = KeepAwakeSetting({ status: keepAwake({ available: false }), on: true, onToggle: (on) => toggled.push(on) });
+  const text = textOf(tree);
+  expect(text).toContain("Keep awake while agents work");
+  expect(text).toContain("display can still sleep");
+  expect(text).toContain("closing the lid");
+  expect(text).toContain("macOS only");
+  const box = byTag(tree, "input")[0];
+  expect(box.props.checked).toBe(true);
+  (box.props.onChange as (e: { currentTarget: { checked: boolean } }) => void)({ currentTarget: { checked: false } });
+  expect(toggled).toEqual([false]);
+  expect(byTag(KeepAwakeSetting({ status: undefined, on: false, onToggle: () => {} }), "p")).toHaveLength(1); // no status line
+  const source = await Bun.file(new URL("../src/ui/agentSettings.tsx", import.meta.url)).text();
+  expect(source).toContain("on={draft.keepAwake !== false}");
+  expect(source).toContain("update({ keepAwake: on ? undefined : false })");
+  // Shown whether or not sessions are enabled: after the fieldset the Enable switch disables.
+  expect(source.indexOf("<KeepAwakeSetting")).toBeGreaterThan(source.indexOf("</fieldset>"));
 });

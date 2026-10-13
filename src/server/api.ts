@@ -30,6 +30,7 @@ import { applyTo, EMPTY_SHARED_CONFIG, loadSharedConfig, previewFor, SharedConfi
 import { SessionError, type SessionManager } from "./sessions/manager.ts";
 import { LocalRepoSource } from "./source.ts";
 import { frameworkById } from "./frameworks/registry.ts";
+import type { KeepAwake } from "./keepAwake.ts";
 import type { UpdateChecker } from "./updateCheck.ts";
 import { VERSION } from "./version.ts";
 import { whichOnPath } from "./paths.ts";
@@ -49,6 +50,8 @@ export interface AppState {
   autoFetcher?: AutoFetcher;
   /** The update check (openspec/specs/update-notice). Absent in contexts that never check; the endpoints then report it off. */
   updateChecker?: UpdateChecker;
+  /** Keep-awake for busy agent sessions. Absent in contexts that never hold the machine awake (most tests). */
+  keepAwake?: KeepAwake;
   /** Where the setup's folder dialog is looked up; absent means this machine's. Tests point it at a fake picker. */
   folderPicker?: FolderPickerContext;
   /** Clones of Add from GitHub since the dashboard started; created on first use, kept in memory only. */
@@ -121,6 +124,8 @@ function afterConfigChange(state: AppState, previous: Config): void {
   state.autoFetcher?.plan();
   // Check for new versions may have been turned off (cancel the planned check at once) or on (plan the next one).
   state.updateChecker?.plan();
+  // Keep awake may have been switched off (release at once) or on (hold at once if a session is busy).
+  state.keepAwake?.evaluate();
   if (state.config.pollIntervalSeconds !== previous.pollIntervalSeconds) {
     state.scanner.start(); // reschedules and kicks off a scan
   } else if (enabledIds(state.config) !== enabledIds(previous)) {
@@ -510,7 +515,14 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
     if (!id) {
       if (req.method === "GET") {
         await sessions.readReports(); // what the agents reported, as fresh as this request
-        return json({ sessions: sessions.list(), agents: sessions.agents(), presets: sessions.presets(), worktrees: await sessions.worktrees() });
+        state.keepAwake?.evaluate(); // with those same reports
+        return json({
+          sessions: sessions.list(),
+          agents: sessions.agents(),
+          presets: sessions.presets(),
+          worktrees: await sessions.worktrees(),
+          ...(state.keepAwake ? { keepAwake: state.keepAwake.status() } : {}),
+        });
       }
       if (req.method === "POST") return json(await sessions.open(await readJson(req)), 201);
     } else if (!sub) {

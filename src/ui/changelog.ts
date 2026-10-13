@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-13-keep-awake",
+    date: "2026-10-13",
+    title: "Your Mac stays awake while agents work",
+    summary:
+      "While an agent session is busy, Spec Control now keeps your Mac from going to sleep on its own, and lets it sleep again once no agent is busy. The display still sleeps, and closing the lid still sleeps the machine. Switch it off under **Settings → Agent sessions → Keep awake while agents work**.",
+  },
+  {
     id: "2026-10-10-add-from-github",
     date: "2026-10-10",
     title: "Add your GitHub repositories",

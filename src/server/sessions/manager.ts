@@ -15,7 +15,8 @@ import { CHANGE_NAME } from "../source.ts";
 import { agentEnv, agentFor, availability, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, openingPrompt, resolveConflictsPrompt, shipPrompt } from "./agents.ts";
 import { consoleFolderProblem, prepareConsoleFolder } from "./consoleFolder.ts";
 import type { SessionActivity } from "../activity/events.ts";
-import { readReport, STATE_FILE_ENV, terminalRepliesOnly, type Report } from "./reportedState.ts";
+import { isBusy } from "../keepAwake.ts";
+import { readReport, STATE_FILE_ENV, terminalRepliesOnly, type Report, type ReportedState } from "./reportedState.ts";
 import { SessionStore } from "./store.ts";
 import { submitText, validSubmission, type SubmitOptions } from "./submit.ts";
 import { spawnTerminal, type TerminalProcess } from "./terminal.ts";
@@ -94,6 +95,8 @@ interface Live {
   lastUserInputAt: number;
   /** The report read last from the state file, kept so an unchanged file is not read again. */
   report?: Report & { size: number };
+  /** The word of that report while it is current (see `readReports`); keep-awake's input, never the badge's. */
+  current?: ReportedState;
   /** Tail of the submissions to this terminal: they run one after another so text and Enter never interleave. */
   submitting?: Promise<unknown>;
 }
@@ -112,6 +115,8 @@ export interface ManagerDeps {
   onActivity?: (session: ChangeSession, activity: SessionActivity) => void;
   /** Told when an integration session has ended, so its folder can be re-checked for the marker. */
   onIntegrationEnded?: (session: IntegrationSession) => void;
+  /** Told after a session's agent started (or failed to) and after one ended, so keep-awake re-evaluates at once. */
+  onRunningChanged?: () => void;
 }
 
 export class SessionManager {
@@ -691,9 +696,11 @@ export class SessionManager {
       session.error = `could not start the agent: ${err instanceof Error ? err.message : String(err)}`;
       this.touchLater(session);
       this.report(session, { kind: "session-ended", error: session.error });
+      this.runningChanged();
       return;
     }
     live.proc = proc;
+    this.runningChanged();
     if (typed) {
       // Submitted, not written blind: an agent that opens with a dialog instead of a prompt must not get an Enter.
       const timer = setTimeout(() => live.proc === proc && void this.submit(session.id, typed).catch(() => {}), this.deps.typePromptDelayMs ?? TYPE_PROMPT_DELAY_MS);
@@ -745,6 +752,7 @@ export class SessionManager {
         const report = await readReport(this.store.statePath(session.id), live.report);
         live.report = report;
         const current = report && report.mtimeMs > live.startedAt && report.mtimeMs > live.lastUserInputAt ? report : undefined;
+        live.current = current?.state;
         if (current?.state === "waiting") session.waitingReportedAt = new Date(current.mtimeMs).toISOString();
         else delete session.waitingReportedAt;
       }),
@@ -754,6 +762,7 @@ export class SessionManager {
   private async end(session: Session, exitCode: number | null, error?: string): Promise<void> {
     session.state = "exited";
     delete session.waitingReportedAt;
+    this.runningChanged();
     session.exitCode = exitCode;
     if (error) session.error = error;
     this.forgetWorktrees();
@@ -769,6 +778,31 @@ export class SessionManager {
       }
     }
     for (const viewer of live?.viewers ?? []) viewer(new Uint8Array()); // an empty chunk tells viewers the process ended
+  }
+
+  /** Whether any session runs at all: keep-awake's periodic evaluation exists only while one does. */
+  anyRunning(): boolean {
+    return this.list().some((s) => s.state === "running" && this.live.get(s.id)?.proc !== undefined);
+  }
+
+  /**
+   * How many sessions are busy at `now` (openspec/specs/keep-awake): every kind counts, and only the time of the last
+   * output that counts as activity and the agent's current report decide — never what the agent printed.
+   */
+  busyCount(now = Date.now()): number {
+    return this.list().filter((session) => {
+      const live = this.live.get(session.id);
+      const lastOutputAt = session.lastOutputAt === undefined ? undefined : Date.parse(session.lastOutputAt);
+      return isBusy({ running: session.state === "running" && live?.proc !== undefined, lastOutputAt, current: live?.current }, now);
+    }).length;
+  }
+
+  private runningChanged(): void {
+    try {
+      this.deps.onRunningChanged?.();
+    } catch {
+      // keep-awake is a convenience; it must never get in a session's way
+    }
   }
 
   /** The activity log is about changes; the consoles and integrations belong to none, so none of them is reported. */
