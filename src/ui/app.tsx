@@ -25,7 +25,7 @@ import { applyTheme, loadPreference, nextPreference, resolveTheme, savePreferenc
 import { Help } from "./help.tsx";
 import { IconActivity, IconChevronDown, IconClock, IconGitPullRequest, IconHelp, IconKanban, IconLayoutGrid, IconMonitor, IconMoon, IconRefresh, IconSettings, IconSun } from "./icons.tsx";
 import { HeroHomeMark, HeroHomeTitle } from "./heroHome.tsx";
-import { loadDismissed, saveDismissed, UPDATE_REREAD_MS, UpdateBanner } from "./updateBanner.tsx";
+import { loadDismissed, saveDismissed, UPDATE_REREAD_MS, UpdateBanner, VersionLabel } from "./updateBanner.tsx";
 import { WhatsNew } from "./whatsNew.tsx";
 import { SetupWizard } from "./setupWizard.tsx";
 import { setupAutoOpens, shouldOpenSetup } from "./setupState.ts";
@@ -358,11 +358,15 @@ export function App() {
         <div class="hero-brand">
           <HeroHomeMark size={60} />
           <div class="hero-copy">
-            <h1 class="hero-title">
-              <HeroHomeTitle current={route.view === "overview"}>
-                Spec <span class="hero-accent">Control</span>
-              </HeroHomeTitle>
-            </h1>
+            {/* The title and, for a release build, the version it runs (read from the same status as the banner). */}
+            <div class="hero-title-row">
+              <h1 class="hero-title">
+                <HeroHomeTitle current={route.view === "overview"}>
+                  Spec <span class="hero-accent">Control</span>
+                </HeroHomeTitle>
+              </h1>
+              <VersionLabel status={update} />
+            </div>
             <p class="hero-tagline">Mission control for every agent change across your repositories. Never miss a change.</p>
           </div>
           {/* Status and actions: the hero's top corner. */}

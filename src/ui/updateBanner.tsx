@@ -2,6 +2,7 @@
 // release. Hook-free, like the Environment panel: the app shell owns the status and the dismissal, so this renders one.
 // Nothing here makes a request; the links are ones the user follows, and the macOS app opens them in the browser.
 import type { UpdateStatus } from "../shared/types.ts";
+import { isReleaseVersion } from "../shared/versions.ts";
 import { storageKey } from "./storage.ts";
 import { RELEASES_URL } from "./whatsNew.tsx";
 
@@ -17,6 +18,26 @@ export const releaseUrl = (tag: string): string => `${RELEASES_URL}/tag/${encode
 export function bannerVersion(status: UpdateStatus | undefined, dismissed: string | undefined): string | undefined {
   if (!status?.enabled || !status.available || status.latest === undefined) return undefined;
   return status.latest === dismissed ? undefined : status.latest;
+}
+
+/**
+ * The version the header shows (openspec/specs/update-notice, "A release build shows its version in the header"): the
+ * running version when it is a release tag, whether or not checks are on; nothing for `dev`, the demo or before the
+ * status is known.
+ */
+export function headerVersion(status: UpdateStatus | undefined): string | undefined {
+  return status && isReleaseVersion(status.current) ? status.current : undefined;
+}
+
+/** The running release beside the product name, linked to its release page; renders nothing for any other build. */
+export function VersionLabel({ status }: { status: UpdateStatus | undefined }) {
+  const version = headerVersion(status);
+  if (version === undefined) return null;
+  return (
+    <a class="hero-version" href={releaseUrl(version)} target="_blank" rel="noopener noreferrer" aria-label={`Spec Control ${version} release notes`}>
+      {version}
+    </a>
+  );
 }
 
 /** The version dismissed in this browser; unset when storage is unavailable, which shows the banner again. */

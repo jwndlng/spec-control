@@ -235,6 +235,14 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: 
 .hero-home { color: inherit; text-decoration: none; border-radius: var(--radius-sm); }
 .hero-home:hover, .hero-home-mark:hover + .hero-copy .hero-home { color: var(--brand-fg); }
 .hero-home:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--brand-ring); }
+/* The running release beside the title: a quiet pill that wraps under it when the row is narrow. */
+.hero-title-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
+.hero-version {
+  padding: 1px 9px; border: 1px solid var(--border); border-radius: 999px;
+  font-family: var(--font-mono); font-size: 12px; line-height: 18px; color: var(--fg-subtle); text-decoration: none; white-space: nowrap;
+}
+.hero-version:hover { color: var(--brand-fg); border-color: var(--brand-soft); }
+.hero-version:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--brand-ring); }
 .hero-tagline { margin: 0; font-size: 15px; line-height: 1.5; color: var(--fg-subtle); }
 .hero-brand .topbar-end { align-self: start; }
 /* The navigation: large tabs on a glassy track, the active one filled with the accent's soft tint. */
@@ -859,8 +867,6 @@ button.badge.worktree-path.done { color: var(--success); }
 .crumb-link { color: var(--fg-subtle); font-weight: 400; }
 .crumb-link:hover { color: var(--brand-fg); }
 .repo-head .crumbs .sep { color: var(--fg-disabled); font-weight: 400; }
-.repo-head .path { color: var(--fg-subtle); gap: 4px; }
-.repo-head .path code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 /* Inline "new change" form on the repository board header. */
 /* A modal dialog (modal.tsx): a titled panel over the dimmed page, like the change detail view. */

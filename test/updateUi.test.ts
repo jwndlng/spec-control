@@ -5,7 +5,7 @@ import type { UpdateStatus } from "../src/shared/types.ts";
 import { createDemoApi, DEMO_UPDATE_STATUS } from "../src/ui/demo/demoApi.ts";
 import { lastCheckText, updateCheckBlocked, UpdatesPanel } from "../src/ui/settings.tsx";
 import { parseSection, SECTION_IDS } from "../src/ui/settingsSections.ts";
-import { bannerVersion, HOW_TO_UPDATE_URL, loadDismissed, saveDismissed, UPDATE_DISMISSED_KEY, UpdateBanner } from "../src/ui/updateBanner.tsx";
+import { bannerVersion, headerVersion, HOW_TO_UPDATE_URL, loadDismissed, saveDismissed, UPDATE_DISMISSED_KEY, UpdateBanner, VersionLabel } from "../src/ui/updateBanner.tsx";
 import { byTag, textOf } from "./vnode.ts";
 
 const status = (patch: Partial<UpdateStatus> = {}): UpdateStatus => ({
@@ -86,6 +86,34 @@ test("the dismissed version is kept per browser, and blocked storage only means 
 test("the page asks only its own server: the banner module requests nothing", () => {
   const source = readFileSync(join(import.meta.dir, "../src/ui/updateBanner.tsx"), "utf8");
   expect(source).not.toContain("fetch(");
+});
+
+// ---- the version in the header ----
+
+test("a release build shows its version in the header, linked to its release page", () => {
+  expect(headerVersion(status({ current: "v0.12.0" }))).toBe("v0.12.0");
+  const label = VersionLabel({ status: status({ current: "v0.12.0" }) });
+  const [link] = byTag(label, "a");
+  expect(textOf(link)).toBe("v0.12.0");
+  expect(link.props.href).toBe("https://github.com/jwndlng/spec-control/releases/tag/v0.12.0");
+  expect(link.props.target).toBe("_blank");
+  expect(link.props.rel).toBe("noopener noreferrer");
+  expect(link.props["aria-label"]).toContain("v0.12.0");
+});
+
+test("the header version does not depend on checks being on or an update being available", () => {
+  expect(headerVersion(status({ enabled: false, available: false, outcome: "never", latest: undefined }))).toBe("v0.11.2");
+  expect(headerVersion(status({ available: false }))).toBe("v0.11.2");
+});
+
+test("dev, the demo, other versions and an unknown status show no version in the header", () => {
+  for (const current of ["dev", "demo", "v0.12", "0.12.0", "v0.12.0-rc.1", "nightly"]) {
+    expect(headerVersion(status({ current }))).toBeUndefined();
+    expect(VersionLabel({ status: status({ current }) })).toBeNull();
+  }
+  expect(headerVersion(undefined)).toBeUndefined();
+  expect(VersionLabel({ status: undefined })).toBeNull();
+  expect(headerVersion(DEMO_UPDATE_STATUS)).toBeUndefined();
 });
 
 // ---- 4.4 the Updates section ----

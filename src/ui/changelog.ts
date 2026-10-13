@@ -22,6 +22,12 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
       "While an agent session is busy, Spec Control now keeps your Mac from going to sleep on its own, and lets it sleep again once no agent is busy. The display still sleeps, and closing the lid still sleeps the machine. Switch it off under **Settings → Agent sessions → Keep awake while agents work**.",
   },
   {
+    id: "2026-10-13-version-in-header",
+    date: "2026-10-13",
+    title: "See which version you run",
+    summary: "The header now shows the release you run next to **Spec Control**, linked to its release notes — in the browser and in the macOS app.",
+  },
+  {
     id: "2026-10-10-add-from-github",
     date: "2026-10-10",
     title: "Add your GitHub repositories",
