@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-16-desktop-links",
+    date: "2026-10-16",
+    title: "Links open in your browser from the macOS app",
+    summary:
+      "In the macOS app, links to pull requests, issues, release notes and other sites open in your default browser again, while the app window keeps showing the dashboard.",
+  },
+  {
     id: "2026-10-13-keep-awake",
     date: "2026-10-13",
     title: "Your Mac stays awake while agents work",

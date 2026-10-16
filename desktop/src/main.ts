@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { appHome, configuredPortFor, portHome } from "./logic/home.ts";
-import { eventUrl, externalTarget, navigationRules, appOrigin } from "./logic/links.ts";
+import { appOrigin, eventUrl, externalTarget, type LastOpened, navigationEvent, navigationRules, shouldOpen } from "./logic/links.ts";
 import { acquireLock } from "./logic/lock.ts";
 import { countRunning, quitPlan, quitQuestion, stopServer } from "./logic/quit.ts";
 import { loginShellPath } from "./logic/shellPath.ts";
@@ -49,6 +49,8 @@ let child: ReturnType<typeof Bun.spawn> | undefined;
 let output: string[] = [];
 let mainWindow: BrowserWindow | undefined;
 let lastUrl: string | undefined;
+/** The last link handed to the browser, so one click reported as two events opens it once. */
+let lastOpened: LastOpened | undefined;
 let quitting = false;
 let quitInFlight = false;
 let stopping = false;
@@ -80,8 +82,12 @@ function openExternally(url: string): void {
 function follow(url: string | undefined, inWindow: boolean): void {
   if (!url) return;
   const target = externalTarget(url, port);
-  if (target.kind === "external") openExternally(target.url);
-  else if (target.kind === "internal" && !inWindow) mainWindow?.webview.loadURL(url);
+  if (target.kind === "external") {
+    const now = Date.now();
+    if (!shouldOpen(target.url, now, lastOpened)) return;
+    lastOpened = { url: target.url, at: now };
+    openExternally(target.url);
+  } else if (target.kind === "internal" && !inWindow) mainWindow?.webview.loadURL(url);
 }
 
 function showWindow(title: string): void {
@@ -95,8 +101,8 @@ function showWindow(title: string): void {
   win.webview.setNavigationRules(navigationRules(port));
   // A blocked navigation is a link to another origin: it opens in the browser and the window stays where it is.
   win.webview.on("will-navigate", (event: unknown) => {
-    const data = (event as ElectrobunEvent).data as { allowed?: unknown } | undefined;
-    if (data?.allowed === false) follow(eventUrl(data), true);
+    const navigation = navigationEvent((event as ElectrobunEvent).data);
+    if (navigation?.allowed === false) follow(navigation.url, true);
   });
   // `target="_blank"` and `window.open` never open a window of their own.
   win.webview.on("new-window-open", (event: unknown) => follow(eventUrl((event as ElectrobunEvent).data), false));
