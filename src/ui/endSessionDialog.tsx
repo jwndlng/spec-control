@@ -7,7 +7,7 @@ import { api } from "./api.ts";
 import { PullBlockedList, usePull } from "./pull.tsx";
 import { pullNeedsReport, pullOutcome } from "./pullState.ts";
 import { inPlaceLeftover } from "./inPlaceText.ts";
-import { endSeverity, endWarning, pullOffer, removalPreselected, reportShip, worktreeRemovalPossible } from "./sessionState.ts";
+import { endConfirmable, endSeverity, endWarning, pullOffer, removalPreselected, reportShip, worktreeRemovalPossible } from "./sessionState.ts";
 import { useSessionUi } from "./sessions.tsx";
 
 interface Status {
@@ -75,7 +75,7 @@ export function EndSessionDialog() {
   const running = session.state === "running";
   const severity = endSeverity(status?.work);
   const warning = endWarning(status?.work);
-  const offer = pullOffer(repo);
+  const offer = pullOffer(repo, session);
   const pullSelected = offer.offered && (pullChoice ?? offer.preselected);
   const close = () => ui.requestEnd(undefined);
   const run = async (fn: () => Promise<unknown>) => {
@@ -234,7 +234,7 @@ export function EndSessionDialog() {
               ⇪ Ship instead
             </button>
           )}
-          <button type="button" class={`btn sm ${severity === "danger" ? "danger" : "primary"}`} disabled={busy || !status} onClick={() => void confirm()}>
+          <button type="button" class={`btn sm ${severity === "danger" ? "danger" : "primary"}`} disabled={!endConfirmable(session, status, busy)} onClick={() => void confirm()}>
             {pulling ? "Pulling…" : severity === "danger" ? "End anyway" : running ? "End session" : "Done"}
           </button>
         </div>

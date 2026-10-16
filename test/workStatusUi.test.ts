@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { ChangeSession, Session, SessionWorktree, WorkStatus } from "../src/shared/types.ts";
 import { ConflictBadge } from "../src/ui/sessions.tsx";
 import { byTag, textOf } from "./vnode.ts";
-import { conflictBadge, consoleAvailable, consoleSession, consoleSessions, consoleTabAvailable, endSeverity, pullOffer, endWarning, nextStepFor, openWork, removalPreselected, resolvable, sessionsForChange, staleAge, workBadge, worktreeForChange, worktreeOfSession, worktreeRemovalPossible } from "../src/ui/sessionState.ts";
+import { conflictBadge, consoleAvailable, consoleSession, consoleSessions, consoleTabAvailable, endConfirmable, endSeverity, pullOffer, endWarning, nextStepFor, openWork, removalPreselected, resolvable, sessionsForChange, staleAge, workBadge, worktreeForChange, worktreeOfSession, worktreeRemovalPossible } from "../src/ui/sessionState.ts";
 
 const NOW = Date.parse("2026-09-21T12:00:00Z");
 const ago = (hours: number) => new Date(NOW - hours * 3_600_000).toISOString();
@@ -92,11 +92,33 @@ test("ending is questioned as loudly as the work is unshipped", () => {
 
 test("the pull is offered for a repository it can run in, and then always starts ticked", () => {
   // whatever the work status: it does not enter the decision at all
-  expect(pullOffer({ isGit: true, ok: true })).toEqual({ offered: true, preselected: true });
+  const inWorktree = { inPlace: false };
+  expect(pullOffer({ isGit: true, ok: true }, inWorktree)).toEqual({ offered: true, preselected: true });
   // nothing the pull action can run in: neither offered nor ticked
-  expect(pullOffer({ isGit: false, ok: true })).toEqual({ offered: false, preselected: false });
-  expect(pullOffer({ isGit: true, ok: false })).toEqual({ offered: false, preselected: false });
-  expect(pullOffer(undefined)).toEqual({ offered: false, preselected: false });
+  expect(pullOffer({ isGit: false, ok: true }, inWorktree)).toEqual({ offered: false, preselected: false });
+  expect(pullOffer({ isGit: true, ok: false }, inWorktree)).toEqual({ offered: false, preselected: false });
+  expect(pullOffer(undefined, inWorktree)).toEqual({ offered: false, preselected: false });
+});
+
+test("an in-place session gets no pull offer, in a git repository with or without a commit", () => {
+  // The repository snapshot does not tell a repository with no commit apart here: it is `isGit` and `ok` either way,
+  // and a session that started in place stays in place after the first commit — so only the session decides.
+  const inPlace = { inPlace: true };
+  const noCommit = { isGit: true, ok: true, noCommit: true as const };
+  expect(pullOffer(noCommit, inPlace)).toEqual({ offered: false, preselected: false });
+  expect(pullOffer({ isGit: true, ok: true }, inPlace)).toEqual({ offered: false, preselected: false });
+  expect(pullOffer({ isGit: true, ok: true }, undefined)).toEqual({ offered: false, preselected: false });
+});
+
+test("the end dialog confirms an in-place session at once, and a worktree session once its status arrived", () => {
+  const inPlace = { inPlace: true };
+  const inWorktree = { inPlace: false };
+  const status = { removable: true };
+  expect(endConfirmable(inPlace, undefined, false)).toBe(true);
+  expect(endConfirmable(inWorktree, undefined, false)).toBe(false);
+  expect(endConfirmable(inWorktree, status, false)).toBe(true);
+  // a request in flight blocks the button in every case
+  for (const session of [inPlace, inWorktree]) for (const s of [undefined, status]) expect(endConfirmable(session, s, true)).toBe(false);
 });
 
 test("the worktree removal starts ticked exactly when the worktree may be removed", () => {
@@ -239,8 +261,8 @@ test("a session in a folder without git has no worktree, so no work status, no S
   expect(worktreeRemovalPossible(undefined)).toBe(false);
 
   // Ending it offers no pull either: the pull action only runs in a git repository.
-  expect(pullOffer({ isGit: false, ok: true })).toEqual({ offered: false, preselected: false });
-  expect(pullOffer({ isGit: true, ok: true })).toEqual({ offered: true, preselected: true });
+  expect(pullOffer({ isGit: false, ok: true }, inRepo)).toEqual({ offered: false, preselected: false });
+  expect(pullOffer({ isGit: true, ok: true }, inWorktree)).toEqual({ offered: true, preselected: true });
 });
 
 test("the conflict badge names the base, the files and how fresh the answer is", () => {
