@@ -11,4 +11,4 @@
 ## 3. Check
 
 - [x] 3.1 Run `bun run check`; verify that lint, typecheck and tests pass.
-- [~] 3.2 In `bun run dev`, track a fresh `git init` folder with an `openspec/` change, start Implement (it runs in place), then click **End session**; verify the button is enabled, no pull is offered, and confirming ends the agent. Then click **Clean up** and verify **Done** is enabled.
+- [x] 3.2 In `bun run dev`, track a fresh `git init` folder with an `openspec/` change, start Implement (it runs in place), then click **End session**; verify the button is enabled, no pull is offered, and confirming ends the agent. Then click **Clean up** and verify **Done** is enabled.
