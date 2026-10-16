@@ -186,8 +186,17 @@ export function worktreeRemovalPossible(session: Pick<Session, "inPlace"> | unde
   return session !== undefined && !session.inPlace;
 }
 
+/**
+ * Whether the end-session dialog's confirm button can be pressed: never while a request runs, and for a session with a
+ * worktree only once its status arrived, since the warning and the removal are decided on it. An in-place session has
+ * no worktree status to wait for, so it can be confirmed at once.
+ */
+export function endConfirmable(session: Pick<Session, "inPlace"> | undefined, status: unknown, busy: boolean): boolean {
+  return !busy && (!worktreeRemovalPossible(session) || status !== undefined);
+}
+
 export interface PullOffer {
-  /** Whether the end-session dialog offers to pull at all: only a repository the pull action can run in. */
+  /** Whether the end-session dialog offers to pull at all: only for a worktree session, in a repository the pull action can run in. */
   offered: boolean;
   /** Whether that offer starts ticked: whenever it is made, so a habitual confirm keeps the checkout current. */
   preselected: boolean;
@@ -198,10 +207,12 @@ export interface PullOffer {
  * specs and progress are read from — up to date with it, ticked whatever the work status: the work status is only as
  * fresh as the last fetch, and the pull is fast-forward-only and never touches the session's worktree or branch.
  * Deliberately independent of whether the worktree can be removed: a worktree kept for a reason should still let the
- * checkout catch up.
+ * checkout catch up. An in-place session gets no offer: it ran in the main checkout itself, and in a repository with
+ * no commit there is no upstream to fast-forward from — decided from the session, so one that kept running after the
+ * first commit keeps its in-place dialog.
  */
-export function pullOffer(repo: Pick<RepoSnapshot, "isGit" | "ok"> | undefined): PullOffer {
-  const offered = repo?.isGit === true && repo.ok === true;
+export function pullOffer(repo: Pick<RepoSnapshot, "isGit" | "ok"> | undefined, session: Pick<Session, "inPlace"> | undefined): PullOffer {
+  const offered = repo?.isGit === true && repo.ok === true && worktreeRemovalPossible(session);
   return { offered, preselected: offered };
 }
 
