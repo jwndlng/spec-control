@@ -9,7 +9,7 @@
 ## 2. Wiring
 
 - [x] 2.1 In `desktop/src/main.ts`, make the `will-navigate` handler follow the URL only when `navigationEvent(...).allowed === false`, and route both it and `new-window-open` through the once-per-URL helper before `Utils.openExternal`; verify `bun run check` passes and `grep -n "data?.allowed" desktop/src/main.ts` finds nothing
-- [~] 2.2 Build the app (`bun run build:desktop`) and, in its window, click a pull request link, an issue link, the version link in the header and a link in a rendered Markdown artifact; verify each opens once in the default browser and the window keeps showing the dashboard, and that a link within the dashboard still navigates in the window
+- [x] 2.2 Build the app (`bun run build:desktop`) and, in its window, click a pull request link, an issue link, the version link in the header and a link in a rendered Markdown artifact; verify each opens once in the default browser and the window keeps showing the dashboard, and that a link within the dashboard still navigates in the window
 
 ## 3. Release notes
 
