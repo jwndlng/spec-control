@@ -25,6 +25,7 @@ import { columnKind } from "./boardMarks.ts";
 import { IconCheck, IconChevronRight, IconCircleDot, IconCopy, IconPlus, IconTerminal } from "./icons.tsx";
 import { SessionControls, useSessionUi } from "./sessions.tsx";
 import { archivedShown, cardSessionControls, hasRunningSession, cardWorkingState, type CardWorkingState, consoleTabAvailable, projectConsoleUnavailable } from "./sessionState.ts";
+import { ProjectSwitch } from "./projectSwitch.tsx";
 import { boardFrom, changePath, CONSOLE_TAB, repoPath, serializeDetailQuery } from "./routes.ts";
 import { currentQuery, followInApp, href, navigate, replaceQuery } from "./url.ts";
 import { ProjectConsoleButton } from "./projectConsole.tsx";
@@ -380,7 +381,8 @@ function Column({ label, cards, now, hot, showRepo, from, countLabel, groups }: 
   );
 }
 
-function RepoHeader({ repo, config, now, stats, onCreated }: { repo: RepoSnapshot; config: Config | null; now: number; stats: { open: number; toArchive: number }; onCreated: () => void }) {
+// `projects`: every repository of the snapshot, for the breadcrumb's project switcher.
+function RepoHeader({ repo, projects, config, now, stats, onCreated }: { repo: RepoSnapshot; projects: RepoSnapshot[]; config: Config | null; now: number; stats: { open: number; toArchive: number }; onCreated: () => void }) {
   const labels = displayedLabels(config?.repos.find((r) => r.id === repo.id), repo.detectedLabels, config?.labelColors);
   const updated = repo.lastUpdatedAt ? relTime(repo.lastUpdatedAt, now) : undefined;
   const notice = branchNotice(repo);
@@ -406,7 +408,7 @@ function RepoHeader({ repo, config, now, stats, onCreated }: { repo: RepoSnapsho
               Projects
             </a>
             <span class="sep">/</span>
-            <span title={repo.path}>{repo.name}</span>
+            <ProjectSwitch repos={projects} current={repo} />
           </h1>
           <span class="divider" aria-hidden="true" />
           <BoardStats open={stats.open} toArchive={stats.toArchive} />
@@ -586,7 +588,7 @@ export function Kanban({ snapshot, config, repoId, query, onReload }: { snapshot
 
   return (
     <>
-      {single && repos[0] && <RepoHeader repo={repos[0]} config={config} now={now} stats={stats} onCreated={() => onReload?.()} />}
+      {single && repos[0] && <RepoHeader repo={repos[0]} projects={snapshot?.repos ?? repos} config={config} now={now} stats={stats} onCreated={() => onReload?.()} />}
       {!single && (
         <div class="band">
           <div class="band-main">
