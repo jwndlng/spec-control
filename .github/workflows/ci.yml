@@ -1,9 +1,15 @@
 name: ci
 
+# Changes to this repository's own openspec/ tree or to Markdown at the root are never built or tested, so they start
+# no run. `*` does not match `/`: Markdown under test/fixtures/ still runs CI. No status check is required on main; if
+# one is added, replace this filter with a first job that detects the changed paths, so a skipped run still reports.
 on:
   push:
     branches: [main]
+    paths-ignore: ['openspec/**', '*.md']
   pull_request:
+    paths-ignore: ['openspec/**', '*.md']
+  workflow_dispatch:
 
 # A newer push to the same ref supersedes the run in progress.
 concurrency:
@@ -21,9 +27,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS is the primary platform and has a case-insensitive file system,
-        # which path-handling tests depend on.
-        os: [ubuntu-latest, macos-latest]
+        # macOS is the primary platform and has a case-insensitive file system, which path-handling tests depend on.
+        # Its minutes are the expensive ones, so pull requests run on Linux only; macOS runs once per merge to main
+        # and on a manual dispatch (`gh workflow run ci --ref <branch>`) for a branch that needs it before merging.
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest","macos-latest"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,7 +51,13 @@ jobs:
         run: bun run build:ui
 
       - name: Lint, typecheck, test
+        if: runner.os == 'Linux'
         run: bun run check
+
+      # Lint, typecheck, the demo and the clean tree do not depend on the platform; Linux checks them for this commit.
+      - name: Test
+        if: runner.os != 'Linux'
+        run: bun test
 
       - name: Build single binary
         run: bun run build
@@ -56,7 +69,9 @@ jobs:
 
       # Published to GitHub Pages from main (pages.yml); building it here makes a broken demo block the pull request.
       - name: Build demo
+        if: runner.os == 'Linux'
         run: bun run build:demo
 
       - name: Tree is clean after a full cycle
+        if: runner.os == 'Linux'
         run: test -z "$(git status --porcelain)" || (git status --porcelain && exit 1)
