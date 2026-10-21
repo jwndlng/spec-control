@@ -28,8 +28,8 @@
 
 ## 4. Verification
 
-- [ ] 4.1 Run `bun run check` and confirm it passes, since no application code changes. Then push the branch and confirm
+- [x] 4.1 Run `bun run check` and confirm it passes, since no application code changes. Then push the branch and confirm
       the pull request shows only `check (ubuntu-latest)`.
-- [ ] 4.2 Run `gh workflow run ci --ref feat/reduce-ci` and confirm the dispatched run shows both
+- [x] 4.2 Run `gh workflow run ci --ref feat/reduce-ci` and confirm the dispatched run shows both
       `check (ubuntu-latest)` and `check (macos-latest)`, with the macOS job skipping lint, typecheck, the demo build
       and the clean-tree check.
