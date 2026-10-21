@@ -210,8 +210,9 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         <li>
           <strong>Auto fetch</strong>, a project's own setting on Projects, fetches its remote every minute unless you pick
           another interval — from every 15 seconds to every hour — or switch it off, so a branch whose pull request merged
-          shows as merged without a pull. It only fetches: the checkout itself changes only when you Pull. Beside Pull you see when the project was last fetched, and why if an automatic
-          fetch failed.
+          shows as merged without a pull. It only fetches: the checkout itself changes only when you Pull. Beside Pull on Projects, and in the quick view under a board's title, you see when the
+          project was last fetched, and why if an automatic fetch failed; the board's <strong>Details</strong> shows the exact time and the
+          interval.
         </li>
         <li>
           <strong>Clean up</strong> on a repository's board removes leftover worktrees and local branches whose work is

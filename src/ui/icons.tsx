@@ -200,6 +200,15 @@ export const IconHelp = ({ size }: { size?: number }) => (
   </Icon>
 );
 
+/** Details: an i in a circle (lucide `info`). */
+export const IconInfo = ({ size }: { size?: number }) => (
+  <Icon size={size}>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 16v-4" />
+    <path d="M12 8h.01" />
+  </Icon>
+);
+
 export const IconGitBranch = ({ size }: { size?: number }) => (
   <Icon size={size}>
     <path d="M15 6a9 9 0 0 0-9 9V3" />

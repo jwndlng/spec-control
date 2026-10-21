@@ -9,6 +9,7 @@ import { CloseButton, closeOnEscape, DetailOverlay } from "./changeDetail.tsx";
 import { cdCommand } from "./format.ts";
 import { IconTerminal } from "./icons.tsx";
 import { IN_PLACE_WARNING } from "./integrate.tsx";
+import type { ActionDescription } from "./projectDetails.ts";
 import { Copy, TerminalView, useTerminalGeneration } from "./sessionPanel.tsx";
 import { projectConsoleControl, projectConsoleUnavailable, sessionBadge } from "./sessionState.ts";
 import { SessionBadgeView, useSessionUi } from "./sessions.tsx";
@@ -28,7 +29,8 @@ function useProjectConsoles(repoId: string | undefined): { name: string; path: s
  * agent sessions are off; inactive, with the reason in its name and tooltip, while the project's own sessions are off or
  * its agent is missing. It never opens the board it sits on.
  */
-export function ProjectConsoleButton({ repoId, variant }: { repoId: string; variant: "board" | "project" }) {
+/** `description` (the board's): the tooltip, and the accessible description through the element with its id. */
+export function ProjectConsoleButton({ repoId, variant, description }: { repoId: string; variant: "board" | "project"; description?: ActionDescription }) {
   const ui = useSessionUi();
   const project = useProjectConsoles(repoId);
   const unavailable = projectConsoleUnavailable(ui.config, ui.agents, repoId);
@@ -40,7 +42,8 @@ export function ProjectConsoleButton({ repoId, variant }: { repoId: string; vari
       type="button"
       class={`btn${variant === "project" ? " sm" : ""} console-btn project-console-btn on-${variant}`}
       aria-label={control.name}
-      title={control.title}
+      title={description?.text ?? control.title}
+      aria-describedby={description?.id}
       disabled={control.disabled}
       onClick={(e) => {
         e.stopPropagation();

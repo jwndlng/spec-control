@@ -849,6 +849,19 @@ button.badge.worktree-path.done { color: var(--success); }
 .band-actions .btn { padding: 8px 14px; font-size: 13px; }
 .band-actions .btn.primary { padding: 8px 18px; }
 .band-actions .pull { gap: var(--gap-1); }
+/* The repository board's actions in named groups: each wraps as a whole, its caption above its actions. */
+.band-actions:has(.action-group) { align-items: flex-end; gap: 10px var(--gap-2); }
+.action-group { display: flex; flex-direction: column; gap: 4px; }
+.action-group-caption {
+  font-size: 10px; font-weight: 600; line-height: 14px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--fg-subtle);
+}
+.action-group-actions { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--gap-1); }
+/* The quick view: counts, checkouts, pull requests, the fetch note, a config marker and Details, in one row. */
+.repo-head .quick-view { gap: 6px; }
+.repo-head .quick-view .stats { margin-right: 4px; }
+.details-button { height: 26px; padding: 0 10px; font-size: 12px; }
+.repo-head .band-title .settings-btn { align-self: center; }
 @media (max-width: 900px) {
   .band { grid-template-columns: minmax(0, 1fr); padding: 20px var(--gap-2) 14px; }
   .band-actions { justify-content: flex-start; }
@@ -1211,6 +1224,23 @@ button.badge.worktree-path.done { color: var(--success); }
 .checkout-list li + li { border-top: 1px solid var(--border-light); }
 .checkout-list .checkout-path { min-width: 0; font-size: 11px; color: var(--fg-subtle); overflow-wrap: anywhere; }
 .branches-button { height: 26px; padding: 0 10px; font-size: 12px; }
+/* The project details overlay: labelled sections, one after another. */
+.project-details { display: flex; flex-direction: column; padding: 4px 24px 20px; }
+.details-section { display: flex; flex-direction: column; gap: 8px; padding: 14px 0; border-top: 1px solid var(--border-light); scroll-margin-top: 8px; }
+.details-section:first-child { border-top: 0; }
+.details-section h3 { margin: 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-subtle); }
+.details-section h3:focus-visible { outline: none; color: var(--brand-fg); }
+.details-section .checkout-list { padding: 0; }
+.details-section .hint { margin: 0; padding: 0; text-align: left; }
+.details-section .notice { margin: 0; }
+.details-section > .btn { align-self: flex-start; }
+.details-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; font-size: 13px; }
+.details-fact { display: contents; }
+.details-fact dt { color: var(--fg-subtle); }
+.details-fact dd { margin: 0; min-width: 0; color: var(--fg-body); }
+.details-path { font-size: 12px; overflow-wrap: anywhere; }
+.details-line { margin: 0; font-size: 13px; color: var(--fg-body); }
+.details-profiles { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .branches-button.attention .control-value { color: var(--warning); background: var(--warning-bg); }
 .new-change { display: flex; flex-direction: column; gap: 16px; padding: 22px 24px 20px; }
 .new-change .row { display: flex; gap: 8px; align-items: flex-start; }

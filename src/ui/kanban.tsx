@@ -1,18 +1,15 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
-import { displayedLabels } from "../shared/labels.ts";
-import { LabelChips } from "./labels.tsx";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { boardColumns, isComplete } from "../shared/columns.ts";
 import { waitingNote } from "../shared/dependencies.ts";
 import { linkedPullRequest } from "../shared/pullRequestLink.ts";
-import { autoFetchInterval, frameworkInfo, type ChangeSession, type ChangeSnapshot, type Config, type PullRequest, type PullRequestsResponse, type RepoSnapshot, type Snapshot } from "../shared/types.ts";
+import { frameworkInfo, type ChangeSession, type ChangeSnapshot, type Config, type PullRequest, type PullRequestsResponse, type RepoSnapshot, type Snapshot } from "../shared/types.ts";
 import { NoRepos } from "./empty.tsx";
 import { parseFilters, resolveLayout, serializeFilters, STACK_BELOW_PX, type Filters } from "./filters.ts";
 import { FilterBar } from "./boardFilters.tsx";
 import { Stat } from "./band.tsx";
 import { BranchBadge, CheckoutSummaryButton } from "./checkout.tsx";
-import { CardPullRequest, RepoPullRequestsButton, usePullRequests } from "./pullRequests.tsx";
+import { CardPullRequest, RepoPullRequestsButton, RepoPullRequestsDialog, usePullRequests } from "./pullRequests.tsx";
 import { armWatch, watchPlan } from "./pullRequestsState.ts";
-import { hasCheckoutInfo } from "./checkoutMarkers.ts";
 import { CleanupButton } from "./cleanup.tsx";
 import { ImportIssuesDialog, SourceIssueLink } from "./importIssues.tsx";
 import { NewChangeDialog } from "./newChangeForm.tsx";
@@ -22,13 +19,17 @@ import { changeRef, relTime } from "./format.ts";
 import { isMinimized, loadGroupState, saveGroupState, toggleGroup, type GroupOverrides } from "./groupState.ts";
 import { assignRepoHues, dependencyChoices, groupByRepo, newChangeTargets, recentArchived } from "./repoGroups.ts";
 import { columnKind } from "./boardMarks.ts";
-import { IconCheck, IconChevronRight, IconCircleDot, IconCopy, IconPlus, IconTerminal } from "./icons.tsx";
+import { IconCheck, IconChevronRight, IconCircleDot, IconCopy, IconInfo, IconPlus, IconTerminal } from "./icons.tsx";
 import { SessionControls, useSessionUi } from "./sessions.tsx";
 import { archivedShown, cardSessionControls, hasRunningSession, cardWorkingState, type CardWorkingState, consoleTabAvailable, projectConsoleUnavailable } from "./sessionState.ts";
 import { ProjectSwitch } from "./projectSwitch.tsx";
 import { boardFrom, changePath, CONSOLE_TAB, repoPath, serializeDetailQuery } from "./routes.ts";
 import { currentQuery, followInApp, href, navigate, replaceQuery } from "./url.ts";
 import { ProjectConsoleButton } from "./projectConsole.tsx";
+import { actionDescriptionId, actionGroups, afterBoardDisable, autoFetchSecondsOf, type BoardAction, boardSettingsOffered, type DetailSection, quickViewFacts } from "./projectDetails.ts";
+import { ProjectDetailsDialog } from "./projectDetails.tsx";
+import { ProjectSettingsDialog, RepoLabelsDialog, SettingsButton } from "./projectSettings.tsx";
+import { useTracking } from "./untracked.tsx";
 
 const ARCHIVED_LIMIT = 25;
 
@@ -382,16 +383,60 @@ function Column({ label, cards, now, hot, showRepo, from, countLabel, groups }: 
 }
 
 // `projects`: every repository of the snapshot, for the breadcrumb's project switcher.
-function RepoHeader({ repo, projects, config, now, stats, onCreated }: { repo: RepoSnapshot; projects: RepoSnapshot[]; config: Config | null; now: number; stats: { open: number; toArchive: number }; onCreated: () => void }) {
-  const labels = displayedLabels(config?.repos.find((r) => r.id === repo.id), repo.detectedLabels, config?.labelColors);
-  const updated = repo.lastUpdatedAt ? relTime(repo.lastUpdatedAt, now) : undefined;
+function RepoHeader({ repo, projects, config, now, stats, onCreated, onConfig }: { repo: RepoSnapshot; projects: RepoSnapshot[]; config: Config | null; now: number; stats: { open: number; toArchive: number }; onCreated: () => void; onConfig: (config: Config) => void }) {
+  const facts = quickViewFacts(repo, config, now);
   const notice = branchNotice(repo);
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
-  const canGit = repo.isGit && repo.ok;
-  // The same check the console control renders on, so the action area never shows up empty; it needs no good scan.
+  // The details overlay and the pull-requests dialog, each with the control focus goes back to when it closes.
+  const [details, setDetails] = useState<{ section?: DetailSection; opener: HTMLElement } | null>(null);
+  const [prs, setPrs] = useState<{ opener: HTMLElement | null } | null>(null);
+  // Set while the overlay hands over to the pull-requests dialog, so its closing does not pull focus behind that dialog.
+  const handingOver = useRef(false);
+  // The same check the console control renders on, so a group never shows up empty; it needs no good scan.
   const ui = useSessionUi();
-  const consoleOffered = projectConsoleUnavailable(ui.config, ui.agents, repo.id) !== null;
+  const groups = actionGroups({ console: projectConsoleUnavailable(ui.config, ui.agents, repo.id), isGit: repo.isGit, ok: repo.ok });
+  // The project's own settings, as on the overview; Disable leaves for the overview once it is saved.
+  const tracking = useTracking({
+    onConfig,
+    rediscover: () => {},
+    onDisabled: (id) => {
+      const to = afterBoardDisable(id, repo.id);
+      if (to) navigate(to);
+    },
+  });
+  const repoConfig = config?.repos.find((r) => r.id === repo.id);
+  const settingsOffered = boardSettingsOffered(config, repo.id);
+  const openDetails = (opener: HTMLElement, section?: DetailSection) => {
+    handingOver.current = false;
+    setDetails({ section, opener });
+  };
+  const action = (a: BoardAction) => {
+    const description = { id: actionDescriptionId(a.id), text: a.description };
+    switch (a.id) {
+      case "console":
+        return <ProjectConsoleButton key={a.id} repoId={repo.id} variant="board" description={description} />;
+      case "pull":
+        return <PullButton key={a.id} repoId={repo.id} repoName={repo.name} description={description} />;
+      case "cleanup":
+        return <CleanupButton key={a.id} repoId={repo.id} repoName={repo.name} onDone={onCreated} description={description} />;
+      case "import":
+        // Every eligible git repository: whether it is on GitHub is the dialog's to say, after asking.
+        return (
+          <button key={a.id} type="button" class="btn" onClick={() => setImporting(true)} title={description.text} aria-describedby={description.id}>
+            <IconCircleDot size={15} />
+            Import from issues
+          </button>
+        );
+      case "newChange":
+        return (
+          <button key={a.id} type="button" class="btn primary" onClick={() => setCreating(true)} title={description.text} aria-describedby={description.id}>
+            <IconPlus size={15} />
+            New change
+          </button>
+        );
+    }
+  };
   return (
     <div class="band repo-head">
       <div class="band-main">
@@ -410,53 +455,45 @@ function RepoHeader({ repo, projects, config, now, stats, onCreated }: { repo: R
             <span class="sep">/</span>
             <ProjectSwitch repos={projects} current={repo} />
           </h1>
-          <span class="divider" aria-hidden="true" />
-          <BoardStats open={stats.open} toArchive={stats.toArchive} />
+          {settingsOffered && <SettingsButton id={repo.id} name={repo.name} tracking={tracking} />}
         </div>
-        {/* The repository's state: its checkouts, the config it carries and its age. Its actions have their own area. */}
-        <div class="row status">
-          {/* Snapshots cached by older versions know no checkouts: fall back to the current branch. */}
-          {hasCheckoutInfo(repo.worktrees) ? <CheckoutSummaryButton checkouts={repo.worktrees} repoName={repo.name} /> : repo.currentBranch && <BranchBadge branch={repo.currentBranch} hint="current branch" />}
-          {/* A repository without git has no remote and no pull requests, so it gets no control. */}
-          {repo.isGit && <RepoPullRequestsButton repoId={repo.id} repoName={repo.name} />}
-          <LabelChips labels={labels} />
-          {repo.sharedConfig?.unreadable && (
-            <span class="badge danger" title="openspec/config.yaml is missing, not valid YAML, or has malformed shared-config markers">
-              ⚙ config unreadable
+        {/* The quick view: what matters at a glance. The rest is in Details; the actions have their own area. */}
+        <div class="row status quick-view">
+          <BoardStats open={stats.open} toArchive={stats.toArchive} />
+          {facts.checkouts === "summary" ? (
+            <CheckoutSummaryButton checkouts={repo.worktrees} onOpen={(opener) => openDetails(opener, "checkouts")} />
+          ) : (
+            facts.checkouts === "branch" && repo.currentBranch && <BranchBadge branch={repo.currentBranch} hint="current branch" />
+          )}
+          {facts.pullRequests && <RepoPullRequestsButton repoId={repo.id} onOpen={(opener) => setPrs({ opener })} />}
+          {facts.fetchNote && <FetchNoteBadge input={{ ...repo, autoFetchSeconds: autoFetchSecondsOf(config, repo.id) }} now={now} />}
+          {facts.sharedConfig && (
+            <span class={`badge ${facts.sharedConfig.tone}`} title={facts.sharedConfig.detail}>
+              {facts.sharedConfig.label}
             </span>
           )}
-          {repo.sharedConfig?.applied.map((p) => (
-            <span key={p.id} class={`badge ${p.state === "in-sync" ? "" : "warning"}`} title="Shared OpenSpec config profile carried by openspec/config.yaml">
-              ⚙ {p.id}
-              {p.state === "in-sync" ? "" : ` · ${p.state}`}
-            </span>
-          ))}
-          {updated && (
-            <span class="badge" title={repo.lastUpdatedAt}>
-              updated {updated === "just now" ? updated : `${updated} ago`}
-            </span>
-          )}
+          <button type="button" class="control details-button" aria-haspopup="dialog" aria-label={`Details of ${repo.name}`} title="Everything about this project: its path, checkouts, sync, pull requests, shared config and labels" onClick={(e) => openDetails(e.currentTarget)}>
+            <IconInfo size={13} />
+            Details
+          </button>
         </div>
       </div>
-      {(canGit || repo.ok || consoleOffered) && (
+      {groups.length > 0 && (
         <div class="band-actions">
-          <ProjectConsoleButton repoId={repo.id} variant="board" />
-          {canGit && <PullButton repoId={repo.id} repoName={repo.name} />}
-          {canGit && <FetchNoteBadge input={{ ...repo, autoFetchSeconds: autoFetchInterval(config?.repos.find((r) => r.id === repo.id)) }} now={now} />}
-          {canGit && <CleanupButton repoId={repo.id} repoName={repo.name} onDone={onCreated} />}
-          {/* Every eligible git repository: whether it is on GitHub is the dialog's to say, after asking. */}
-          {canGit && (
-            <button type="button" class="btn" onClick={() => setImporting(true)} title="Pick open GitHub issues and import them as changes">
-              <IconCircleDot size={15} />
-              Import from issues
-            </button>
-          )}
-          {repo.ok && (
-            <button type="button" class="btn primary" onClick={() => setCreating(true)}>
-              <IconPlus size={15} />
-              New change
-            </button>
-          )}
+          {groups.map((g) => (
+            // biome-ignore lint/a11y/useSemanticElements: a fieldset would bring legend/border styling the action group does not want
+            <div key={g.id} class="action-group" role="group" aria-labelledby={`board-group-${g.id}`}>
+              <span class="action-group-caption" id={`board-group-${g.id}`}>
+                {g.caption}
+              </span>
+              <div class="action-group-actions">{g.actions.map(action)}</div>
+              {g.actions.map((a) => (
+                <span key={a.id} id={actionDescriptionId(a.id)} class="visually-hidden">
+                  {a.description}
+                </span>
+              ))}
+            </div>
+          ))}
         </div>
       )}
       {notice && (
@@ -470,6 +507,26 @@ function RepoHeader({ repo, projects, config, now, stats, onCreated }: { repo: R
           {w}
         </div>
       ))}
+      {details && (
+        <ProjectDetailsDialog
+          repo={repo}
+          config={config}
+          now={now}
+          section={details.section}
+          returnFocus={() => (handingOver.current ? null : details.opener)}
+          onClose={() => setDetails(null)}
+          onOpenPullRequests={() => {
+            handingOver.current = true;
+            setDetails(null);
+            setPrs({ opener: details.opener });
+          }}
+        />
+      )}
+      {prs && <RepoPullRequestsDialog repoId={repo.id} repoName={repo.name} onClose={() => setPrs(null)} returnFocus={() => prs.opener} />}
+      {settingsOffered && config && repoConfig && tracking.settingsOpen === repo.id && <ProjectSettingsDialog repo={repoConfig} config={config} isGit={repo.isGit} tracking={tracking} />}
+      {config && repoConfig && tracking.labelsOpen === repo.id && (
+        <RepoLabelsDialog repo={repoConfig} repos={config.repos} detected={repo.detectedLabels ?? []} labelColors={config.labelColors} tracking={tracking} />
+      )}
       {importing && <ImportIssuesDialog target={{ repoId: repo.id, repoName: repo.name, changes: repo.changes }} onClose={() => setImporting(false)} onImported={onCreated} />}
       {creating && <NewChangeDialog target={{ repoId: repo.id, repoName: repo.name, changes: dependencyChoices(repo.changes) }} onClose={() => setCreating(false)} onCreated={() => { setCreating(false); onCreated(); }} />}
     </div>
@@ -517,7 +574,7 @@ export function initialFilters(query: string, repoId: string | undefined): Filte
  * The combined board, or one repository's board when `repoId` is set. Its filters come from `query` when given — the
  * board behind an open detail view, where the URL holds the detail view's query — and from the URL otherwise.
  */
-export function Kanban({ snapshot, config, repoId, query, onReload }: { snapshot: Snapshot | null; config: Config | null; repoId?: string; query?: string; onReload?: () => void }) {
+export function Kanban({ snapshot, config, repoId, query, onReload, onConfig = () => {} }: { snapshot: Snapshot | null; config: Config | null; repoId?: string; query?: string; onReload?: () => void; onConfig?: (config: Config) => void }) {
   const [filters, setFiltersState] = useState<Filters>(() => initialFilters(query ?? currentQuery(), repoId));
   const { worktrees, sessions } = useSessionUi();
   const layout = resolveLayout(filters.layout, useNarrowWindow());
@@ -588,7 +645,7 @@ export function Kanban({ snapshot, config, repoId, query, onReload }: { snapshot
 
   return (
     <>
-      {single && repos[0] && <RepoHeader repo={repos[0]} projects={snapshot?.repos ?? repos} config={config} now={now} stats={stats} onCreated={() => onReload?.()} />}
+      {single && repos[0] && <RepoHeader repo={repos[0]} projects={snapshot?.repos ?? repos} config={config} now={now} stats={stats} onCreated={() => onReload?.()} onConfig={onConfig} />}
       {!single && (
         <div class="band">
           <div class="band-main">
