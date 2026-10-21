@@ -564,75 +564,79 @@ export function PullRequestsView({ snapshot }: { snapshot: Snapshot | null }) {
  * The board header's pull requests control and its dialog. Opening it refreshes the repository's list when that list
  * is stale; the board itself never contacts GitHub.
  */
-export function RepoPullRequestsButton({ repoId, repoName }: { repoId: string; repoName: string }) {
+export function RepoPullRequestsButton({ repoId, onOpen }: { repoId: string; onOpen: (opener: HTMLElement) => void }) {
   const ui = usePullRequests();
-  const [open, setOpen] = useState(false);
   const count = openCount(ui.data, repoId);
+  const label = count.open === undefined ? "Pull requests" : `${count.open} open ${count.open === 1 ? "PR" : "PRs"}`;
+  return (
+    <button
+      type="button"
+      class={`control pr-button ${count.awaitingMe ? "attention" : ""}`}
+      aria-haspopup="dialog"
+      title={count.open === undefined ? (count.reason ?? "pull requests have not been fetched yet") : "This repository's pull requests on GitHub"}
+      onClick={(e) => onOpen(e.currentTarget)}
+    >
+      <IconGitPullRequest size={13} />
+      {label}
+      {count.awaitingMe > 0 && <span class="control-value">{count.awaitingMe} for you</span>}
+    </button>
+  );
+}
+
+/**
+ * The repository's pull requests in a dialog, opened from the board's quick view or its project details. Opening it is
+ * one of the ways a stale cache is refreshed (openspec/specs/pull-requests), wherever it was opened from.
+ */
+export function RepoPullRequestsDialog({ repoId, repoName, onClose, returnFocus }: { repoId: string; repoName: string; onClose: () => void; returnFocus?: () => HTMLElement | null }) {
+  const ui = usePullRequests();
   const list = ui.data?.repos.find((r) => r.repoId === repoId);
   const groups = useMemo(
     () => (ui.data ? pullRequestEntries(ui.data, [{ id: repoId, name: repoName }], { ...DEFAULT_PR_FILTERS, repo: repoId }) : { open: [], closed: [] }),
     [ui.data, repoId, repoName],
   );
   const query = pullRequestsQuery(repoId);
-
-  const label = count.open === undefined ? "Pull requests" : `${count.open} open ${count.open === 1 ? "PR" : "PRs"}`;
+  const { refreshIfStale } = ui;
+  useEffect(() => refreshIfStale(repoId), [refreshIfStale, repoId]);
   return (
-    <>
-      <button
-        type="button"
-        class={`control pr-button ${count.awaitingMe ? "attention" : ""}`}
-        aria-haspopup="dialog"
-        title={count.open === undefined ? (count.reason ?? "pull requests have not been fetched yet") : "This repository's pull requests on GitHub"}
-        onClick={() => {
-          setOpen(true);
-          ui.refreshIfStale(repoId);
-        }}
-      >
-        <IconGitPullRequest size={13} />
-        {label}
-        {count.awaitingMe > 0 && <span class="control-value">{count.awaitingMe} for you</span>}
-      </button>
-      {open && (
-        <Modal
-          label={`Pull requests of ${repoName}`}
-          title={`Pull requests of ${repoName}`}
-          subtitle={
-            <>
-              <FetchAge response={ui.data} />
-              {list?.github ? ` · ${list.github}` : ""}
-            </>
-          }
-          icon={<IconGitPullRequest size={18} />}
-          onClose={() => setOpen(false)}
-          wide
-        >
-          <div class="pr-dialog">
-            <div class="pr-dialog-actions">
-              <RefreshButton repoId={repoId} />
-              <a
-                class="btn sm ghost"
-                href={hrefWithQuery(PULL_REQUESTS_PATH, query)}
-                onClick={(e) => {
-                  e.preventDefault();
-                  setOpen(false);
-                  navigate(PULL_REQUESTS_PATH, query);
-                }}
-              >
-                Open in Pull requests
-              </a>
-            </div>
-            {ui.error && <div class="notice danger">{ui.error}</div>}
-            {ui.data && <GhSetupNotice response={ui.data} />}
-            {list && (list.status === "unavailable" || list.status === "failed") && !list.setup && (
-              <div class={`notice ${list.status === "failed" ? "warn" : ""}`} role="note">
-                {list.reason ?? "this repository's pull requests are unavailable"}
-              </div>
-            )}
-            {groups.open.length + groups.closed.length === 0 ? <p class="hint">No open or recently closed pull requests.</p> : <PullRequestList groups={groups} showRepo={false} />}
+    <Modal
+      label={`Pull requests of ${repoName}`}
+      title={`Pull requests of ${repoName}`}
+      subtitle={
+        <>
+          <FetchAge response={ui.data} />
+          {list?.github ? ` · ${list.github}` : ""}
+        </>
+      }
+      icon={<IconGitPullRequest size={18} />}
+      onClose={onClose}
+      returnFocus={returnFocus}
+      wide
+    >
+      <div class="pr-dialog">
+        <div class="pr-dialog-actions">
+          <RefreshButton repoId={repoId} />
+          <a
+            class="btn sm ghost"
+            href={hrefWithQuery(PULL_REQUESTS_PATH, query)}
+            onClick={(e) => {
+              e.preventDefault();
+              onClose();
+              navigate(PULL_REQUESTS_PATH, query);
+            }}
+          >
+            Open in Pull requests
+          </a>
+        </div>
+        {ui.error && <div class="notice danger">{ui.error}</div>}
+        {ui.data && <GhSetupNotice response={ui.data} />}
+        {list && (list.status === "unavailable" || list.status === "failed") && !list.setup && (
+          <div class={`notice ${list.status === "failed" ? "warn" : ""}`} role="note">
+            {list.reason ?? "this repository's pull requests are unavailable"}
           </div>
-        </Modal>
-      )}
-    </>
+        )}
+        {groups.open.length + groups.closed.length === 0 ? <p class="hint">No open or recently closed pull requests.</p> : <PullRequestList groups={groups} showRepo={false} />}
+      </div>
+    </Modal>
   );
 }
 

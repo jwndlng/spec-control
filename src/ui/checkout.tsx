@@ -1,9 +1,7 @@
-import { useState } from "preact/hooks";
 import type { Worktree } from "../shared/types.ts";
 import { checkoutMarkers } from "./checkoutMarkers.ts";
 import { splitBranchLabel } from "./format.ts";
 import { IconGitBranch } from "./icons.tsx";
-import { Modal } from "./modal.tsx";
 import { checkoutSummary } from "./overviewState.ts";
 
 /**
@@ -60,43 +58,42 @@ export function checkoutsNeedingAttention(checkouts: Worktree[]): number {
   return checkouts.filter((w) => checkoutMarkers(w).some((m) => m.kind === "uncommitted" || m.kind === "unpushed" || m.kind === "stale")).length;
 }
 
+/** Every checkout of a repository with its path; in the project details overlay's Checkouts section. Offers no action. */
+export function CheckoutList({ checkouts }: { checkouts: Worktree[] }) {
+  return (
+    <ul class="checkout-list">
+      {checkouts.map((w) => (
+        <li key={w.path}>
+          <CheckoutChip checkout={w} />
+          <code class="checkout-path">{w.path}</code>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /**
- * The repository header's checkouts, calm: the main checkout's chip, and one button — `5 branches` — that opens the
- * full list in a dialog. When checkouts hold uncommitted, unpushed or stale work, the button says how many.
+ * The repository header's checkouts, calm: the main checkout's chip, and one control — `5 branches` — that opens the
+ * project details at its checkouts (`onOpen`). When checkouts hold uncommitted, unpushed or stale work, it says how many.
  */
-export function CheckoutSummaryButton({ checkouts, repoName }: { checkouts: Worktree[]; repoName: string }) {
-  const [open, setOpen] = useState(false);
+export function CheckoutSummaryButton({ checkouts, onOpen }: { checkouts: Worktree[]; onOpen: (opener: HTMLElement) => void }) {
   const main = checkouts.find((w) => w.isMain);
   const summary = checkoutSummary(checkouts);
   const attention = checkoutsNeedingAttention(checkouts);
   return (
     <>
       {main && <CheckoutChip checkout={main} />}
-      <button type="button" class={`control branches-button ${attention ? "attention" : ""}`} aria-haspopup="dialog" onClick={() => setOpen(true)} title="Every checkout of this repository">
+      <button
+        type="button"
+        class={`control branches-button ${attention ? "attention" : ""}`}
+        aria-haspopup="dialog"
+        onClick={(e) => onOpen(e.currentTarget)}
+        title="Every checkout of this repository, in the project details"
+      >
         <IconGitBranch size={13} />
         {summary.branches} {summary.branches === 1 ? "branch" : "branches"}
         {attention > 0 && <span class="control-value">{attention} with work</span>}
       </button>
-      {open && (
-        <Modal
-          label={`Branches of ${repoName}`}
-          title={`Branches of ${repoName}`}
-          subtitle={`${summary.text} — unpushed and behind counts are as of the last fetch`}
-          icon={<IconGitBranch size={18} />}
-          onClose={() => setOpen(false)}
-          wide
-        >
-          <ul class="checkout-list">
-            {checkouts.map((w) => (
-              <li key={w.path}>
-                <CheckoutChip checkout={w} />
-                <code class="checkout-path">{w.path}</code>
-              </li>
-            ))}
-          </ul>
-        </Modal>
-      )}
     </>
   );
 }
-

@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-21-clearer-board-header",
+    date: "2026-10-21",
+    title: "A clearer project board header",
+    summary:
+      "A project's board now groups its actions under **Agent**, **Repository** and **Changes**, each explained when you hover it. Under the title a quick view shows what matters at a glance, **Details** opens everything else about the project, and the gear beside the name opens the project's settings without going back to Projects.",
+  },
+  {
     id: "2026-10-16-desktop-links",
     date: "2026-10-16",
     title: "Links open in your browser from the macOS app",

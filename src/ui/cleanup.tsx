@@ -17,15 +17,17 @@ import {
 } from "./cleanupState.ts";
 import { relTime } from "./format.ts";
 import { CopyButton } from "./kanban.tsx";
+import type { ActionDescription } from "./projectDetails.ts";
 
 const HINT =
   "Remove this repository's worktrees and local branches whose work is merged, after you confirm. Never deletes remote branches and never contacts a remote.";
 
-export function CleanupButton({ repoId, repoName, onDone }: { repoId: string; repoName: string; onDone: () => void }) {
+/** `description` (the board's): the tooltip, and the accessible description through the element with its id. */
+export function CleanupButton({ repoId, repoName, onDone, description }: { repoId: string; repoName: string; onDone: () => void; description?: ActionDescription }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button type="button" class="btn sm" title={HINT} onClick={() => setOpen(true)}>
+      <button type="button" class="btn sm" title={description?.text ?? HINT} aria-describedby={description?.id} onClick={() => setOpen(true)}>
         Clean up
       </button>
       {open && <CleanupDialog repoId={repoId} repoName={repoName} onClose={() => setOpen(false)} onDone={onDone} />}

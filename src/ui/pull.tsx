@@ -5,6 +5,7 @@ import { useContext, useRef, useState } from "preact/hooks";
 import type { PullResolve, PullResult } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { Modal } from "./modal.tsx";
+import type { ActionDescription } from "./projectDetails.ts";
 import { blockingNote, type FetchNoteInput, fetchNote, pullOutcome, resolveSummary } from "./pullState.ts";
 
 type PullState = "running" | PullResult;
@@ -158,7 +159,8 @@ export function PullBlockedList({ result: shown, running, onResolve }: { result:
 }
 
 /** `overview`: a row or tile of the projects overview, bordered and as tall as the Console button beside it. */
-export function PullButton({ repoId, repoName, variant = "board" }: { repoId: string; repoName?: string; variant?: "board" | "overview" }) {
+/** `description` (the board's): the tooltip, and the accessible description through the element with its id. */
+export function PullButton({ repoId, repoName, variant = "board", description }: { repoId: string; repoName?: string; variant?: "board" | "overview"; description?: ActionDescription }) {
   const ui = usePull();
   const [open, setOpen] = useState(false);
   const state = ui.states[repoId];
@@ -172,7 +174,8 @@ export function PullButton({ repoId, repoName, variant = "board" }: { repoId: st
       <button
         type="button"
         class={`btn sm pull-btn${variant === "overview" ? " on-overview" : ""}`}
-        title={PULL_HINT}
+        title={description?.text ?? PULL_HINT}
+        aria-describedby={description?.id}
         disabled={running}
         onClick={(e) => {
           e.stopPropagation(); // in an overview row, a click must not open the repository
@@ -208,7 +211,7 @@ export function PullButton({ repoId, repoName, variant = "board" }: { repoId: st
   );
 }
 
-/** Beside Pull: when the repository was last fetched, and whether its automatic fetch failed. Nothing without a remote. */
+/** Beside Pull on the overview, in the board's quick view: when the repository was last fetched, and whether its automatic fetch failed. Nothing without a remote. */
 export function FetchNoteBadge({ input, now }: { input: FetchNoteInput; now: number }) {
   const note = fetchNote(input, now);
   if (!note) return null;

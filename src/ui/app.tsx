@@ -532,6 +532,7 @@ export function App() {
             snapshot={shown}
             config={config}
             repoId={boardRoute.view === "repo" ? boardRoute.repoId : undefined}
+            onConfig={setConfig}
             query={back?.query}
             onReload={reloadSoon}
           />

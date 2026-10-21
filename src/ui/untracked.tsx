@@ -88,9 +88,10 @@ export const NAME_REQUIRED = "A name is required.";
 /**
  * Runs one action per repository at a time. A saved config goes straight to the app shell, so the repository moves
  * between the tracked list and the section before any scan; Enable and Ignore also re-run discovery, whose answer
- * changed with the config.
+ * changed with the config. The repository board uses it too, for its project's settings; `onDisabled` is how it leaves
+ * for the overview once Disable is saved.
  */
-export function useTracking({ onConfig, rediscover }: { onConfig: (config: Config) => void; rediscover: () => void }): Tracking {
+export function useTracking({ onConfig, rediscover, onDisabled }: { onConfig: (config: Config) => void; rediscover: () => void; onDisabled?: (id: string) => void }): Tracking {
   const ui = useSessionUi();
   const [busy, setBusy] = useState<Record<string, TrackingAction>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -118,7 +119,16 @@ export function useTracking({ onConfig, rediscover }: { onConfig: (config: Confi
     busy,
     errors,
     enable: (entry) => void run(entry.id, "enable", () => api.trackRepo(entry.path).then(save(rediscover))),
-    disable: (id) => void run(id, "disable", () => api.setRepoEnabled(id, false).then(save(() => dialog({ type: "disabled", id })))),
+    // Only once the configuration is saved: a failed Disable keeps the dialog open with its reason.
+    disable: (id) =>
+      void run(id, "disable", () =>
+        api.setRepoEnabled(id, false).then(
+          save(() => {
+            dialog({ type: "disabled", id });
+            onDisabled?.(id);
+          }),
+        ),
+      ),
     ignore: (entry) => void run(entry.id, "ignore", () => api.ignorePath(entry.path).then(save(rediscover))),
     integrate: (entry) =>
       void run(entry.id, "integrate", async () => {
