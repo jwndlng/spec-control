@@ -29,13 +29,20 @@ const CONCURRENCY = 3;
 const CACHE_VERSION = 1;
 
 /** Only the documented `--json` fields; anything else is parsed defensively or ignored. */
-const FIELDS = "number,title,url,author,headRefName,baseRefName,isDraft,state,createdAt,mergedAt,closedAt,reviewDecision,reviewRequests,statusCheckRollup,mergeable";
+const FIELDS = "number,title,url,author,headRefName,baseRefName,isDraft,state,createdAt,mergedAt,closedAt,reviewDecision,reviewRequests,statusCheckRollup,mergeable,headRefOid";
+/**
+ * Asked for in addition only on the open call, and only for a GitHub repository an enabled project with docs auto-merge
+ * maps to (agent-merges-docs-prs D2): enough to answer "docs-only", and dropped right after parsing.
+ */
+const FILE_FIELDS = "files,changedFiles";
 
 /** A tracked repository as the store sees it: never a path from a request — ids and paths come from the config. */
 export interface RepoTarget {
   id: string;
   path: string;
   isGit: boolean;
+  /** The project has docs auto-merge on: its open pull requests are asked for their changed files. */
+  autoMergeDocs?: boolean;
 }
 
 
@@ -60,6 +67,29 @@ const str = (value: unknown): string => (typeof value === "string" ? value : "")
 const REVIEW: Record<string, PullRequest["review"]> = { APPROVED: "approved", CHANGES_REQUESTED: "changes_requested", REVIEW_REQUIRED: "review_required" };
 const STATE: Record<string, PullRequest["state"]> = { OPEN: "open", MERGED: "merged", CLOSED: "closed" };
 const MERGEABLE: Record<string, NonNullable<PullRequest["mergeable"]>> = { MERGEABLE: "mergeable", CONFLICTING: "conflicting" };
+
+const HEAD_OID = /^[0-9a-f]{40}$/;
+
+/** GitHub's `headRefOid`: a full object name, or nothing — never a value that could be taken for one. */
+export function parseHeadOid(value: unknown): string | undefined {
+  return typeof value === "string" && HEAD_OID.test(value) ? value : undefined;
+}
+
+/**
+ * Whether GitHub's changed files are all under `openspec/` at the repository root. Only a complete list counts: `gh`
+ * returns at most 100 paths, so a count larger than the paths returned — or any field missing or malformed — is not
+ * docs-only. Undefined when the files were not asked for at all.
+ */
+export function parseDocsOnly(entry: Record<string, unknown>): boolean | undefined {
+  if (!("files" in entry) && !("changedFiles" in entry)) return undefined;
+  const { files, changedFiles } = entry;
+  if (!Array.isArray(files) || typeof changedFiles !== "number" || !Number.isInteger(changedFiles)) return false;
+  if (changedFiles < 1 || files.length !== changedFiles) return false;
+  return files.every((file) => {
+    const path = (file as Record<string, unknown> | null)?.path;
+    return typeof path === "string" && path.startsWith("openspec/") && path.length > "openspec/".length && !path.split("/").includes("..");
+  });
+}
 
 /** GitHub's `mergeable`; anything missing or unrecognised is `unknown`, so drift never looks mergeable. */
 export function parseMergeable(value: unknown): NonNullable<PullRequest["mergeable"]> {
@@ -107,6 +137,9 @@ export function parsePullRequest(raw: unknown, viewer?: string): PullRequest | u
     viewer !== undefined && requests.some((r) => str((r as Record<string, unknown>)?.login).toLowerCase() === viewer.toLowerCase());
   const mergedAt = str(entry.mergedAt) || undefined;
   const closedAt = str(entry.closedAt) || undefined;
+  const headOid = parseHeadOid(entry.headRefOid);
+  const docsOnly = parseDocsOnly(entry);
+  // The paths are read here and nowhere else: only the answer is kept, cached and sent to the browser.
   return {
     number,
     title: str(entry.title),
@@ -123,7 +156,19 @@ export function parsePullRequest(raw: unknown, viewer?: string): PullRequest | u
     reviewRequestedFromViewer: requestedFromViewer,
     checks: summarizeChecks(entry.statusCheckRollup),
     mergeable: parseMergeable(entry.mergeable),
+    ...(headOid ? { headOid } : {}),
+    ...(docsOnly !== undefined ? { docsOnly } : {}),
   };
+}
+
+/**
+ * A cached pull request as this version reads it: mergeability `unknown` when it predates it, a head commit only when
+ * it is one, docs-only only when it says exactly that — so an old or edited cache can never trigger a merge.
+ */
+function fromCache(pr: PullRequest): PullRequest {
+  const { headOid, docsOnly, ...rest } = pr;
+  const head = parseHeadOid(headOid);
+  return { ...rest, mergeable: parseMergeable(pr.mergeable), ...(head ? { headOid: head } : {}), ...(typeof docsOnly === "boolean" ? { docsOnly } : {}) };
 }
 
 /** When a pull request left the open list; undefined while it is open. */
@@ -191,7 +236,7 @@ export class PullRequests {
       for (const [repo, entry] of Object.entries(parsed.repos)) {
         if (!Array.isArray(entry?.pullRequests)) continue;
         // A cache written before mergeability was read lacks it: still version 1, read as `unknown` until refreshed.
-        const pullRequests = entry.pullRequests.map((pr) => (pr && typeof pr === "object" ? { ...pr, mergeable: parseMergeable(pr.mergeable) } : pr));
+        const pullRequests = entry.pullRequests.map((pr) => (pr && typeof pr === "object" ? fromCache(pr) : pr));
         this.cache.set(repo, { fetchedAt: entry.fetchedAt, pullRequests, truncated: entry.truncated });
       }
     } catch {
@@ -210,6 +255,18 @@ export class PullRequests {
     const repo = githubRepoFromRemote(await originUrl(target.path));
     this.origins.set(target.path, repo);
     return repo;
+  }
+
+  /**
+   * The last good list of one repository, from what is already known in this process — no remote lookup, so not even
+   * a read-only git runs for it. Undefined when its GitHub repository was not looked up yet or it was never fetched.
+   * This is what the Merge action reads its pull request and head commit from.
+   */
+  lastGood(target: RepoTarget): readonly PullRequest[] | undefined {
+    if (!target.isGit || !this.origins.has(target.path)) return undefined;
+    const github = this.origins.get(target.path);
+    const entry = github ? this.cache.get(github) : undefined;
+    return entry?.fetchedAt ? entry.pullRequests : undefined;
   }
 
   /** The cached lists, projected per enabled repository. Contacts nothing and starts no `gh`. */
@@ -269,7 +326,9 @@ export class PullRequests {
       if (wanted.length > 0) {
         // One `gh api user` per round, for the "review requested from you" marker; a failure only loses the marker.
         if (startsRound || this.viewerFetch) await this.ensureViewer();
-        await this.runBounded(wanted.map((github) => () => this.queryOnce(github)));
+        // Changed files only where a project acts on them: one with docs auto-merge on (agent-merges-docs-prs D2).
+        const withFiles = (github: string) => (byGithub.get(github) ?? []).some((t) => t.autoMergeDocs === true);
+        await this.runBounded(wanted.map((github) => () => this.queryOnce(github, withFiles(github))));
         await this.persist();
       }
     } finally {
@@ -319,15 +378,15 @@ export class PullRequests {
    * query settles: a refresh that joins a round whose query has already finished must see that result instead of
    * querying the same repository again, which is what "a second refresh joins the running one" means.
    */
-  private queryOnce(github: string): Promise<void> {
+  private queryOnce(github: string, withFiles: boolean): Promise<void> {
     const running = this.inFlight.get(github);
     if (running) return running;
-    const done = this.query(github);
+    const done = this.query(github, withFiles);
     this.inFlight.set(github, done);
     return done;
   }
 
-  private async query(github: string): Promise<void> {
+  private async query(github: string, withFiles: boolean): Promise<void> {
     const previous = this.cache.get(github) ?? { pullRequests: [] };
     if (this.blocked) {
       this.cache.set(github, { ...previous, error: this.blocked });
@@ -335,9 +394,9 @@ export class PullRequests {
     }
     const since = new Date(this.now() - CLOSED_WITHIN_DAYS * 24 * 3600_000);
     const [open, closed] = await Promise.all([
-      this.listPrs(github, ["--state", "open", "--limit", String(OPEN_LIMIT + 1)]),
+      this.listPrs(github, ["--state", "open", "--limit", String(OPEN_LIMIT + 1)], withFiles ? `${FIELDS},${FILE_FIELDS}` : FIELDS),
       // A search, not `--state closed`: merged and closed pull requests then come from one call, filtered by date.
-      this.listPrs(github, ["--state", "all", "--search", `is:closed closed:>=${since.toISOString().slice(0, 10)}`, "--limit", String(CLOSED_LIMIT + 1)]),
+      this.listPrs(github, ["--state", "all", "--search", `is:closed closed:>=${since.toISOString().slice(0, 10)}`, "--limit", String(CLOSED_LIMIT + 1)], FIELDS),
     ]);
     const failure = open.failure ?? closed.failure;
     if (failure) {
@@ -359,9 +418,9 @@ export class PullRequests {
     });
   }
 
-  private async listPrs(github: string, args: string[]): Promise<{ items?: PullRequest[]; truncated?: boolean; failure?: Failure }> {
+  private async listPrs(github: string, args: string[], fields: string): Promise<{ items?: PullRequest[]; truncated?: boolean; failure?: Failure }> {
     const limit = Number(args[args.indexOf("--limit") + 1]);
-    const run = await runGh(["pr", "list", "--repo", github, ...args, "--json", FIELDS], this.timeoutMs);
+    const run = await runGh(["pr", "list", "--repo", github, ...args, "--json", fields], this.timeoutMs);
     const failure = failureOf(run);
     if (failure) return { failure };
     let raw: unknown;

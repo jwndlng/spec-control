@@ -147,7 +147,7 @@ test("the board's opening is the only place that calls openBoard, once, in an ef
 test("the board arms its watch in an effect whose cleanup disarms it, and nothing else in the UI watches", () => {
   const kanban = readFileSync(join(UI, "kanban.tsx"), "utf8");
   // The effect returns armWatch's disarm, so leaving the board, hiding the tab or a new answer clears the timer.
-  expect(kanban).toMatch(/useEffect\(\s*\(\) => armWatch\(\{ plan: watchPlan\(cards, prs\.data\?\.repos, Date\.now\(\), lastSettledAt\(\)\), hidden,/);
+  expect(kanban).toMatch(/useEffect\(\s*\(\) => armWatch\(\{ plan: watchPlan\(cards, prs\.data\?\.repos, Date\.now\(\), lastSettledAt\(\), pendingMerges\), hidden,/);
   expect(kanban).toMatch(/visibilitychange/);
   const callers = sources().flatMap(({ file, text }) => [...text.matchAll(/\barmWatch\(|\bwatch\(\s*plan/g)].map(() => file));
   expect(callers.filter((f) => f !== "pullRequestsState.ts")).toEqual(["kanban.tsx"]);

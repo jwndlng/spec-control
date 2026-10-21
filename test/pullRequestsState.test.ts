@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { PullRequest, PullRequestsResponse } from "../src/shared/types.ts";
+import type { ChangeSession, PullRequest, PullRequestsResponse } from "../src/shared/types.ts";
 import {
   armWatch,
   createPrRefresher,
@@ -9,6 +9,7 @@ import {
   newestFetchedAt,
   openCount,
   parsePrFilters,
+  pendingMergesOf,
   pullRequestEntries,
   pullRequestNotices,
   pullRequestsQuery,
@@ -325,4 +326,40 @@ test("demo: synthetic lists are never watched", () => {
   const { refresher, asked } = refresherHarness(true);
   expect(refresher.watch(["alpha"])).toBeUndefined();
   expect(asked).toEqual([]);
+});
+
+// ---- a pending merge (agent-merges-docs-prs 5.1) ----
+
+const HEAD = "c0ffee0000000000000000000000000000000088";
+const asked = (repoId: string, change: string, patch: Partial<ChangeSession> = {}): ChangeSession => ({
+  id: `${repoId}-${change}`, repoId, change, action: "archive", agentId: "fake", agentName: "Fake Agent", state: "running", worktreePath: "/w/acme/x", branch: `feat/${change}`, createdAt: at(MIN), updatedAt: at(MIN), resumable: false,
+  mergeAsked: { pr: 88, head: HEAD, at: at(MIN), submitted: true, by: "dashboard" },
+  ...patch,
+});
+
+test("a pending merge keeps the one-minute cadence while the pull request is ready", () => {
+  const cards = [card("demo", "rotate-keys"), card("beta", "b")];
+  const ready = open("feat/rotate-keys", { number: 88, headOid: HEAD, docsOnly: true });
+  const lists = [watched("demo", [ready]), watched("beta", [open("feat/b")])];
+  // Ready and nothing asked: not watched.
+  expect(watchPlan(cards, lists, T, T)).toBeUndefined();
+  const pending = pendingMergesOf([asked("demo", "rotate-keys"), asked("beta", "b", { mergeAsked: undefined })]);
+  expect(watchPlan(cards, lists, T, T, pending)).toEqual({ repoIds: ["demo"], dueAt: T + WATCH_IN_PROGRESS_MS });
+  // A merge pending next to a waiting pull request still sets the faster cadence.
+  const waiting = [watched("demo", [ready]), watched("beta", [open("feat/b", { mergeable: "conflicting" })])];
+  expect(watchPlan(cards, waiting, T, T, pending)).toEqual({ repoIds: ["demo", "beta"], dueAt: T + WATCH_IN_PROGRESS_MS });
+});
+
+test("a new head, a merge or a close ends the pending merge", () => {
+  const cards = [card("demo", "rotate-keys")];
+  const pending = pendingMergesOf([asked("demo", "rotate-keys")]);
+  const listed = (patch: Partial<PullRequest>) => [watched("demo", [open("feat/rotate-keys", { number: 88, headOid: HEAD, ...patch })])];
+  expect(watchPlan(cards, listed({ headOid: "c0ffee0000000000000000000000000000000089" }), T, T, pending)).toBeUndefined();
+  expect(watchPlan(cards, listed({ state: "merged", mergedAt: at(MIN) }), T, T, pending)).toBeUndefined();
+  expect(watchPlan(cards, listed({ state: "closed", closedAt: at(MIN) }), T, T, pending)).toBeUndefined();
+  // A new head whose checks run again is watched for that, as any not-ready pull request.
+  expect(watchPlan(cards, listed({ headOid: "c0ffee0000000000000000000000000000000089", checks: "pending" }), T, T, pending)?.repoIds).toEqual(["demo"]);
+  // Another change's record says nothing about this card.
+  expect(watchPlan(cards, listed({}), T, T, pendingMergesOf([asked("demo", "other")]))).toBeUndefined();
+  expect(pendingMergesOf([{ ...asked("demo", "rotate-keys"), mergeAsked: undefined }]).size).toBe(0);
 });

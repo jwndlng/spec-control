@@ -4,7 +4,7 @@ import { labelKey } from "../shared/labels.ts";
 import { withAutoFetch, withPrTitleConvention, withRepoAgent } from "../shared/repoSettings.ts";
 import { MAX_PAGE, type ActivityLog, type PageQuery } from "./activity/log.ts";
 import { isTimeZone, pageEvents } from "../shared/activity.ts";
-import type { AutoFetchSeconds, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequestsResponse, PullResult, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, UpdateStatus } from "../shared/types.ts";
+import type { AutoFetchSeconds, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequest, PullRequestsResponse, PullResult, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Session, UpdateStatus } from "../shared/types.ts";
 import type { AutoFetcher } from "./autoFetch.ts";
 import { applyCleanup, CleanupBusyError, previewCleanup } from "./cleanup.ts";
 import { changeDirFor, listArtifactFiles, readArtifactFile } from "./artifacts.ts";
@@ -544,6 +544,7 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
       if (sub === "resume") return json(await sessions.resume(id));
       if (sub === "ship") return json(await sessions.ship(id));
       if (sub === "resolve-conflicts") return json(await sessions.resolveConflicts(id));
+      if (sub === "merge") return json(await sessions.merge(id, lastGoodPullRequests(state, sessions.get(id))));
       if (sub === "prompt") return json(await sessions.prompt(id, await readJson(req)));
       if (sub === "close") return json(await sessions.close(id, { removeWorktree: (await readJson(req)).removeWorktree === true }));
     }
@@ -891,7 +892,9 @@ async function postCleanup(state: AppState, req: Request, repoId: string): Promi
  */
 function pullRequestTargets(state: AppState): RepoTarget[] {
   const scanned = new Map(state.scanner.snapshot.repos.map((r) => [r.id, r]));
-  return state.config.repos.filter((r) => r.enabled).map((r) => ({ id: r.id, path: r.path, isGit: scanned.get(r.id)?.isGit === true }));
+  return state.config.repos
+    .filter((r) => r.enabled)
+    .map((r) => ({ id: r.id, path: r.path, isGit: scanned.get(r.id)?.isGit === true, ...(r.agent?.autoMergeDocs === true ? { autoMergeDocs: true } : {}) }));
 }
 
 function pullRequestStore(state: AppState): PullRequests {
@@ -924,7 +927,7 @@ async function postPullRequestsRefresh(state: AppState, req: Request): Promise<R
     if (!repoIds.every((r) => targets.some((t) => t.id === r))) return json({ error: "unknown or disabled repository" }, 404);
   }
   const response = await pullRequestStore(state).refresh(targets, { repoId: repoId as string | undefined, repoIds: repoIds as string[] | undefined, force: body.force === true });
-  endMergedAutoMerge(state, response);
+  handOverCompletedQuery(state, response);
   return json(response);
 }
 
@@ -941,17 +944,26 @@ async function postIssues(state: AppState, repoId: string): Promise<Response> {
 }
 
 /**
- * A completed query is what ends a session whose auto-merge pull request merged (auto-merge-cleanup D2): handed to the
- * session manager after `gh` has finished, never waited for, and never a reason to query. Only lists that are good
- * right now count — a failed one is the last good list, which says nothing new.
+ * A completed query is what ends a session whose auto-merge pull request merged (auto-merge-cleanup D2), and what hands
+ * a ready docs-only pull request to its agent to merge (agent-merges-docs-prs D4): handed to the session manager after
+ * `gh` has finished, never waited for, and never a reason to query. Only lists that are good right now count — a failed
+ * one is the last good list, which says nothing new. The two cannot act on one pull request: one needs it merged, the
+ * other open.
  */
-function endMergedAutoMerge(state: AppState, response: PullRequestsResponse): void {
+function handOverCompletedQuery(state: AppState, response: PullRequestsResponse): void {
   const sessions = state.sessions;
   if (!sessions) return;
   for (const repo of response.repos) {
     if (repo.status !== "ok") continue;
     void sessions.endMergedAutoMerge(repo.repoId, repo.pullRequests).catch((err) => console.warn("could not end a session whose pull request merged:", err instanceof Error ? err.message : err));
+    void sessions.requestReadyMerges(repo.repoId, repo.pullRequests).catch((err) => console.warn("could not hand a ready pull request to its agent:", err instanceof Error ? err.message : err));
   }
+}
+
+/** What the Merge action reads its pull request from: the server's last good list, never anything in the request. */
+function lastGoodPullRequests(state: AppState, session: Session): readonly PullRequest[] {
+  const target = session.repoId === undefined ? undefined : pullRequestTargets(state).find((t) => t.id === session.repoId);
+  return (target && state.pullRequests?.lastGood(target)) ?? [];
 }
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);

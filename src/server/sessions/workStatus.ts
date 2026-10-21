@@ -28,6 +28,12 @@ async function git(cwd: string, args: string[]): Promise<{ ok: boolean; out: str
   return { ok: code === 0, out };
 }
 
+/** The commit a worktree has checked out (read-only `rev-parse`); undefined when git cannot say. */
+export async function headCommit(worktreePath: string): Promise<string | undefined> {
+  const head = await git(worktreePath, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
+  return head.ok && /^[0-9a-f]{40}$/.test(head.out) ? head.out : undefined;
+}
+
 /**
  * The object store the conflict check writes into, with the layout git expects of an object directory. Made on every
  * check rather than remembered: a recursive mkdir of an existing directory is a cheap no-op next to spawning git, and
@@ -89,7 +95,8 @@ const OPENSPEC_DIR = `${OPENSPEC_PATHS.root}/`;
 export async function shipsOnlyOpenSpec(worktreePath: string, base: string | undefined, { allowEmpty = false }: { allowEmpty?: boolean } = {}): Promise<boolean> {
   if (!base) return false;
   const [committed, status] = await Promise.all([
-    git(worktreePath, ["diff", "--name-only", "-z", `${base}...HEAD`]),
+    // `--no-renames`: with rename detection a committed `src/x` moved into `openspec/` would list only its new path.
+    git(worktreePath, ["diff", "--name-only", "--no-renames", "-z", `${base}...HEAD`]),
     // Untrimmed: a status entry starts with a space when only the worktree side changed.
     run(worktreePath, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], {}, false),
   ]);

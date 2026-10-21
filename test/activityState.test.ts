@@ -24,6 +24,7 @@ test("groups map to the kinds the API filters by", () => {
     "session-shipped",
     "session-conflicts-resolve",
     "session-auto-ended",
+    "session-merge",
     "repo-tracked",
     "repo-untracked",
     "repo-failing",
@@ -70,6 +71,10 @@ test("every kind has wording, and what needs a look stands out", () => {
     // What was handed over, never what came of it: the outcome is re-read from git.
     [{ ...base(at), kind: "session-conflicts-resolve", change: "a" }, "conflict resolution requested", "normal"],
     [{ ...base(at), kind: "session-conflicts-resolve", change: "a", submitted: false }, "conflict resolution requested — typed, not sent", "normal"],
+    // Likewise a Merge: who sent it and whether it was submitted, never whether it merged.
+    [{ ...base(at), kind: "session-merge", change: "a", pr: 88, by: "dashboard", submitted: true }, "merge of #88 requested by Spec Control, as it is ready and docs-only", "normal"],
+    [{ ...base(at), kind: "session-merge", change: "a", pr: 41, by: "user", submitted: true }, "merge of #41 requested", "normal"],
+    [{ ...base(at), kind: "session-merge", change: "a", pr: 41, by: "user", submitted: false }, "merge of #41 requested — typed, not sent", "normal"],
   ];
   for (const [event, words, weight] of cases) {
     expect(describe(event)).toBe(words);

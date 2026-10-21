@@ -9,7 +9,7 @@ import { FilterBar } from "./boardFilters.tsx";
 import { Stat } from "./band.tsx";
 import { BranchBadge, CheckoutSummaryButton } from "./checkout.tsx";
 import { CardPullRequest, RepoPullRequestsButton, RepoPullRequestsDialog, usePullRequests } from "./pullRequests.tsx";
-import { armWatch, watchPlan } from "./pullRequestsState.ts";
+import { armWatch, pendingMergesOf, watchPlan } from "./pullRequestsState.ts";
 import { CleanupButton } from "./cleanup.tsx";
 import { ImportIssuesDialog, SourceIssueLink } from "./importIssues.tsx";
 import { NewChangeDialog } from "./newChangeForm.tsx";
@@ -21,7 +21,7 @@ import { assignRepoHues, dependencyChoices, groupByRepo, newChangeTargets, recen
 import { columnKind } from "./boardMarks.ts";
 import { IconCheck, IconChevronRight, IconCircleDot, IconCopy, IconInfo, IconPlus, IconTerminal } from "./icons.tsx";
 import { SessionControls, useSessionUi } from "./sessions.tsx";
-import { archivedShown, cardSessionControls, hasRunningSession, cardWorkingState, type CardWorkingState, consoleTabAvailable, projectConsoleUnavailable } from "./sessionState.ts";
+import { archivedShown, cardMergePending, cardSessionControls, hasRunningSession, cardWorkingState, type CardWorkingState, consoleTabAvailable, projectConsoleUnavailable } from "./sessionState.ts";
 import { ProjectSwitch } from "./projectSwitch.tsx";
 import { boardFrom, changePath, CONSOLE_TAB, repoPath, serializeDetailQuery } from "./routes.ts";
 import { currentQuery, followInApp, href, navigate, replaceQuery } from "./url.ts";
@@ -172,7 +172,7 @@ export function cardLink(card: Pick<Card, "repoId" | "name">, from: string): { p
  * working on the change, or its pull request is not ready yet — shows on the whole card, tinted and, while something is
  * still in progress, with its name swept; the caller decides it (`cardWorkingState`), so the card stays hook-free.
  */
-export function ChangeCard({ card, now, from, working, running = false }: { card: Card; now: number; from: string; working?: CardWorkingState; running?: boolean }) {
+export function ChangeCard({ card, now, from, working, running = false, merging }: { card: Card; now: number; from: string; working?: CardWorkingState; running?: boolean; merging?: string }) {
   const noTasks = card.warnings?.includes("tasks file has no tasks");
   // The work is finished, a person still has to confirm it — `warning`, not `success`; never on an archived change.
   const validating = !card.archived && (card.tasks?.awaiting ?? 0) > 0;
@@ -211,7 +211,7 @@ export function ChangeCard({ card, now, from, working, running = false }: { card
           </span>
         ))}
         {card.sourceIssue && <SourceIssueLink issue={card.sourceIssue} place="card" />}
-        {card.pullRequest && <CardPullRequest pr={card.pullRequest} repoName={card.repoName} fetchedAt={card.pullRequestFetchedAt} now={now} />}
+        {card.pullRequest && <CardPullRequest pr={card.pullRequest} repoName={card.repoName} fetchedAt={card.pullRequestFetchedAt} now={now} merging={merging} />}
         <SessionControls card={card} place="card" />
         {waiting && (
           <span class="waits-for" role="note" title={waiting.title} aria-label={waiting.title}>
@@ -299,11 +299,12 @@ function RepoGroups({ column, cards, now, showRepo, from, groups: controls }: { 
   const ui = useSessionUi();
   const working = (c: Card) => cardWorkingState(ui.config, ui.sessions, c);
   const running = (c: Card) => cardSessionControls(ui.config, ui.sessions, c).shown.some((s) => s.state === "running");
+  const merging = (c: Card) => cardMergePending(ui.sessions, c, c.pullRequest);
   if (!showRepo) {
     return (
       <div class="cards">
         {cards.map((c) => (
-          <ChangeCard key={`${c.repoId}/${c.name}`} card={c} now={now} from={from} working={working(c)} running={running(c)} />
+          <ChangeCard key={`${c.repoId}/${c.name}`} card={c} now={now} from={from} working={working(c)} running={running(c)} merging={merging(c)} />
         ))}
       </div>
     );
@@ -332,7 +333,7 @@ function RepoGroups({ column, cards, now, showRepo, from, groups: controls }: { 
             {expanded && (
               <div class="repo-group-body" id={bodyId}>
                 {g.cards.map((c) => (
-                  <ChangeCard key={`${c.repoId}/${c.name}`} card={c} now={now} from={from} working={working(c)} running={running(c)} />
+                  <ChangeCard key={`${c.repoId}/${c.name}`} card={c} now={now} from={from} working={working(c)} running={running(c)} merging={merging(c)} />
                 ))}
               </div>
             )}
@@ -616,10 +617,12 @@ export function Kanban({ snapshot, config, repoId, query, onReload, onConfig = (
   // ends it, and disarmed when the board is left or the tab hidden (openspec/specs/pull-requests).
   const hidden = useTabHidden();
   const { watch, lastSettledAt, running: prsRunning } = prs;
+  // A Merge prompt a session recorded keeps its pull request watched until it merges, closes or gets a new head.
+  const pendingMerges = useMemo(() => pendingMergesOf(sessions), [sessions]);
   // Wrapped, never passed bare: `io.setTimer(…)` would call the browser's setTimeout on `io` — "Illegal invocation".
   useEffect(
-    () => armWatch({ plan: watchPlan(cards, prs.data?.repos, Date.now(), lastSettledAt()), hidden, now: Date.now(), watch, setTimer: (run, ms) => setTimeout(run, ms), clearTimer: (h) => clearTimeout(h as number) }),
-    [cards, prs.data, prsRunning, hidden, watch, lastSettledAt],
+    () => armWatch({ plan: watchPlan(cards, prs.data?.repos, Date.now(), lastSettledAt(), pendingMerges), hidden, now: Date.now(), watch, setTimer: (run, ms) => setTimeout(run, ms), clearTimer: (h) => clearTimeout(h as number) }),
+    [cards, prs.data, prsRunning, hidden, watch, lastSettledAt, pendingMerges],
   );
 
   const visible = useMemo(() => visibleCards(cards, filters, single, now, sessions), [cards, filters, single, now, sessions]);

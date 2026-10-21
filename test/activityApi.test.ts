@@ -7,7 +7,7 @@ import { type AppState, createFetchHandler } from "../src/server/api.ts";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import { activityLogPath } from "../src/server/paths.ts";
 import { Scanner } from "../src/server/scanner.ts";
-import type { ActivityEvent, ActivityPage, ChangeSession, Snapshot } from "../src/shared/types.ts";
+import { ACTIVITY_GROUPS, ACTIVITY_KINDS, type ActivityEvent, type ActivityPage, type ChangeSession, type Snapshot } from "../src/shared/types.ts";
 import { activityQueryString, httpApi } from "../src/ui/api.ts";
 import { useTempHome } from "./helpers.ts";
 import { git, harness, tempGitRepo, waitFor } from "./sessionHelpers.ts";
@@ -193,6 +193,14 @@ test("resolving conflicts is reported as its own kind, with whether the prompt w
   } finally {
     await manager.shutdown();
   }
+});
+
+test("Merge sent on its own is one event in the sessions group, naming the pull request, the dashboard and that it was submitted", () => {
+  const what: SessionActivity = { kind: "session-merge", pr: 88, by: "dashboard", submitted: true };
+  const event = sessionEvent({ repoId: "r", change: "cache-api-calls" }, "demo-ops", what, new Date("2026-10-21T09:00:00.000Z"));
+  expect(event).toMatchObject({ v: 1, kind: "session-merge", change: "cache-api-calls", repoId: "r", repoName: "demo-ops", pr: 88, by: "dashboard", submitted: true });
+  expect(ACTIVITY_GROUPS.sessions).toContain("session-merge");
+  expect(ACTIVITY_KINDS).toContain("session-merge");
 });
 
 test("the client names its time zone, and falls back to UTC when the server does not know it", async () => {

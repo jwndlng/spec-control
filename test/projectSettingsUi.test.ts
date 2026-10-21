@@ -325,8 +325,12 @@ test("a git project with agent sessions offers auto-merge of docs-only pull requ
   expect(String(toggle?.props.title)).toContain(AUTO_MERGE_HINT);
   // The dialog names the setting on the line, so its switch reads just the state.
   expect(textOf(toggle)).toBe("Off");
-  // The tooltip names both actions that may ask for it (archive-auto-merge-docs).
-  expect(AUTO_MERGE_HINT).toContain("Ship and Archive ask the agent to enable auto-merge");
+  // The tooltip names both actions, which leave the pull request open; the merge is asked for once it is ready
+  // (agent-merges-docs-prs), never through GitHub's auto-merge, and never for a pull request without checks.
+  expect(AUTO_MERGE_HINT).toContain("Ship and Archive ask the agent to open its pull request and not to merge it");
+  expect(AUTO_MERGE_HINT).toContain("asks that session's agent to merge it");
+  expect(AUTO_MERGE_HINT).toContain("one without any checks is not merged this way");
+  expect(AUTO_MERGE_HINT).not.toMatch(/enable auto-merge|GitHub's auto-merge/i);
   // …and what happens once it has merged (auto-merge-cleanup).
   expect(AUTO_MERGE_HINT).toContain("ends its session and removes its worktree when that is safe");
   expect(click(toggle!)).toBe(true);

@@ -3,6 +3,7 @@ import { changeSessions, SHIPPABLE_WORK } from "../src/shared/types.ts";
 import { ApiError, type TerminalHandlers } from "../src/ui/api.ts";
 import { createDemoApi } from "../src/ui/demo/demoApi.ts";
 import { conflictBadge, NEEDS_YOU_AFTER_MS, openWork, resolvable, sessionBadge } from "../src/ui/sessionState.ts";
+import { pendingMergesOf } from "../src/ui/pullRequestsState.ts";
 import type { Clock } from "../src/ui/demo/transcripts.ts";
 
 /** The demo API on a wall clock and a timer clock the test advances by hand. */
@@ -385,4 +386,18 @@ test("Resolve conflicts in the demo does not survive a reload", async () => {
   const fresh = await byChange(demo().api, "versioned-api-reference");
   expect(fresh.state).toBe("exited");
   expect((await workOf(demo().api, "versioned-api-reference"))?.conflicts?.files).toHaveLength(2);
+});
+
+test("the demo never sends or shows a pending Merge (agent-merges-docs-prs)", async () => {
+  const { api } = demo();
+  const sessions = changeSessions((await api.sessions()).sessions);
+  // No demo session records a Merge prompt, so no panel or card says one is pending and the board's watch has none.
+  expect(sessions.filter((s) => s.mergeAsked !== undefined)).toEqual([]);
+  expect(pendingMergesOf(sessions).size).toBe(0);
+  // The Merge action is refused for every session, running or not, and nothing changes.
+  for (const s of sessions) expect(await refusal(api.mergeSession(s.id))).toBe("503: the demo does not merge pull requests");
+  expect(changeSessions((await api.sessions()).sessions).filter((s) => s.mergeAsked !== undefined)).toEqual([]);
+  // Its lists are synthetic: none names a head commit or a docs-only answer, so nothing could be handed over either.
+  const lists = (await api.pullRequests()).repos.flatMap((r) => r.pullRequests);
+  expect(lists.filter((pr) => pr.headOid !== undefined || pr.docsOnly !== undefined)).toEqual([]);
 });

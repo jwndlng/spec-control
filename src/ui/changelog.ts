@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-21-agent-merges-docs-prs",
+    date: "2026-10-21",
+    title: "Docs-only pull requests merge on any GitHub plan",
+    summary:
+      "With **Docs auto-merge** on, Spec Control now waits until a pull request that only changes files under `openspec/` is mergeable and its checks pass, then asks your agent to merge it — so it works on free private repositories too, without GitHub's auto-merge. A new **Merge** action in a session's console asks the agent to merge any ready pull request by hand.",
+  },
+  {
     id: "2026-10-21-clearer-board-header",
     date: "2026-10-21",
     title: "A clearer project board header",

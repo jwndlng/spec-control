@@ -4,10 +4,10 @@ import { rm } from "node:fs/promises";
 import { type AppState, createFetchHandler } from "../src/server/api.ts";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import { Scanner } from "../src/server/scanner.ts";
-import type { PullRequestsResponse } from "../src/shared/types.ts";
+import type { ChangeSession, PullRequestsResponse } from "../src/shared/types.ts";
 import { ghPr, installFakeGh, type GhHarness } from "./ghHelpers.ts";
 import { treeFingerprint, useTempHome } from "./helpers.ts";
-import { git, tempGitRepo, tempPlainRepo } from "./sessionHelpers.ts";
+import { git, harness, tempGitRepo, tempPlainRepo, waitFor, watch } from "./sessionHelpers.ts";
 
 setDefaultTimeout(60_000);
 
@@ -185,5 +185,52 @@ test("a full refresh leaves every repository byte-for-byte unchanged and never r
     expect(["pr list", "api user"]).toContain(`${call.argv[0]} ${call.argv[1]}`);
     // …and never with a tracked repository as the working directory.
     for (const repo of watched) expect(call.cwd.startsWith(repo)).toBe(false);
+  }
+});
+
+test("with docs auto-merge on and a Merge pending, a refresh still changes no repository and runs only pr list and api user", async () => {
+  // demo-ops opted in; its archive session was already sent the Merge prompt for #88 at the head commit GitHub lists.
+  const h = await harness({ agent: { prompts: { archive: "archive {change}" } } });
+  roots.push(dirname(h.repoPath));
+  h.config.repos[0].agent = { enabled: true, autoMergeDocs: true };
+  git(h.repoPath, "remote", "add", "origin", "https://github.com/acme/demo-ops.git");
+  const manager = h.newManager({ submitTimings: { echoTimeoutMs: 600, settleMs: 20 } });
+  const docs: AppState = { config: { ...h.config, repos: [...h.config.repos, ...state.config.repos] }, scanner: undefined as unknown as Scanner, sessions: manager };
+  docs.scanner = new Scanner(() => docs.config, { persist: false });
+  const docsServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: createFetchHandler({ state: docs, indexHtml: "" }) });
+  try {
+    const s = await manager.open({ repoId: h.repoId, change: "confirm-retention", action: "archive" });
+    const seen = await watch(manager, s.id);
+    await waitFor(() => seen.text().includes("fake-agent ready"), "the agent");
+    const head = git(s.worktreePath, "rev-parse", "HEAD");
+    const session = manager.get(s.id) as ChangeSession;
+    session.mergeAsked = { pr: 88, head, at: new Date().toISOString(), submitted: true, by: "dashboard" };
+    await docs.scanner.trigger().done;
+    await gh.scenario({
+      ...SCENARIO,
+      repos: { ...SCENARIO.repos, "acme/demo-ops": { open: [ghPr({ number: 88, headRefName: s.branch, headRefOid: head, statusCheckRollup: [{ __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" }], files: [{ path: "openspec/changes/confirm-retention/tasks.md" }], changedFiles: 1 })], closed: [] } },
+    });
+    const watched = [h.repoPath, alpha, beta, plain, offline];
+    const before = await Promise.all(watched.map(treeFingerprint));
+    await gh.forget();
+    const res = await fetch(`http://127.0.0.1:${docsServer.port}/api/pull-requests/refresh`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force: true }) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PullRequestsResponse;
+    expect(body.repos.find((r) => r.repoId === h.repoId)?.pullRequests.map((pr) => [pr.number, pr.docsOnly, pr.headOid])).toEqual([[88, true, head]]);
+    await Bun.sleep(300);
+    expect(await Promise.all(watched.map(treeFingerprint))).toEqual(before);
+    // The pending Merge is not sent again.
+    expect(seen.text()).not.toContain("head commit is");
+    const calls = await gh.calls();
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(["pr list", "api user"]).toContain(`${call.argv[0]} ${call.argv[1]}`);
+      for (const repo of watched) expect(call.cwd.startsWith(repo)).toBe(false);
+    }
+  } finally {
+    docs.scanner.stop();
+    docsServer.stop(true);
+    await manager.shutdown();
+    await gh.scenario(SCENARIO);
   }
 });

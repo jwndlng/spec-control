@@ -2,7 +2,7 @@
 // readiness"): every check green and no conflict with its base. Derived on display, never stored or logged; the card,
 // the detail header and the board's watch share this one rule so they can never disagree. Pure and total — whatever an
 // older cache wrote, it answers or returns undefined.
-import type { PullRequest } from "./types.ts";
+import type { MergeAsked, PullRequest } from "./types.ts";
 
 export type NotReadyReason = "draft" | "conflicts" | "checks failing" | "checks running" | "mergeability unknown";
 
@@ -32,6 +32,25 @@ export function pullRequestReadiness(pr: Partial<PullRequest> | undefined): Read
 /** An open pull request that is not ready: what keeps a card in its working state and what the board watches. */
 export function isNotReady(pr: Partial<PullRequest> | undefined): boolean {
   return pullRequestReadiness(pr)?.ready === false;
+}
+
+/**
+ * A Merge prompt was sent for this pull request at its current head commit, and it has not merged or closed since
+ * (agent-merges-docs-prs D5): what keeps the board's watch going and what the panel and the card say. A new head, a
+ * merge or a close ends it by itself — nothing has to be cleared.
+ */
+export function mergePending(pr: Partial<PullRequest> | undefined, asked: Pick<MergeAsked, "pr" | "head"> | undefined): boolean {
+  return pr?.state === "open" && asked !== undefined && pr.number === asked.pr && typeof pr.headOid === "string" && pr.headOid === asked.head;
+}
+
+/**
+ * The pull request's side of the automatic Merge rule ("A ready docs-only pull request is handed to its agent to
+ * merge"): open, not a draft, mergeable, checks passing — `none` never counts, since checks that have not registered
+ * yet look the same — docs-only and with a head commit. The base branch, the session and the worktree are checked
+ * where those are known.
+ */
+export function mergeReady(pr: Partial<PullRequest> | undefined): boolean {
+  return pr?.state === "open" && pr.draft !== true && pr.mergeable === "mergeable" && pr.checks === "passing" && pr.docsOnly === true && typeof pr.headOid === "string" && pr.headOid !== "";
 }
 
 /** The status role a readiness wears, on the card and in the header alike. Never `info`: that is a running agent's. */

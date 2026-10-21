@@ -95,6 +95,8 @@ test("merged after the ask: the agent is ended, the worktree removed, the branch
   expect(after.state).toBe("exited");
   expect(after.autoEnded).toMatchObject({ pr: 88, removed: true });
   expect(after.autoEnded?.reason).toBeUndefined();
+  // Ended without any Merge prompt: GitHub's own auto-merge, or a merge by hand, is handled exactly as before.
+  expect(after.mergeAsked).toBeUndefined();
   expect(await exists(s.worktreePath)).toBe(false);
   expect(git(h.repoPath, "for-each-ref")).toBe(refs);
   expect(git(h.repoPath, "show-ref", "--verify", `refs/heads/${BRANCH}`)).toContain(BRANCH);
@@ -196,6 +198,57 @@ test("a refresh that shows the merged pull request ends the session; the only gh
     expect(calls.length).toBeGreaterThan(0);
     for (const call of calls) expect(call.argv.slice(0, 2).join(" ")).toMatch(/^(pr list|api user)$/);
     for (const call of calls) expect(call.cwd.startsWith(dirname(h.repoPath))).toBe(false);
+  } finally {
+    state.scanner.stop();
+    server.stop(true);
+    gh.restore();
+  }
+});
+
+// ---- the whole flow with a Merge prompt (agent-merges-docs-prs 4.3) ----
+
+test("Archive, then a ready docs-only #88 is handed to the agent, then #88 merged ends the session and keeps the branch", async () => {
+  const { h, manager, events } = await project();
+  git(h.repoPath, "remote", "add", "origin", "https://github.com/acme/demo-ops.git");
+  const s = await archiveSession(manager, h);
+  const seen = await watch(manager, s.id);
+  // The agent archives and commits under openspec/, then pushes and opens #88 (all of which is the agent's doing).
+  await mkdir(join(s.worktreePath, "openspec", "changes", CHANGE), { recursive: true });
+  await writeFile(join(s.worktreePath, "openspec", "changes", CHANGE, "notes.md"), "archived\n");
+  git(s.worktreePath, "add", "-A");
+  git(s.worktreePath, "commit", "-q", "-m", "archive");
+  const head = git(s.worktreePath, "rev-parse", "HEAD");
+  const files = { files: [{ path: `openspec/changes/${CHANGE}/notes.md` }], changedFiles: 1 };
+  const open88 = ghPr({ number: 88, headRefName: BRANCH, headRefOid: head, statusCheckRollup: [{ __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }], ...files });
+  const gh = await installFakeGh({ login: "demo-user", repos: { "acme/demo-ops": { open: [open88], closed: [] } } });
+  const state: AppState = { config: h.config, scanner: undefined as unknown as Scanner, sessions: manager };
+  state.scanner = new Scanner(() => state.config, { persist: false });
+  await state.scanner.trigger().done;
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: createFetchHandler({ state, indexHtml: "" }) });
+  const post = (path: string, body: unknown = {}, headers: Record<string, string> = { "content-type": "application/json" }) =>
+    fetch(`http://127.0.0.1:${server.port}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+  try {
+    expect((await post("/api/pull-requests/refresh", { force: true })).status).toBe(200);
+    await waitFor(() => (manager.get(s.id) as ChangeSession).mergeAsked?.submitted === true, "the Merge prompt");
+    expect((manager.get(s.id) as ChangeSession).mergeAsked).toMatchObject({ pr: 88, head, by: "dashboard" });
+    await waitFor(() => seen.text().includes(`#88 and its head commit is ${head}.`), "the prompt in the terminal");
+    expect(events.filter((e) => e.kind === "session-merge")).toEqual([{ kind: "session-merge", pr: 88, by: "dashboard", submitted: true }]);
+
+    // The Merge action's route is under the same-origin guard and takes the pull request from the server's list.
+    expect((await post(`/api/sessions/${s.id}/merge`, {}, { "content-type": "text/plain" })).status).toBe(403);
+    const manual = await post(`/api/sessions/${s.id}/merge`, { pr: 1, head: "0".repeat(40) });
+    expect(manual.status).toBe(200);
+    expect(((await manual.json()) as ChangeSession).mergeAsked).toMatchObject({ pr: 88, head, by: "user" });
+
+    // The agent merged it; the user's checkout has the work (squash or not, the content is in the base).
+    git(h.repoPath, "merge", "-q", "--ff-only", BRANCH);
+    await gh.scenario({ login: "demo-user", repos: { "acme/demo-ops": { open: [], closed: [{ ...open88, state: "MERGED", mergedAt: new Date(Date.now() + 1000).toISOString(), closedAt: new Date(Date.now() + 1000).toISOString() }] } } });
+    expect((await post("/api/pull-requests/refresh", { force: true })).status).toBe(200);
+    await waitFor(() => (manager.get(s.id) as ChangeSession).autoEnded !== undefined, "the automatic end");
+    expect((manager.get(s.id) as ChangeSession).autoEnded).toMatchObject({ pr: 88, removed: true });
+    expect(await exists(s.worktreePath)).toBe(false);
+    expect(git(h.repoPath, "show-ref", "--verify", `refs/heads/${BRANCH}`)).toContain(BRANCH);
+    for (const call of await gh.calls()) expect(call.argv.slice(0, 2).join(" ")).toMatch(/^(pr list|api user)$/);
   } finally {
     state.scanner.stop();
     server.stop(true);

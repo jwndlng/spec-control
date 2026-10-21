@@ -101,6 +101,9 @@ export function describe(event: ActivityEvent): string {
       return event.submitted === false ? "conflict resolution requested — typed, not sent" : "conflict resolution requested";
     case "session-auto-ended":
       return `session ended because #${event.pr} merged · ${event.removed ? "worktree removed" : `worktree kept: ${event.reason ?? "it could not be removed"}`}`;
+    case "session-merge":
+      // What was handed over, not what came of it: whether it merged is learned from a later pull-request query.
+      return `merge of #${event.pr} requested${event.by === "dashboard" ? " by Spec Control, as it is ready and docs-only" : ""}${event.submitted ? "" : " — typed, not sent"}`;
   }
 }
 

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isNotReady, pullRequestReadiness, readinessRole, readinessWord } from "../src/shared/pullRequestReadiness.ts";
+import { isNotReady, mergePending, mergeReady, pullRequestReadiness, readinessRole, readinessWord } from "../src/shared/pullRequestReadiness.ts";
 import type { PullRequest } from "../src/shared/types.ts";
 
 const pr = (patch: Partial<PullRequest> = {}): PullRequest => ({
@@ -85,4 +85,49 @@ test("roles and words: never info, every state in words", () => {
     expect<string>(readinessWord(readiness)).toBe(word);
     expect<string>(readinessRole(readiness)).toBe(role);
   }
+});
+
+// ---- pending and automatic merges (agent-merges-docs-prs 3.1, 3.2) ----
+
+const HEAD = "c0ffee0000000000000000000000000000000088";
+const asked = { pr: 125, head: HEAD };
+
+test("a merge is pending while the pull request is open at the head commit the prompt named", () => {
+  expect(mergePending(pr({ headOid: HEAD }), asked)).toBe(true);
+  // Even when it is ready: a pending merge counts whatever the readiness.
+  expect(mergePending(pr({ headOid: HEAD, checks: "pending" }), asked)).toBe(true);
+});
+
+test("merged, closed, a new head, another number or no record ends it", () => {
+  expect(mergePending(pr({ headOid: HEAD, state: "merged" }), asked)).toBe(false);
+  expect(mergePending(pr({ headOid: HEAD, state: "closed" }), asked)).toBe(false);
+  expect(mergePending(pr({ headOid: "c0ffee0000000000000000000000000000000089" }), asked)).toBe(false);
+  expect(mergePending(pr({ headOid: HEAD, number: 126 }), asked)).toBe(false);
+  expect(mergePending(pr({}), asked)).toBe(false);
+  expect(mergePending(pr({ headOid: HEAD }), undefined)).toBe(false);
+  expect(mergePending(undefined, asked)).toBe(false);
+});
+
+test("the automatic rule wants open, not a draft, mergeable, checks passing, docs-only and a head", () => {
+  const ready = pr({ headOid: HEAD, docsOnly: true });
+  expect(mergeReady(ready)).toBe(true);
+  for (const patch of [
+    { checks: "none" },
+    { checks: "pending" },
+    { checks: "failing" },
+    { draft: true },
+    { mergeable: "conflicting" },
+    { mergeable: "unknown" },
+    { mergeable: undefined },
+    { docsOnly: false },
+    { docsOnly: undefined },
+    { headOid: undefined },
+    { state: "merged" },
+    { state: "closed" },
+  ] as Partial<PullRequest>[]) {
+    expect({ patch, ready: mergeReady({ ...ready, ...patch }) }).toEqual({ patch, ready: false });
+  }
+  // No checks at all is still shown as ready on the card — it is only never merged on its own.
+  expect(pullRequestReadiness({ ...ready, checks: "none" })).toEqual({ ready: true });
+  expect(mergeReady(undefined)).toBe(false);
 });

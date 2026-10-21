@@ -9,7 +9,8 @@
 //     "mode": "ok" | "not-logged-in" | "hang" | "fail",   // applies to every call
 //     "stderr": "…",                              // stderr for "fail"
 //     "exitCode": 1,
-//     "repos": { "acme/alpha-infra": { "open": [ … ], "closed": [ … ] } },   // entries may carry "mergeable"
+//     "repos": { "acme/alpha-infra": { "open": [ … ], "closed": [ … ] } },   // entries may carry "mergeable",
+//                                                                         // "headRefOid", "files" and "changedFiles"
 //     "issues": { "acme/alpha-infra": [ … ] },      // open issues, newest first, as `issue list` prints them
 //     "owners": { "jdoe": [ … ] },                  // `repo list <owner>` entries, as `gh` prints them
 //     "perRepo": { "acme": { "mode": "fail" } },    // also keyed by owner for `repo list`
@@ -18,7 +19,8 @@
 //   }
 // A repository missing from `repos` answers with empty lists, which is what `gh` does for one without pull requests.
 // Like the real `gh`, `pr list` answers only the fields named in `--json`, so a field the caller does not ask for —
-// `mergeable`, say — is not in the answer even when the scenario has it.
+// `mergeable` or `files`, say — is not in the answer even when the scenario has it. The log keeps the whole argv, so a
+// test reads the fields each call asked for from its `--json` argument.
 import { appendFileSync, readFileSync } from "node:fs";
 
 interface Mode {

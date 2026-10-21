@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { defaultAgentSessions, defaultConfig, newRepoConfig, validateConfig } from "../src/server/config.ts";
-import { agentEnv, agentFor, fastForwardPrompt, integratePrompt, launchCommand, launchWithoutPrompt, openingPrompt, resolveConflictsPrompt, shipPrompt } from "../src/server/sessions/agents.ts";
+import { agentEnv, agentFor, fastForwardPrompt, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, shipPrompt } from "../src/server/sessions/agents.ts";
 import { Scrollback, sessionBranch, worktreeName } from "../src/server/sessions/manager.ts";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE, CODEX_PROFILE, DEFAULT_SHORTCUTS, FORMER_PROMPTS } from "../src/shared/agentDefaults.ts";
-import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, availableActions, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
+import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, availableActions, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, mergeTargetSentence, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
 import { agentForRepo, cardIsLive, cardSessionControls, NEEDS_YOU_AFTER_MS, parseArgLines, sessionBadge, sessionForChange, sessionsEnabledFor, silenceDuration, slugId, startersFor } from "../src/ui/sessionState.ts";
 import { fakeProfile } from "./sessionHelpers.ts";
 
@@ -219,12 +219,23 @@ test("Ship: the auto-merge instruction comes last when asked for, and changes no
     expect(shipPrompt(profile, "cache-api-calls", { autoMerge: false })).toBe(plain);
     expect(shipPrompt(profile, "cache-api-calls", { autoMerge: true })).toBe(`${plain} ${AUTO_MERGE_DOCS_INSTRUCTION}`);
   }
-  // One line (it may be typed into a terminal), agent-neutral, and it overrides the default's "Do not merge it."
+  // One line (it may be typed into a terminal), agent-neutral, and it asks for no merge and no auto-merge: the
+  // dashboard sends the Merge prompt once the pull request is ready (agent-merges-docs-prs D6).
   expect(AUTO_MERGE_DOCS_INSTRUCTION).not.toMatch(/[\r\n]/);
   expect(AUTO_MERGE_DOCS_INSTRUCTION).not.toMatch(/\bgh\b|claude|codex/i);
   expect(AUTO_MERGE_DOCS_INSTRUCTION).toContain("openspec/");
-  expect(AUTO_MERGE_DOCS_INSTRUCTION).toContain("enable auto-merge");
+  expectsNoAutoMerge(AUTO_MERGE_DOCS_INSTRUCTION);
 });
+
+/** The instruction says not to merge and not to enable auto-merge, and asks for neither anywhere else in it: the only
+ *  other mention of merging is that Spec Control will ask for it later. */
+function expectsNoAutoMerge(text: string): void {
+  const refusal = "do not merge it and do not enable auto-merge on it";
+  const later = "Spec Control will ask you to merge it when it is ready";
+  expect(text).toContain(refusal);
+  expect(text).toContain(later);
+  expect(text.replaceAll(refusal, "").replaceAll(later, "")).not.toMatch(/auto-merge|\bmerge (it|the)\b/i);
+}
 
 test("Archive: the archive auto-merge instruction comes last when asked for, and no other starter ever carries it", () => {
   const extra = "Create a PR whenever you finished the archive.";
@@ -241,7 +252,49 @@ test("Archive: the archive auto-merge instruction comes last when asked for, and
   expect(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION).not.toMatch(/\bgh\b|claude|codex/i);
   expect(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION).toContain("Do not open a pull request just because of this");
   expect(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION).toContain("if you open one");
-  expect(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION).toContain("enable auto-merge");
+  expectsNoAutoMerge(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION);
+});
+
+const HEAD = "c0ffee0000000000000000000000000000000001";
+
+test("Merge: the default prompt, then the sentence naming the pull request and its head commit", () => {
+  const prompt = mergePrompt(fakeProfile(), "cache-api-calls", { pr: 41, head: HEAD });
+  expect(prompt).toBe(`${DEFAULT_MERGE_PROMPT.replaceAll("{change}", "cache-api-calls")} ${mergeTargetSentence(41, HEAD)}`);
+  expect(prompt).toEndWith(`#41 and its head commit is ${HEAD}.`);
+  expect(prompt).toContain("--match-head-commit");
+  expect(prompt).toContain("Do not delete the branch");
+  expect(prompt).not.toMatch(/[\r\n]/);
+  // Agent-neutral: it names the host's GitHub CLI and no agent vendor.
+  expect(DEFAULT_MERGE_PROMPT).not.toMatch(/claude|codex|antigravity/i);
+});
+
+test("Merge: a profile's own prompt with {change}, its additional instructions, and nothing after the sentence", () => {
+  const own = fakeProfile({ prompts: { merge: "Squash-merge the pull request for {change}." } });
+  expect(mergePrompt(own, "cache-api-calls", { pr: 41, head: HEAD })).toBe(`Squash-merge the pull request for cache-api-calls. ${mergeTargetSentence(41, HEAD)}`);
+  const suffixed = fakeProfile({ prompts: { merge: "Merge\n{change}." }, promptSuffixes: { merge: " Then\n say done. " } });
+  expect(mergePrompt(suffixed, "cache-api-calls", { pr: 7, head: HEAD })).toBe(`Merge cache-api-calls. Then say done. ${mergeTargetSentence(7, HEAD)}`);
+  // No other prompt carries the sentence.
+  expect(shipPrompt(own, "cache-api-calls")).not.toContain("head commit is");
+  expect(resolveConflictsPrompt(own, "cache-api-calls")).not.toContain("head commit is");
+});
+
+test("Merge: a bad commit, a bad number or a bad change name is refused, never typed", () => {
+  const profile = fakeProfile();
+  for (const head of ["c0ffee", HEAD.toUpperCase(), `${HEAD}0`, `${HEAD.slice(0, 39)} `, "", "c0ffee000000000000000000000000000000000; rm"]) {
+    expect(() => mergePrompt(profile, "cache-api-calls", { pr: 41, head })).toThrow("invalid head commit");
+  }
+  for (const pr of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "41" as unknown as number]) {
+    expect(() => mergePrompt(profile, "cache-api-calls", { pr, head: HEAD })).toThrow("invalid pull request number");
+  }
+  expect(() => mergePrompt(profile, "../x", { pr: 41, head: HEAD })).toThrow("invalid change name");
+});
+
+test("Merge: a profile's Merge prompt and its additional instructions are validated like Ship's", () => {
+  const profile = (prompts: Record<string, string>, promptSuffixes?: Record<string, string>) => withAgents([{ id: "fake", name: "Fake", command: ["fake"], prompts, ...(promptSuffixes ? { promptSuffixes } : {}) }], "fake");
+  expect(validateConfig(profile({ merge: "Merge {change}." }, { merge: "Squash it." })).agentSessions.agents[0]).toMatchObject({ prompts: { merge: "Merge {change}." }, promptSuffixes: { merge: "Squash it." } });
+  expect(() => validateConfig(profile({ merge: "Merge {change} {pr}." }))).toThrow("only {change} is supported");
+  // A config without it loads unchanged.
+  expect(validateConfig(profile({ ship: "Ship {change}." })).agentSessions.agents[0].prompts).toEqual({ ship: "Ship {change}." });
 });
 
 test("Integrate: prompt plus additional instructions, with nothing substituted into either", () => {
