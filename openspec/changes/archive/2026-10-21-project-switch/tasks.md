@@ -14,7 +14,7 @@
       structure and the link `href`s and click handling in `test/projectSwitch.test.ts`
 - [x] 2.2 Use it for the repository name in `RepoHeader` (`src/ui/kanban.tsx`), passing the snapshot's repositories, and
       add the styles to `src/ui/styles.css`; verify `bun run check` passes
-- [~] 2.3 Check in the running dashboard (`bun run dev`) that switching, searching, keyboard use, Escape, ⌘-click and
+- [x] 2.3 Check in the running dashboard (`bun run dev`) that switching, searching, keyboard use, Escape, ⌘-click and
       both themes behave as the spec says
 
 ## 3. Wrap-up
