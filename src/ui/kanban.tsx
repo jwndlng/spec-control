@@ -521,6 +521,7 @@ function RepoHeader({ repo, projects, config, now, stats, onCreated, onConfig }:
             setDetails(null);
             setPrs({ opener: details.opener });
           }}
+          onChanged={onCreated}
         />
       )}
       {prs && <RepoPullRequestsDialog repoId={repo.id} repoName={repo.name} onClose={() => setPrs(null)} returnFocus={() => prs.opener} />}

@@ -89,7 +89,13 @@ bun test test/scanner.test.ts   # a single test file
    or pushed, `git worktree prune` of records whose directory is gone, and `git branch -D` of a local branch other than
    the default branch and the main checkout's branch whose work read-only checks proved is in the default branch and
    that still points at the commit the user saw (`src/server/cleanup.ts`, the only place that deletes a branch; never a
-   remote branch or remote-tracking ref); and **dismissing a change** — on the user's confirmation, deleting an active
+   remote branch or remote-tracking ref) — and, as the one forced removal, **deleting a branch with its worktree** from
+   the project details: for the single linked worktree the user confirmed after seeing what it holds (never the main
+   checkout, the default branch, a worktree with a running session or one the user locked), and only once a re-read
+   proved the worktree, branch, commit and uncommitted files are what the dialog showed, a copy of its uncommitted,
+   non-ignored files under `~/.spec-control/branch-backups/`, then `git worktree remove --force` (unlocking only a
+   worktree the dashboard created) and `git branch -D` of its branch whatever its merge state, if it still points at
+   that commit (`deleteBranch` in the same module); and **dismissing a change** — on the user's confirmation, deleting an active
    change's directory `openspec/changes/<name>/` from the main checkout (never under `archive/`, never a symbolic link
    or its target, never anything in a linked worktree) after re-checking that its content is what the confirmation
    showed and that no agent session for the change runs, then staging that removal with a single

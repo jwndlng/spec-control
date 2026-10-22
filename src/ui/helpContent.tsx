@@ -219,6 +219,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           merged. Only what provably holds no work of its own is offered, and nothing goes before you confirm.
         </li>
         <li>
+          In a board's <strong>Details</strong>, every worktree whose branch belongs to no active change is marked{" "}
+          <em>no active change</em>, and <strong>Delete…</strong> beside a worktree deletes it with its branch even when
+          they hold unfinished work — after showing what would be lost, asking you to confirm, and copying the uncommitted
+          files to <code>~/.spec-control/branch-backups/</code>.
+        </li>
+        <li>
           <strong>Refresh</strong> scans now; the clock beside it repeats that at an interval you choose. Scanning only
           reads.
         </li>
@@ -251,7 +257,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           changes a repository only when you click something:
         </p>
         <ul>
-          <li>Pull, New change, Import from issues, Dismiss, Clean up and applying shared config, each on the repository you chose;</li>
+          <li>Pull, New change, Import from issues, Dismiss, Clean up, deleting a branch and applying shared config, each on the repository you chose;</li>
           <li>creating and removing an agent session's worktree;</li>
           <li>fetching a project's remote every minute, or on the interval you set, unless you switched its Auto fetch off — refs only, never its files.</li>
         </ul>

@@ -1480,3 +1480,60 @@ export interface PullRequestsResponse {
   viewer?: string;
   repos: RepoPullRequests[];
 }
+
+/**
+ * Deleting one linked worktree and its branch whatever they hold (repository-cleanup: "One branch and its worktree can
+ * be deleted whatever they hold"). The preview is read-only; the request carries what the user saw, and the server
+ * deletes nothing unless the worktree still matches it.
+ */
+export interface BranchDeletePreview {
+  repoId: string;
+  path: string;
+  /** Absent when HEAD is detached: only the worktree goes. */
+  branch?: string;
+  /** Full commit the worktree's HEAD (and its branch) points to. */
+  commit: string;
+  /** SHA-256 of the worktree's status as read; a confirmation is refused when it no longer matches. */
+  statusDigest: string;
+  /** Uncommitted and untracked paths, relative to the worktree; at most `UNCOMMITTED_LISTED` of them. */
+  uncommitted: string[];
+  uncommittedCount: number;
+  /** Commits on no remote-tracking ref, as of the last fetch; absent when the repository has none. */
+  notOnRemote?: number;
+  /** Commits not in the default branch; absent when the default branch is unknown. */
+  notInBase?: number;
+  /** What `notInBase` was judged against, e.g. `origin/main`. */
+  base?: string;
+  /** Its work is in the default branch: no commit beyond it, or the same content (a squash or rebase merge). */
+  merged?: boolean;
+  /** The dashboard created it (it lives under `~/.spec-control/worktrees/`). */
+  managed: boolean;
+  locked?: boolean;
+  /** Present when deleting is refused, in words. */
+  refused?: string;
+}
+
+/** How many uncommitted paths a preview lists; the rest are only counted. */
+export const UNCOMMITTED_LISTED = 200;
+
+export interface BranchDeleteRequest {
+  path: string;
+  /** The branch the user saw, or null for a detached worktree. */
+  branch: string | null;
+  commit: string;
+  statusDigest: string;
+}
+
+export interface BranchDeleteResult {
+  repoId: string;
+  path: string;
+  outcome: "deleted" | "removed" | "refused";
+  /** Why it was refused, or — for `removed` with a branch — why the branch was not deleted. */
+  reason?: string;
+  branch?: string;
+  /** The commit a deleted branch pointed to, to restore it with `git branch <name> <commit>`. */
+  commit?: string;
+  /** Where the uncommitted files were copied; absent when there were none. */
+  backupDir?: string;
+  backedUp?: number;
+}

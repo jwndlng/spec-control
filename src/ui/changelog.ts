@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-22-delete-branches",
+    date: "2026-10-22",
+    title: "Delete a branch and its worktree from Details",
+    summary:
+      "A project's **Details** now marks every worktree whose branch belongs to no active change, and each worktree offers **Delete…**: it shows what would be lost, keeps a copy of the uncommitted files under `~/.spec-control/branch-backups/`, and then deletes the worktree and its branch even when they hold unfinished work.",
+  },
+  {
     id: "2026-10-21-agent-merges-docs-prs",
     date: "2026-10-21",
     title: "Docs-only pull requests merge on any GitHub plan",

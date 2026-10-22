@@ -1,7 +1,7 @@
 import type { ActivityQuery } from "../shared/activity.ts";
 import type { RepoAgentPatch } from "../shared/repoSettings.ts";
 import type { GithubClone, GithubClonesResponse, GithubRepoList, KeepAwakeStatus } from "../shared/types.ts";
-import type { ActivityPage, AutoMergePromptResult, ConsoleSession, ProjectConsoleLike, CleanupPreview, CleanupResult, CleanupSelection, ChangeIssueRef, CreateChangeResponse, DismissPreview, DismissResult, EnvironmentReport, EnvironmentView, FolderPickResult, PromptResult, PullRequestsResponse, PullResolve, PullResult, RepoIssues, SetupState, ShipResult, StartResult, UpdateStatus, WorkStatus } from "../shared/types.ts";
+import type { ActivityPage, AutoMergePromptResult, BranchDeletePreview, BranchDeleteRequest, BranchDeleteResult, ConsoleSession, ProjectConsoleLike, CleanupPreview, CleanupResult, CleanupSelection, ChangeIssueRef, CreateChangeResponse, DismissPreview, DismissResult, EnvironmentReport, EnvironmentView, FolderPickResult, PromptResult, PullRequestsResponse, PullResolve, PullResult, RepoIssues, SetupState, ShipResult, StartResult, UpdateStatus, WorkStatus } from "../shared/types.ts";
 import type { AgentAvailability, AutoFetchSeconds, ArtifactFileContent, ChangeArtifacts, Config, CreateProjectResponse, DiscoverResult, IntegrationSession, PrTitleConvention, RepoConfig, ScanTriggerResult, Session, SessionAction, SessionWorktree, SharedConfig, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Snapshot } from "../shared/types.ts";
 import { socketOrigin } from "./url.ts";
 
@@ -149,6 +149,10 @@ export interface Api {
   cleanupPreview(repoId: string): Promise<CleanupPreview>;
   /** Removes what the user selected and confirmed, re-checking each item; the only call that deletes a branch. */
   cleanup(repoId: string, selection: CleanupSelection): Promise<CleanupResult>;
+  /** Read-only: what deleting one linked worktree and its branch would lose, or why it is refused. */
+  branchDeletePreview(repoId: string, path: string): Promise<BranchDeletePreview>;
+  /** Deletes that worktree and its branch whatever they hold, after a backup, if they are still what the preview showed. */
+  deleteBranch(repoId: string, request: BranchDeleteRequest): Promise<BranchDeleteResult>;
   /** Read-only: what dismissing the change would delete, file by file, and whether git could restore each. */
   dismissPreview(repoId: string, change: string): Promise<DismissPreview>;
   /**
@@ -304,6 +308,8 @@ export const httpApi: Api = {
   refreshPullRequests: (options = {}) => call<PullRequestsResponse>("/api/pull-requests/refresh", { method: "POST", body: JSON.stringify(options) }),
   cleanupPreview: (repoId) => call<CleanupPreview>(`/api/repos/${encodeURIComponent(repoId)}/cleanup`),
   cleanup: (repoId, selection) => call<CleanupResult>(`/api/repos/${encodeURIComponent(repoId)}/cleanup`, { method: "POST", body: JSON.stringify(selection) }),
+  branchDeletePreview: (repoId, path) => call<BranchDeletePreview>(`/api/repos/${encodeURIComponent(repoId)}/branches/delete?path=${encodeURIComponent(path)}`),
+  deleteBranch: (repoId, request) => call<BranchDeleteResult>(`/api/repos/${encodeURIComponent(repoId)}/branches/delete`, { method: "POST", body: JSON.stringify(request) }),
   dismissPreview: (repoId, change) => call<DismissPreview>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/dismiss`),
   dismissChange: (repoId, change, fingerprint) =>
     call<DismissResult>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/dismiss`, { method: "POST", body: JSON.stringify({ fingerprint }) }),
@@ -401,6 +407,8 @@ export const api: Api = {
   },
   cleanupPreview: (...args) => current.cleanupPreview(...args),
   cleanup: (...args) => current.cleanup(...args),
+  branchDeletePreview: (...args) => current.branchDeletePreview(...args),
+  deleteBranch: (...args) => current.deleteBranch(...args),
   dismissPreview: (...args) => current.dismissPreview(...args),
   dismissChange: (...args) => current.dismissChange(...args),
   sharedConfig: () => current.sharedConfig(),

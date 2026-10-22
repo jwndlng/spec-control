@@ -116,3 +116,8 @@ export function whichOnPath(command: string): string | undefined {
 export function pullRequestsCachePath(): string {
   return join(dashboardHome(), "pull-requests.json");
 }
+
+/** Copies of the uncommitted files of worktrees the user deleted with their branch; never pruned by the dashboard. */
+export function branchBackupsDir(): string {
+  return join(dashboardHome(), "branch-backups");
+}

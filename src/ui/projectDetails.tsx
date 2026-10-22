@@ -2,9 +2,11 @@
 // project that the header's quick view leaves out, in labelled sections. It shows only what the snapshot, the
 // configuration and the cached pull-request list already hold — opening it starts no scan, fetch or query.
 import type { ComponentChildren } from "preact";
-import { useEffect } from "preact/hooks";
-import type { Config, RepoSnapshot } from "../shared/types.ts";
+import { useEffect, useState } from "preact/hooks";
+import type { Config, RepoSnapshot, Worktree } from "../shared/types.ts";
 import { CheckoutList } from "./checkout.tsx";
+import { DeleteBranchDialog } from "./deleteBranch.tsx";
+import { countNoActiveChange } from "./deleteBranchState.ts";
 import { relTime } from "./format.ts";
 import { IconInfo } from "./icons.tsx";
 import { LabelChips } from "./labels.tsx";
@@ -155,6 +157,7 @@ export function ProjectDetailsDialog({
   returnFocus,
   onClose,
   onOpenPullRequests,
+  onChanged,
 }: {
   repo: RepoSnapshot;
   config: Config | null;
@@ -163,8 +166,13 @@ export function ProjectDetailsDialog({
   returnFocus: () => HTMLElement | null;
   onClose: () => void;
   onOpenPullRequests: () => void;
+  /** Rescans after a worktree was deleted; without it the Checkouts section offers no **Delete…**. */
+  onChanged?: () => void;
 }) {
   const sections = detailSections(repo, config);
+  // The deletion dialog sits over the overlay; while it is open, Escape and the backdrop are its own.
+  const [deleting, setDeleting] = useState<{ worktree: Worktree; opener: HTMLElement }>();
+  const orphans = countNoActiveChange(repo);
   useEffect(() => {
     if (!section || !sections.includes(section)) return;
     const heading = document.getElementById(headingId(section));
@@ -172,7 +180,17 @@ export function ProjectDetailsDialog({
     heading?.focus();
   }, []);
   return (
-    <Modal label={`Details of ${repo.name}`} title="Details" subtitle={repo.name} icon={<IconInfo size={18} />} onClose={onClose} returnFocus={returnFocus} wide>
+    <>
+    <Modal
+      label={`Details of ${repo.name}`}
+      title="Details"
+      subtitle={repo.name}
+      icon={<IconInfo size={18} />}
+      onClose={onClose}
+      canClose={() => !deleting}
+      returnFocus={returnFocus}
+      wide
+    >
       <div class="project-details">
         {sections.map((s) => {
           switch (s) {
@@ -187,8 +205,11 @@ export function ProjectDetailsDialog({
             case "checkouts":
               return (
                 <Section key={s} section="checkouts">
-                  <p class="hint">{checkoutSummary(repo.worktrees).text} — unpushed and behind counts are as of the last fetch</p>
-                  <CheckoutList checkouts={repo.worktrees} />
+                  <p class="hint">
+                    {checkoutSummary(repo.worktrees).text}
+                    {orphans > 0 && ` · ${orphans} with no active change`} — unpushed and behind counts are as of the last fetch
+                  </p>
+                  <CheckoutList repo={repo} onDelete={onChanged ? (worktree, opener) => setDeleting({ worktree, opener }) : undefined} />
                 </Section>
               );
             case "sync":
@@ -201,5 +222,16 @@ export function ProjectDetailsDialog({
         })}
       </div>
     </Modal>
+    {deleting && onChanged && (
+      <DeleteBranchDialog
+        repoId={repo.id}
+        path={deleting.worktree.path}
+        label={deleting.worktree.branch ?? "detached worktree"}
+        onClose={() => setDeleting(undefined)}
+        onDone={onChanged}
+        returnFocus={() => deleting.opener}
+      />
+    )}
+    </>
   );
 }
