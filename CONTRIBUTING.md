@@ -17,7 +17,10 @@ One change = one branch = one pull request.
    Feature detail goes into the Help and the spec, not the README: `README.md` changes only when a key feature, the
    global → project → change structure, the run steps or what the dashboard touches changes.
 4. **Check** — `bun run check` (lint, typecheck, tests) must pass before pushing. CI runs the same command, plus the
-   single-binary build, on Linux and macOS.
+   single-binary build, on Linux for every pull request, and the tests and the build again on macOS after each merge
+   to `main`. Before merging a change that may behave differently on macOS (paths, pseudo-terminals, `desktop/`), run
+   it there on the branch: `gh workflow run ci --ref <branch>`. A change that touches only `openspec/` or Markdown at
+   the repository root starts no CI.
 5. **Pull request** — the title follows [Conventional Commits](https://www.conventionalcommits.org/) and becomes the
    squash-commit subject. Do not push to `main` directly.
 6. **Archive** — after merge, `/opsx:archive <change-name>` and commit as `chore(openspec): archive <change-name>`.

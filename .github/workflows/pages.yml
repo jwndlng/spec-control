@@ -2,9 +2,11 @@ name: pages
 
 # Publishes the demo (the real UI on sample data) and its screenshots to GitHub Pages.
 # Never runs for pull requests: the deploy job is the only place in this repository with write scopes.
+# The demo reads neither this repository's openspec/ tree nor its root Markdown, so changes to only those deploy nothing.
 on:
   push:
     branches: [main]
+    paths-ignore: ['openspec/**', '*.md']
   workflow_dispatch:
 
 # Let a running deploy finish; queue at most the newest one behind it.
