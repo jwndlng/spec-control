@@ -152,7 +152,14 @@ sections, each shown only when it has something to show, in this order:
 - **Repository**: the full path, whether it is a git repository, the main checkout's branch and the relative age of the
   last update with the exact time in a tooltip.
 - **Checkouts**: one status chip per checkout of the repository — the main checkout and each linked worktree — each
-  with its path.
+  with its path. Each linked worktree whose branch belongs to no active change of the project — no active change is
+  read from that worktree or names it as its branch, and the branch is not one an agent session would use for an
+  active change — SHALL carry a `no active change` marker, with a tooltip saying the branch may be left over; the main
+  checkout, a detached or stale worktree and the default branch never carry it. The section's summary line SHALL say
+  how many branches have no active change when there are any. Each linked worktree that is not stale, not bare and
+  not on the default branch SHALL offer a **Delete…** control that opens the deletion dialog of the
+  `repository-cleanup` capability ("One branch and its worktree can be deleted whatever they hold") for that worktree,
+  over the overlay; while that dialog is open, Escape and the backdrop close it and not the overlay.
 - **Sync**: the fetch note with its exact time, the project's auto fetch interval or that auto fetch is off, the reason
   of a failed automatic fetch, and the notice of "A main checkout that is off its default branch is flagged".
 - **Pull requests**: the number of open pull requests from the cached list, or that there is no list, and a control
@@ -183,8 +190,9 @@ SHALL be conveyed with text or a symbol plus a tooltip that spells it out, never
 unpushed and behind SHALL state that the numbers reflect the last fetch, and the unpushed tooltip SHALL distinguish
 commits ahead of a named upstream from commits on a branch that was never pushed. When the snapshot carries no
 checkout information for the repository, the quick view SHALL fall back to the current branch when known, and the
-overlay SHALL have no Checkouts section. The header and the overlay MUST NOT offer any action on an individual
-checkout; worktrees are removed only through the Clean up dialog and the agent-session views.
+overlay SHALL have no Checkouts section. The header MUST NOT offer any action on an individual checkout, and the
+overlay offers only the **Delete…** control above; worktrees are otherwise removed only through the Clean up dialog
+and the agent-session views.
 
 #### Scenario: Header content
 - **WHEN** repository `alpha-infra` at `/Users/x/Workspace/acme/alpha-infra` has a clean main checkout on `main` and two linked worktrees on `feat/report` and `fix/parser`, and was last updated 1 day ago
@@ -253,6 +261,26 @@ checkout; worktrees are removed only through the Clean up dialog and the agent-s
 #### Scenario: New change hidden for a failed scan
 - **WHEN** the repository's last scan failed
 - **THEN** the header shows no `New change` action
+
+#### Scenario: Branch with no active change is highlighted
+- **WHEN** `alpha-infra` has active changes `report` and `parser`, a worktree on `feat/report` holding `report`, and a
+  worktree on `spike/old-idea` holding no change
+- **THEN** in the overlay's Checkouts section `spike/old-idea` carries the marker `no active change` with its tooltip,
+  `feat/report` and the main checkout do not, and the summary line says 1 branch has no active change
+
+#### Scenario: Archived change no longer counts
+- **WHEN** the only change named after the worktree branch `feat/audit-trail` has been archived
+- **THEN** that worktree carries the `no active change` marker
+
+#### Scenario: Delete control per worktree
+- **WHEN** the overlay's Checkouts section lists the main checkout on `feat/redesign`, a worktree on the default branch
+  `main`, a worktree on `feat/report` and a stale worktree record
+- **THEN** only the `feat/report` row offers **Delete…**, and activating it opens the deletion dialog for that worktree
+  over the overlay without removing anything
+
+#### Scenario: Escape closes the deletion dialog first
+- **WHEN** the deletion dialog is open over the overlay and the user presses Escape
+- **THEN** the deletion dialog closes and the project details overlay stays open
 
 ### Requirement: The repository board header switches between projects
 The repository name in the repository board header's breadcrumb SHALL be a control that opens a list of every tracked

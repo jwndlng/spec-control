@@ -53,4 +53,4 @@
 - [x] 4.2 Build the binary (`bun run build`) and run it against a scratch repository with a dirty worktree: the
       preview endpoint lists the uncommitted file, and confirming removes the worktree and branch and leaves a backup.
       Verify by inspecting the scratch repository and `~/.spec-control/branch-backups/`.
-- [~] 4.3 The user confirms in their own dashboard that the highlight and the dialog read well and behave as expected.
+- [x] 4.3 The user confirms in their own dashboard that the highlight and the dialog read well and behave as expected.
