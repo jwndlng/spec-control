@@ -240,6 +240,24 @@ test("cleanup is simulated: a merged worktree and its branch go, kept items say 
   expect((await fresh.state()).repos.find((r) => r.id === repo.id)!.worktrees.some((w) => w.path === worktree.path)).toBe(true);
 });
 
+test("deleting a branch is simulated: a worktree with work goes with its branch, and a reload brings it back", async () => {
+  const { api } = demo();
+  const repo = (await api.state()).repos.find((r) => r.worktrees.some((w) => !w.isMain && !w.prunable && !w.locked && w.branch && typeof w.status === "object" && w.status.modified + w.status.untracked > 0))!;
+  const worktree = repo.worktrees.find((w) => !w.isMain && !w.prunable && !w.locked && w.branch && typeof w.status === "object" && w.status.modified + w.status.untracked > 0)!;
+  const preview = await api.branchDeletePreview(repo.id, worktree.path);
+  expect(preview.refused).toBeUndefined();
+  expect(preview.uncommittedCount).toBeGreaterThan(0);
+  const request = { path: preview.path, branch: preview.branch ?? null, commit: preview.commit, statusDigest: preview.statusDigest };
+  expect((await api.deleteBranch(repo.id, { ...request, statusDigest: "0".repeat(64) })).outcome).toBe("refused");
+  const result = await api.deleteBranch(repo.id, request);
+  expect(result).toMatchObject({ outcome: "deleted", branch: worktree.branch, commit: preview.commit, backedUp: preview.uncommittedCount });
+  expect((await api.state()).repos.find((r) => r.id === repo.id)!.worktrees.some((w) => w.path === worktree.path)).toBe(false);
+  expect((await api.branchDeletePreview(repo.id, repo.path)).refused).toContain("not a linked worktree");
+
+  const fresh = demo().api;
+  expect((await fresh.state()).repos.find((r) => r.id === repo.id)!.worktrees.some((w) => w.path === worktree.path)).toBe(true);
+});
+
 test("the main checkout's branch is never offered in the demo either", async () => {
   const { api } = demo();
   const repo = (await api.state()).repos.find((r) => r.name === "harbor-web")!;

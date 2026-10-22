@@ -1,6 +1,9 @@
 // Repository cleanup, simulated: the preview is derived from the sample's checkouts and DEMO_BRANCHES, and applying it
 // only remembers what was removed for this page session. No git, no disk; a reload brings everything back.
 import type {
+  BranchDeletePreview,
+  BranchDeleteRequest,
+  BranchDeleteResult,
   CleanupBranch,
   CleanupItemResult,
   CleanupPreview,
@@ -121,4 +124,53 @@ export function demoApply(state: DemoCleanupState, repo: RepoSnapshot, selection
     }
   }
   return { repoId: repo.id, items };
+}
+
+/** Made-up uncommitted paths, as many as the sample's status says, so the dialog has something to list. */
+function demoUncommitted(w: Worktree): string[] {
+  const status = typeof w.status === "object" ? w.status : undefined;
+  const files: string[] = [];
+  for (let i = 1; i <= (status?.modified ?? 0); i++) files.push(`src/module-${i}.ts`);
+  for (let i = 1; i <= (status?.untracked ?? 0); i++) files.push(`notes/draft-${i}.md`);
+  return files;
+}
+
+/** Deleting one worktree and its branch, simulated over the sample: same refusals and re-check as the server. */
+export function demoBranchDeletePreview(state: DemoCleanupState, repo: RepoSnapshot, path: string): BranchDeletePreview {
+  const w = remainingWorktrees(state, repo.worktrees).find((x) => !x.isMain && x.path === path);
+  const base = { repoId: repo.id, path, commit: "", statusDigest: "", uncommitted: [], uncommittedCount: 0, managed: false };
+  if (!w) return { ...base, refused: "it is not a linked worktree of this repository" };
+  if (w.prunable) return { ...base, refused: "its directory no longer exists — Clean up prunes the record" };
+  const facts = DEMO_BRANCHES[repo.name] ?? { merged: [], unmerged: [] };
+  const merged = w.branch !== undefined && facts.merged.includes(w.branch);
+  const uncommitted = demoUncommitted(w);
+  const commit = fakeCommit(`${repo.id}/${w.branch ?? w.path}`);
+  const preview: BranchDeletePreview = {
+    ...base,
+    branch: w.branch,
+    commit,
+    statusDigest: (fakeCommit(`${commit}/${uncommitted.join(",")}`) + commit).slice(0, 64),
+    uncommitted,
+    uncommittedCount: uncommitted.length,
+    notOnRemote: w.unpushed ?? 0,
+    notInBase: merged ? 0 : (new Map(facts.unmerged).get(w.branch ?? "") ?? w.unpushed ?? 1),
+    base: "origin/main",
+    merged,
+    ...(w.locked ? { locked: true } : {}),
+  };
+  if (w.branch && w.branch === (repo.defaultBranch ?? "main")) return { ...preview, refused: "it is the default branch" };
+  if (w.locked) return { ...preview, refused: `it is locked${w.lockReason ? ` (${w.lockReason})` : ""} — unlock it yourself first` };
+  return preview;
+}
+
+export function demoDeleteBranch(state: DemoCleanupState, repo: RepoSnapshot, request: BranchDeleteRequest): BranchDeleteResult {
+  const p = demoBranchDeletePreview(state, repo, request.path);
+  const refuse = (reason: string): BranchDeleteResult => ({ repoId: repo.id, path: request.path, outcome: "refused", reason });
+  if (p.refused) return refuse(p.refused);
+  if ((p.branch ?? null) !== request.branch || p.commit !== request.commit || p.statusDigest !== request.statusDigest) return refuse("the worktree changed since you looked — look again");
+  state.removedWorktrees.add(request.path);
+  const backup = p.uncommittedCount > 0 ? { backupDir: `~/.spec-control/branch-backups/${repo.id}/demo-${(p.branch ?? "detached").replace(/[^A-Za-z0-9._-]/g, "_")}`, backedUp: p.uncommittedCount } : {};
+  if (!p.branch) return { repoId: repo.id, path: request.path, outcome: "removed", ...backup };
+  state.deletedBranches.add(key(repo.id, p.branch));
+  return { repoId: repo.id, path: request.path, outcome: "deleted", branch: p.branch, commit: p.commit, ...backup };
 }

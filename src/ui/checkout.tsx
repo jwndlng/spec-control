@@ -1,5 +1,6 @@
-import type { Worktree } from "../shared/types.ts";
+import type { RepoSnapshot, Worktree } from "../shared/types.ts";
 import { checkoutMarkers } from "./checkoutMarkers.ts";
+import { branchesWithActiveChange, canDelete, noActiveChange } from "./deleteBranchState.ts";
 import { splitBranchLabel } from "./format.ts";
 import { IconGitBranch } from "./icons.tsx";
 import { checkoutSummary } from "./overviewState.ts";
@@ -43,6 +44,8 @@ export function CheckoutChip({ checkout }: { checkout: Worktree }) {
   );
 }
 
+const NO_ACTIVE_CHANGE = "No active change of this project is on this branch — it may be left over";
+
 export function CheckoutChips({ checkouts }: { checkouts: Worktree[] }) {
   return (
     <>
@@ -58,16 +61,40 @@ export function checkoutsNeedingAttention(checkouts: Worktree[]): number {
   return checkouts.filter((w) => checkoutMarkers(w).some((m) => m.kind === "uncommitted" || m.kind === "unpushed" || m.kind === "stale")).length;
 }
 
-/** Every checkout of a repository with its path; in the project details overlay's Checkouts section. Offers no action. */
-export function CheckoutList({ checkouts }: { checkouts: Worktree[] }) {
+/**
+ * Every checkout of a repository with its path; in the project details overlay's Checkouts section. A linked worktree
+ * whose branch belongs to no active change carries a `no active change` marker, and with `onDelete` every worktree that
+ * can be deleted offers **Delete…** (repository-cleanup: "One branch and its worktree can be deleted whatever they hold").
+ */
+export function CheckoutList({ repo, onDelete }: { repo: RepoSnapshot; onDelete?: (worktree: Worktree, opener: HTMLElement) => void }) {
+  const active = branchesWithActiveChange(repo);
   return (
     <ul class="checkout-list">
-      {checkouts.map((w) => (
-        <li key={w.path}>
-          <CheckoutChip checkout={w} />
-          <code class="checkout-path">{w.path}</code>
-        </li>
-      ))}
+      {repo.worktrees.map((w) => {
+        const orphan = noActiveChange(repo, w, active);
+        return (
+          <li key={w.path} class={orphan ? "no-change" : undefined}>
+            <CheckoutChip checkout={w} />
+            {orphan && (
+              <span class="marker no-change" title={NO_ACTIVE_CHANGE} role="img" aria-label={NO_ACTIVE_CHANGE}>
+                no active change
+              </span>
+            )}
+            <code class="checkout-path">{w.path}</code>
+            {onDelete && canDelete(repo, w) && (
+              <button
+                type="button"
+                class="btn sm ghost checkout-delete"
+                aria-haspopup="dialog"
+                title={w.branch ? `Delete ${w.branch} and its worktree — shows what would be lost first` : "Remove this worktree — shows what would be lost first"}
+                onClick={(e) => onDelete(w, e.currentTarget)}
+              >
+                Delete…
+              </button>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }

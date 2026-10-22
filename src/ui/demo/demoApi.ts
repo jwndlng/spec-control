@@ -8,7 +8,7 @@ import type { ChangeSnapshot, Config, DismissFile, DismissPreview, FolderPickRes
 import { parseGithubRepo } from "../../shared/github.ts";
 import { isProjectName } from "../../shared/types.ts";
 import { ApiError, type Api, labelLists } from "../api.ts";
-import { demoApply, demoPreview, newCleanupState, remainingWorktrees } from "./demoCleanup.ts";
+import { demoApply, demoBranchDeletePreview, demoDeleteBranch, demoPreview, newCleanupState, remainingWorktrees } from "./demoCleanup.ts";
 import { createDemoSessions } from "./demoSessions.ts";
 import { sampleArtifactFiles } from "./sampleArtifacts.ts";
 import { buildActivity, buildIssues, buildPullRequests, buildSample, DEMO_CARRIED, demoEnvironment, DEMO_PROFILES, DEMO_ROOT } from "./sampleData.ts";
@@ -638,6 +638,14 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
     cleanup: (repoId, selection) =>
       attempt(() => {
         const result = demoApply(cleanupState, cleanupTarget(repoId), selection);
+        generatedAt = new Date(now()).toISOString();
+        return result;
+      }),
+    // Deleting a branch in the demo deletes nothing anywhere: the worktree leaves the in-memory board until a reload.
+    branchDeletePreview: (repoId, path) => attempt(() => demoBranchDeletePreview(cleanupState, cleanupTarget(repoId), path)),
+    deleteBranch: (repoId, request) =>
+      attempt(() => {
+        const result = demoDeleteBranch(cleanupState, cleanupTarget(repoId), request);
         generatedAt = new Date(now()).toISOString();
         return result;
       }),

@@ -1223,6 +1223,18 @@ button.badge.worktree-path.done { color: var(--success); }
 .checkout-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 10px 8px; border-radius: var(--radius-sm); }
 .checkout-list li + li { border-top: 1px solid var(--border-light); }
 .checkout-list .checkout-path { min-width: 0; font-size: 11px; color: var(--fg-subtle); overflow-wrap: anywhere; }
+/* A worktree whose branch belongs to no active change: tinted, and marked in words. */
+.checkout-list li.no-change { background: var(--warning-bg); }
+.checkout-list .marker.no-change { flex: none; font-size: 11px; color: var(--warning); border: 1px solid var(--warning-border); border-radius: var(--radius-sm); padding: 0 6px; cursor: help; }
+.checkout-list .checkout-delete { margin-left: auto; height: 24px; font-size: 12px; }
+/* The deletion dialog over the project details. */
+.delete-branch { display: flex; flex-direction: column; gap: 12px; padding: 4px 24px 20px; }
+.delete-branch .notice { margin: 0; }
+.delete-branch .details-line, .delete-branch .hint { margin: 0; text-align: left; }
+.delete-branch .details-line code { overflow-wrap: anywhere; }
+.delete-branch-facts { margin: 6px 0 0; padding-left: 18px; }
+.delete-branch-files summary { font-size: 12px; cursor: pointer; }
+.delete-branch-files .cleanup-list { margin-top: 6px; max-height: 200px; overflow-y: auto; font-size: 12px; }
 .branches-button { height: 26px; padding: 0 10px; font-size: 12px; }
 /* The project details overlay: labelled sections, one after another. */
 .project-details { display: flex; flex-direction: column; padding: 4px 24px 20px; }

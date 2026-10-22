@@ -4,9 +4,9 @@ import { labelKey } from "../shared/labels.ts";
 import { withAutoFetch, withPrTitleConvention, withRepoAgent } from "../shared/repoSettings.ts";
 import { MAX_PAGE, type ActivityLog, type PageQuery } from "./activity/log.ts";
 import { isTimeZone, pageEvents } from "../shared/activity.ts";
-import type { AutoFetchSeconds, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequest, PullRequestsResponse, PullResult, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Session, UpdateStatus } from "../shared/types.ts";
+import type { AutoFetchSeconds, BranchDeleteRequest, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequest, PullRequestsResponse, PullResult, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Session, UpdateStatus } from "../shared/types.ts";
 import type { AutoFetcher } from "./autoFetch.ts";
-import { applyCleanup, CleanupBusyError, previewCleanup } from "./cleanup.ts";
+import { applyCleanup, CleanupBusyError, deleteBranch, isBranchName, previewBranchDelete, previewCleanup } from "./cleanup.ts";
 import { changeDirFor, listArtifactFiles, readArtifactFile } from "./artifacts.ts";
 import { consoleFolderProblem } from "./sessions/consoleFolder.ts";
 import { createWorkspaceFolder, type FolderPickerContext, FolderPickerBusyError, folderPickerContext, markSetupDone, pickFolder, setupState } from "./setup.ts";
@@ -886,6 +886,47 @@ async function postCleanup(state: AppState, req: Request, repoId: string): Promi
   }
 }
 
+const MAX_PATH = 4096;
+
+/** Read-only: what deleting one linked worktree and its branch would lose (repository-cleanup). */
+async function getBranchDelete(state: AppState, url: URL, repoId: string): Promise<Response> {
+  const repo = cleanupTarget(state, repoId);
+  if (repo instanceof Response) return repo;
+  const path = url.searchParams.get("path");
+  if (!path || path.length > MAX_PATH) return json({ error: "expected ?path=<worktree>" }, 400);
+  return json(await previewBranchDelete(repo, path, (await state.sessions?.runningWorktreePaths()) ?? new Set()));
+}
+
+/** Shape only: whether the worktree is the repository's own and still what the user saw is decided by the deletion. */
+function branchDeleteRequest(body: Record<string, unknown>): BranchDeleteRequest | undefined {
+  const { path, branch, commit, statusDigest } = body;
+  if (typeof path !== "string" || path === "" || path.length > MAX_PATH) return undefined;
+  if (branch !== null && !isBranchName(branch)) return undefined;
+  if (typeof commit !== "string" || !/^[0-9a-f]{40,64}$/.test(commit)) return undefined;
+  if (typeof statusDigest !== "string" || !/^[0-9a-f]{64}$/.test(statusDigest)) return undefined;
+  return { path, branch, commit, statusDigest };
+}
+
+/** Deletes one confirmed worktree and its branch whatever they hold, after a backup; the other route that deletes a branch. */
+async function postBranchDelete(state: AppState, req: Request, repoId: string): Promise<Response> {
+  const repo = cleanupTarget(state, repoId);
+  if (repo instanceof Response) return repo;
+  try {
+    const request = branchDeleteRequest(await readJson(req));
+    if (!request) return json({ error: "expected { path: string, branch: string | null, commit: string, statusDigest: string }" }, 400);
+    const result = await deleteBranch(repo, request, (await state.sessions?.runningWorktreePaths()) ?? new Set());
+    if (result.outcome !== "refused") {
+      state.sessions?.forgetWorktrees();
+      state.scanner.trigger();
+    }
+    return json(result);
+  } catch (err) {
+    if (err instanceof CleanupBusyError) return json({ error: err.message }, 409);
+    if (err instanceof SessionError) return json({ error: err.message }, err.status);
+    throw err;
+  }
+}
+
 /**
  * Pull requests are read for every enabled repository — a folder without git or without a GitHub `origin` is reported
  * as unavailable rather than left out. `isGit` comes from the scan, never from letting a git command fail.
@@ -1206,6 +1247,9 @@ export function createFetchHandler({ state, indexHtml }: AppOptions): (req: Requ
       const cleanupMatch = /^\/api\/repos\/([^/]+)\/cleanup$/.exec(pathname);
       if (cleanupMatch && req.method === "GET") return getCleanup(state, decodeURIComponent(cleanupMatch[1]));
       if (cleanupMatch && req.method === "POST") return postCleanup(state, req, decodeURIComponent(cleanupMatch[1]));
+      const branchDeleteMatch = /^\/api\/repos\/([^/]+)\/branches\/delete$/.exec(pathname);
+      if (branchDeleteMatch && req.method === "GET") return getBranchDelete(state, url, decodeURIComponent(branchDeleteMatch[1]));
+      if (branchDeleteMatch && req.method === "POST") return postBranchDelete(state, req, decodeURIComponent(branchDeleteMatch[1]));
       const dismissMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/dismiss$/.exec(pathname);
       if (dismissMatch && req.method === "GET") return getDismiss(state, decodeURIComponent(dismissMatch[1]), decodeURIComponent(dismissMatch[2]));
       if (dismissMatch && req.method === "POST") return postDismiss(state, req, decodeURIComponent(dismissMatch[1]), decodeURIComponent(dismissMatch[2]));
