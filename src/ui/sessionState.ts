@@ -1,6 +1,6 @@
 // Pure helpers for the agent-session UI; free of DOM access at import time so they can be unit-tested.
-import { pullRequestReadiness } from "../shared/pullRequestReadiness.ts";
-import { availableActions, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type Session, type SessionAction, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
+import { mergePending, pullRequestReadiness, readinessDetail } from "../shared/pullRequestReadiness.ts";
+import { availableActions, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type RepoPullRequests, type Session, type SessionAction, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
 
 /** Session starters are shown when the feature is on, for every tracked repository that has not been switched off. */
 export function sessionsEnabledFor(config: Config | null, repoId: string): boolean {
@@ -509,6 +509,51 @@ export function projectConsoleControl(sessions: readonly ProjectConsoleLike[], p
   return { name: `${name} — ${badge.label}`, title: `${name} — ${badge.title}`, badge, state: badge.label, disabled: false };
 }
 
+// ---- Merge (agent-merges-docs-prs) ----
+
+/** The open pull request whose head branch is this session's branch, in its repository's list. */
+export function sessionPullRequest(session: Pick<ChangeSession, "repoId" | "branch" | "inPlace"> | undefined, lists: readonly RepoPullRequests[] | undefined): PullRequest | undefined {
+  if (!session || session.inPlace || !session.branch) return undefined;
+  return lists?.find((l) => l.repoId === session.repoId)?.pullRequests.find((pr) => pr.state === "open" && pr.head === session.branch);
+}
+
+/** The Merge action of a session's panel: shown once its branch has an open pull request, enabled only when the server
+ *  would accept it — the agent runs, the pull request is ready and the list names its head commit. */
+export interface MergeControl {
+  pr: PullRequest;
+  enabled: boolean;
+  title: string;
+}
+
+export function mergeControl(session: ChangeSession | undefined, lists: readonly RepoPullRequests[] | undefined): MergeControl | undefined {
+  const pr = sessionPullRequest(session, lists);
+  if (!session || !pr) return undefined;
+  const readiness = pullRequestReadiness(pr);
+  if (!readiness?.ready) return { pr, enabled: false, title: `${readiness ? readinessDetail(readiness) : "Not ready"}, so #${pr.number} cannot be merged yet.` };
+  if (!pr.headOid) return { pr, enabled: false, title: `The pull-request list names no head commit for #${pr.number} yet; refresh it first.` };
+  if (session.state !== "running") return { pr, enabled: false, title: RESUME_TO_MERGE };
+  return { pr, enabled: true, title: `Sends ${session.agentName} a prompt asking it to merge #${pr.number}, only if its head is still ${shortCommit(pr.headOid)}. The dashboard merges nothing itself.` };
+}
+
+/** What the panel says next to a ready pull request whose agent has ended: nothing is merged automatically then. */
+export const RESUME_TO_MERGE = "Resume the session to merge.";
+
+const shortCommit = (head: string) => head.slice(0, 7);
+
+/** What the panel says while a Merge prompt for the pull request's current head commit is pending (design D7). */
+export function mergeNotice(session: Pick<ChangeSession, "mergeAsked"> | undefined, pr: PullRequest | undefined): { text: string; title?: string; tone: "warn" | "info" } | undefined {
+  const asked = session?.mergeAsked;
+  if (!asked || !mergePending(pr, asked)) return undefined;
+  if (!asked.submitted) return { text: `The Merge prompt for #${asked.pr} was typed but not sent. Press Enter in the terminal to send it.`, tone: "warn" };
+  return { text: `Asked the agent to merge #${asked.pr} at ${shortCommit(asked.head)}.`, title: asked.head, tone: "info" };
+}
+
+/** What a card's pull request says while one of its change's sessions was asked to merge it at its current head. */
+export function cardMergePending(sessions: readonly Session[], card: Pick<ChangeSnapshot, "repoId" | "name">, pr: PullRequest | undefined): string | undefined {
+  const asked = changeSessions(sessions).find((s) => s.repoId === card.repoId && s.change === card.name && s.mergeAsked && mergePending(pr, s.mergeAsked))?.mergeAsked;
+  return asked ? `asked the agent to merge #${asked.pr}` : undefined;
+}
+
 /** Which session's panel says that its last prompt carried an auto-merge instruction, and which action's prompt it was. */
 export type AutoMergeReport = { id: string; action: "ship" | "archive" };
 
@@ -516,8 +561,8 @@ export type AutoMergeReport = { id: string; action: "ship" | "archive" };
  *  auto-merge instruction. Archive's is conditional, like the instruction: the Archive prompt may open no pull request. */
 export function autoMergeNotice(action: AutoMergeReport["action"]): string {
   return action === "ship"
-    ? "Only OpenSpec documents changed, so Ship asked the agent to enable auto-merge on the pull request. The dashboard itself merges nothing."
-    : "Only OpenSpec documents are in this worktree, so Archive asked the agent to enable auto-merge if it opens a pull request. The dashboard itself merges nothing.";
+    ? "Only OpenSpec documents changed, so the pull request will be handed back to the agent to merge once its checks pass. The dashboard itself merges nothing."
+    : "Only OpenSpec documents are in this worktree, so if the agent opens a pull request it will be handed back to the agent to merge once its checks pass. The dashboard itself merges nothing.";
 }
 
 /** What both Ship controls report afterwards: a prompt typed but not sent, and whether auto-merge was asked for. */

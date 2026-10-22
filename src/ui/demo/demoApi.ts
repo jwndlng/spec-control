@@ -698,6 +698,8 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
     resumeSession: (id) => attempt(() => demoSessions.resume(id)),
     shipSession: (id) => attempt(() => demoSessions.ship(id)),
     resolveConflicts: (id) => attempt(() => demoSessions.resolveConflicts(id)),
+    // Its pull requests are synthetic: nothing could merge, so no Merge prompt is ever sent or recorded.
+    mergeSession: () => new Promise((_, reject) => setTimeout(() => reject(new ApiError(503, "the demo does not merge pull requests")), latencyMs)),
     removeWorktree: (repoId, name) => attempt(() => demoSessions.removeWorktree(repoId, name)),
     closeSession: (id, removeWorktree) => attempt(() => demoSessions.close(id, removeWorktree)),
     deleteSession: (id) => attempt(() => demoSessions.delete(id)),

@@ -336,7 +336,7 @@ export function createDemoSessions({ now, getConfig, getSnapshot, integratable, 
       // a fresh session takes over the worktree an ended one left behind
       for (const old of sessions) if (old.session.worktreePath === place.path && old.session.state !== "running") created.work = workOf(old);
       sessions.unshift(created);
-      // The recording's agent archives nothing real, so it is never asked to enable auto-merge either.
+      // The recording's agent archives nothing real, so its prompt never carries the docs auto-merge instruction either.
       return { ...created.session, autoMerge: false };
     },
 
@@ -448,7 +448,7 @@ export function createDemoSessions({ now, getConfig, getSnapshot, integratable, 
       const work = workOf(s);
       if (!SHIPPABLE_WORK.includes(work.state)) throw new ApiError(409, `there is nothing to ship (${work.state})`);
       run(s, "ship");
-      // The recording's agent ships nothing real, so it is never asked to enable auto-merge.
+      // The recording's agent ships nothing real, so its prompt never carries the docs auto-merge instruction.
       return { ...s.session, submitted: true, autoMerge: false };
     },
 

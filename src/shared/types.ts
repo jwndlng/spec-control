@@ -299,7 +299,8 @@ export interface RepoAgentConfig {
   enabled: boolean;
   /** Agent profile used for this repository; absent means the default agent. */
   agentId?: string;
-  /** Ship asks the agent to enable auto-merge when the session ships only files under `openspec/`. Absent means off. */
+  /** Docs auto-merge: Ship and Archive leave a docs-only pull request open and Spec Control asks the agent to merge it once
+   *  it is ready (agent-merges-docs-prs). The name predates that and is kept for compatibility. Absent means off. */
   autoMergeDocs?: boolean;
 }
 
@@ -425,9 +426,10 @@ export const STARTER_PROMPT_KEYS: readonly StarterPromptKey[] = ["draft", "imple
  * `integrate` is not a starter for a change either: it opens an integration session in a repository that does not use
  * OpenSpec yet. Unlike every other prompt it carries no placeholder — the folder is the agent's working directory, so
  * no text from the browser reaches the command line. `resolveConflicts` is a prompt of the same kind as `ship`: it
- * asks the agent of an existing session to make its branch merge into the base again.
+ * asks the agent of an existing session to make its branch merge into the base again. `merge` is one more of that kind:
+ * it asks the agent to merge the session's ready pull request (agent-merges-docs-prs).
  */
-export type PromptKey = StarterPromptKey | "ship" | "integrate" | "resolveConflicts";
+export type PromptKey = StarterPromptKey | "ship" | "integrate" | "resolveConflicts" | "merge";
 /** Agent-neutral on purpose, so every profile can ship without being configured for it. */
 /** What a prompt sent on the user's behalf answers (a next step, Resolve conflicts): the session, and whether the prompt
  *  was submitted. `false` means the agent of a running session did not show the typed prompt (it may be showing a
@@ -450,23 +452,35 @@ export const CONVENTIONAL_COMMITS_SHIP_SENTENCE =
 
 /** Appended to Ship's prompt, after the profile's additional instructions, only when the project allows docs-only pull
  *  requests to merge and the dashboard found nothing outside `openspec/` (auto-merge-docs design D4). One line, because
- *  it may be typed into a terminal; agent-neutral, so it names the GitHub feature and no tool; and worded to override an
- *  earlier "do not merge", since it has to work with the default prompt and with a profile's own alike. Not editable:
- *  it is the one instruction that loosens review. */
+ *  it may be typed into a terminal; agent-neutral. It asks for no merge and no auto-merge: the dashboard decides when the
+ *  pull request is ready and then sends the Merge prompt (agent-merges-docs-prs D6). Not editable: it is the one
+ *  instruction that loosens review. */
 export const AUTO_MERGE_DOCS_INSTRUCTION =
-  "This project lets a pull request that changes only files under openspec/ merge without review. So, in place of any instruction above not to merge it: once the pull request is open, check that every file it changes is under openspec/, and if so enable auto-merge on it so that it merges when its required checks pass; if any file is outside openspec/, leave it unmerged and tell me why. Tell me whether auto-merge was enabled.";
+  "This project lets a pull request that changes only files under openspec/ merge without review once its checks pass; Spec Control will ask you to merge it when it is ready. So open the pull request as asked, do not merge it and do not enable auto-merge on it, and tell me whether every file it changes is under openspec/.";
 
 /** Appended to the Archive prompt, after the profile's additional instructions, only when the project allows docs-only
  *  pull requests to merge and the session's worktree holds nothing outside `openspec/` (archive-auto-merge-docs design
  *  D2). Unlike Ship's it presumes no pull request: the default Archive prompts open none, so it applies only if the
  *  agent opens one anyway, and says not to open one for its sake. One line, agent-neutral, not editable. */
 export const AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION =
-  "This project lets a pull request that changes only files under openspec/ merge without review. Do not open a pull request just because of this. But if you open one for this work, then, in place of any instruction above not to merge it: once it is open, check that every file it changes is under openspec/, and if so enable auto-merge on it so that it merges when its required checks pass; if any file is outside openspec/, leave it unmerged and tell me why. If you opened a pull request, tell me whether auto-merge was enabled.";
+  "This project lets a pull request that changes only files under openspec/ merge without review once its checks pass; Spec Control will ask you to merge it when it is ready. Do not open a pull request just because of this. But if you open one for this work, do not merge it and do not enable auto-merge on it, and tell me whether every file it changes is under openspec/.";
 
 /** Agent-neutral like Ship's, and deliberately silent about method: rebase or merge is the repository's convention,
  *  which the agent knows and the dashboard does not. */
 export const DEFAULT_RESOLVE_CONFLICTS_PROMPT =
   "The branch for {change} in this worktree no longer merges into the default branch. Bring it up to date with the default branch and resolve every conflict, keeping what this branch set out to do. Then run the project's checks and push the branch. Do not merge the pull request.";
+
+/** Agent-neutral like Ship's. It names the GitHub CLI — the host's tool, not an agent vendor — because only
+ *  `--match-head-commit` makes "merge exactly this commit" precise; the merge method is the repository's convention,
+ *  which the agent knows (agent-merges-docs-prs D1). */
+export const DEFAULT_MERGE_PROMPT =
+  "Merge the pull request of this worktree's branch for {change} into its base, with the merge method this repository uses, but only if its head is still the commit named below — with the GitHub CLI: gh pr merge <number> --match-head-commit <commit>. Do not delete the branch. If the merge is refused or anything was pushed since, stop and tell me why.";
+
+/** What follows every Merge prompt, after the profile's additional Merge instructions: the pull request and the head
+ *  commit the dashboard checked, both validated where they are parsed and never taken from the browser. One line. */
+export function mergeTargetSentence(pr: number, head: string): string {
+  return `The pull request is #${pr} and its head commit is ${head}.`;
+}
 
 /** Between the Draft and the Implement prompt of a Fast-forward prompt: one line, agent-neutral, not editable. */
 export const FAST_FORWARD_CONTINUE_SENTENCE =
@@ -587,11 +601,31 @@ export interface ChangeSession extends SessionBase {
   action: SessionAction;
   /**
    * When the dashboard last appended an auto-merge instruction to a prompt for this session (Ship, Archive started or
-   * sent). Only a session that carries it is ever ended because its pull request merged (auto-merge-cleanup D1).
+   * sent). Only a session that carries it is ever ended because its pull request merged (auto-merge-cleanup D1), or sent
+   * a Merge prompt on its own (agent-merges-docs-prs).
    */
   autoMergeAskedAt?: string;
   /** Set once the dashboard ended this session because its auto-merge pull request merged; it is never ended twice. */
   autoEnded?: AutoEnded;
+  /**
+   * The last Merge prompt sent to this session, by the dashboard or the user: written before anything is typed, so a
+   * second query completing meanwhile sends nothing more, and keyed by pull request and head commit, so a pushed fix
+   * can be merged again (agent-merges-docs-prs D4). It never changes `autoMergeAskedAt`.
+   */
+  mergeAsked?: MergeAsked;
+}
+
+/** A Merge prompt sent to a session (agent-merges-docs-prs D4). */
+export interface MergeAsked {
+  /** The pull request's number. */
+  pr: number;
+  /** The head commit the prompt named: 40 hexadecimal characters. */
+  head: string;
+  at: string;
+  /** Whether the prompt was submitted; one that was only typed is never typed again automatically. */
+  submitted: boolean;
+  /** `dashboard`: sent on its own because a docs-only pull request was ready. `user`: the Merge action. */
+  by: "dashboard" | "user";
 }
 
 /** What ending a session because its auto-merge pull request merged came to (auto-merge-cleanup D4). */
@@ -953,6 +987,8 @@ export type ActivityEvent = ActivityBase &
     | { kind: "session-conflicts-resolve"; change: string; submitted?: boolean }
     /** Ended by the dashboard because the session's auto-merge pull request merged; `reason` says why the worktree was kept. */
     | { kind: "session-auto-ended"; change: string; pr: number; removed: boolean; reason?: string }
+    /** A Merge prompt was handed to the agent — not that the pull request merged: a later query says that. `by`: who sent it. */
+    | { kind: "session-merge"; change: string; pr: number; by: "dashboard" | "user"; submitted: boolean }
   );
 
 export type ActivityKind = ActivityEvent["kind"];
@@ -972,6 +1008,7 @@ export const ACTIVITY_KINDS: readonly ActivityKind[] = [
   "session-shipped",
   "session-conflicts-resolve",
   "session-auto-ended",
+  "session-merge",
 ];
 
 export type ActivityGroupName = "changes" | "tasks" | "sessions" | "repositories";
@@ -980,7 +1017,7 @@ export type ActivityGroupName = "changes" | "tasks" | "sessions" | "repositories
 export const ACTIVITY_GROUPS: Readonly<Record<ActivityGroupName, readonly ActivityKind[]>> = {
   changes: ["change-created", "change-moved", "change-archived", "change-removed"],
   tasks: ["tasks-progress"],
-  sessions: ["session-started", "session-ended", "session-shipped", "session-conflicts-resolve", "session-auto-ended"],
+  sessions: ["session-started", "session-ended", "session-shipped", "session-conflicts-resolve", "session-auto-ended", "session-merge"],
   repositories: ["repo-tracked", "repo-untracked", "repo-failing", "repo-recovered"],
 };
 
@@ -1283,6 +1320,14 @@ export interface PullRequest {
    * in caches written before it was read, which every reader treats as `unknown`.
    */
   mergeable?: "mergeable" | "conflicting" | "unknown";
+  /** The commit the head branch points at, 40 hexadecimal characters; absent when GitHub reported none or a cache predates it. */
+  headOid?: string;
+  /**
+   * Every file it changes is under `openspec/`, as GitHub reports it — asked only for open pull requests of a GitHub
+   * repository that an enabled project with docs auto-merge maps to. The paths themselves are never kept. Absent
+   * reads as not docs-only.
+   */
+  docsOnly?: boolean;
 }
 
 /** What one tracked repository's pull-request list looks like right now. `pullRequests` is the last good list, also when `failed`. */

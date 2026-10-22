@@ -183,12 +183,14 @@ test("both Ship controls report the auto-merge notice only when Ship asked for a
   reportShip(ui, "s1", { submitted: false, autoMerge: true });
   expect(seen).toEqual(["unsent undefined", "autoMerge s1 ship", "unsent undefined", "autoMerge undefined", "unsent s1", "autoMerge s1 ship"]);
   for (const action of ["ship", "archive"] as const) {
-    expect(autoMergeNotice(action)).toContain("auto-merge");
+    // The pull request is handed back to the agent to merge; GitHub's auto-merge is no longer asked for.
+    expect(autoMergeNotice(action)).toContain("will be handed back to the agent to merge once its checks pass");
+    expect(autoMergeNotice(action)).not.toContain("auto-merge");
     expect(autoMergeNotice(action)).toContain("merges nothing");
   }
-  expect(autoMergeNotice("ship")).toContain("Ship asked");
+  expect(autoMergeNotice("ship")).toContain("Only OpenSpec documents changed");
   // Archive's is conditional, like its instruction: the Archive prompt may open no pull request at all.
-  expect(autoMergeNotice("archive")).toContain("Archive asked the agent to enable auto-merge if it opens a pull request");
+  expect(autoMergeNotice("archive")).toContain("if the agent opens a pull request");
 });
 
 test("a start reports Archive's notice when its prompt carried the instruction, and clears only its own session's", () => {

@@ -3,7 +3,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { AGENT_PRESETS } from "../shared/agentDefaults.ts";
-import { DEFAULT_INTEGRATE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, STARTER_PROMPT_KEYS, type AgentAvailability, type AgentProfile, type AgentSessionsConfig, type Config, type KeepAwakeStatus, type PromptKey, type Shortcut, type StarterPromptKey } from "../shared/types.ts";
+import { DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, STARTER_PROMPT_KEYS, type AgentAvailability, type AgentProfile, type AgentSessionsConfig, type Config, type KeepAwakeStatus, type PromptKey, type Shortcut, type StarterPromptKey } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { addShortcut, moveShortcut, removeShortcut, restoredShortcuts } from "./quickReplies.ts";
 import { newAgentProfile, parseArgLines } from "./sessionState.ts";
@@ -31,6 +31,13 @@ const STARTER_PROMPTS: PromptSpec[] = STARTER_PROMPT_KEYS.map((action) => ({ key
 const ACTION_PROMPTS: PromptSpec[] = [
   { key: "ship", label: "Ship", multiline: true, placeholder: DEFAULT_SHIP_PROMPT },
   { key: "resolveConflicts", label: "Resolve conflicts", multiline: true, placeholder: DEFAULT_RESOLVE_CONFLICTS_PROMPT },
+  {
+    key: "merge",
+    label: "Merge",
+    multiline: true,
+    placeholder: DEFAULT_MERGE_PROMPT,
+    note: <>The pull request's number and its head commit are always added after this prompt and its additional instructions.</>,
+  },
   {
     key: "integrate",
     label: "Integrate",

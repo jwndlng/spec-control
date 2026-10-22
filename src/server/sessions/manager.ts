@@ -6,13 +6,13 @@ import { rmSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { blockedReason } from "../../shared/dependencies.ts";
-import { availableActions, changeSessions, isChangeless, isConsole, isIntegration, isProjectConsole, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type Session, type SessionAction, type SessionWorktree, type Snapshot, type WorkStatus, type PromptResult, type PullRequest, type RepoConfig, type ShipResult, type AutoMergePromptResult, type StartResult } from "../../shared/types.ts";
+import { availableActions, changeSessions, isChangeless, isConsole, isIntegration, isProjectConsole, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type Session, type SessionAction, type SessionWorktree, type Snapshot, type WorkStatus, type MergeAsked, type PromptResult, type PullRequest, type RepoConfig, type ShipResult, type AutoMergePromptResult, type StartResult } from "../../shared/types.ts";
 import { sessionBranch } from "../../shared/sessionBranch.ts";
 import { isCleaningUp } from "../cleanup.ts";
 import { isDismissing } from "../dismissChange.ts";
 import { canonicalPath, worktreesDir } from "../paths.ts";
 import { CHANGE_NAME } from "../source.ts";
-import { agentEnv, agentFor, availability, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, openingPrompt, resolveConflictsPrompt, shipPrompt } from "./agents.ts";
+import { agentEnv, agentFor, availability, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, shipPrompt } from "./agents.ts";
 import { consoleFolderProblem, prepareConsoleFolder } from "./consoleFolder.ts";
 import type { SessionActivity } from "../activity/events.ts";
 import { isBusy } from "../keepAwake.ts";
@@ -20,7 +20,9 @@ import { readReport, STATE_FILE_ENV, terminalRepliesOnly, type Report, type Repo
 import { SessionStore } from "./store.ts";
 import { submitText, validSubmission, type SubmitOptions } from "./submit.ts";
 import { spawnTerminal, type TerminalProcess } from "./terminal.ts";
-import { baseRef, listWorktrees, readWorkStatus, shipsOnlyOpenSpec, WORKTREE_NAME } from "./workStatus.ts";
+import { baseRef, headCommit, listWorktrees, readWorkStatus, shipsOnlyOpenSpec, WORKTREE_NAME } from "./workStatus.ts";
+import { defaultBranch } from "../git.ts";
+import { mergeReady, pullRequestReadiness, readinessDetail } from "../../shared/pullRequestReadiness.ts";
 import { checkWorktreeRemovable, copyChangeIfMissing, ensureWorktree, linkedWorktreeOf, NoCommitError, removeWorktree, type Removable } from "./worktree.ts";
 
 export const SCROLLBACK_BYTES = 1024 * 1024;
@@ -128,6 +130,8 @@ export class SessionManager {
   private worktreeCache?: { at: number; list: Promise<SessionWorktree[]> };
   /** Sessions being ended because their auto-merge pull request merged: their end is reported once, as that. */
   private autoEnding = new Set<string>();
+  /** Sessions the automatic Merge is deciding about: taken before the first await, so two queries send once (D4). */
+  private merging = new Set<string>();
 
   constructor(private readonly deps: ManagerDeps) {
     this.store = deps.store ?? new SessionStore();
@@ -609,15 +613,15 @@ export class SessionManager {
     return { ...session, submitted, autoMerge };
   }
 
-  /** Records that this session's agent was just asked to enable auto-merge (auto-merge-cleanup D1); the latest ask wins. */
+  /** Records that this session's prompt just carried the docs auto-merge instruction (auto-merge-cleanup D1); the latest wins. */
   private askedForAutoMerge(session: ChangeSession): void {
     session.autoMergeAskedAt = new Date().toISOString();
     this.touchLater(session);
   }
 
   /**
-   * A pull-request query for `repoId` has completed: every session of that repository whose agent was asked to enable
-   * auto-merge and whose pull request the list shows merged since is ended, and its worktree removed under the same
+   * A pull-request query for `repoId` has completed: every session of that repository whose prompt carried the docs
+   * auto-merge instruction and whose pull request the list shows merged since is ended, and its worktree removed under the same
    * checks as the end-session dialog (auto-merge-cleanup D3, D4). Decided from the list and read-only git only — no
    * query, no fetch, and the branch is kept for repository cleanup. Once a session carries `autoEnded` it never
    * matches again, so seeing the same merged pull request twice changes nothing.
@@ -645,6 +649,84 @@ export class SessionManager {
         this.report(session, { kind: "session-auto-ended", pr: merged.number, removed, ...(session.autoEnded.reason ? { reason: session.autoEnded.reason } : {}) });
       } finally {
         this.autoEnding.delete(session.id);
+      }
+    }
+  }
+
+  /**
+   * Asks the agent to merge its session's ready pull request (agent-merges-docs-prs D1, D4): the third prompt-only
+   * action, next to Ship and Resolve conflicts, offered with or without docs auto-merge. `pullRequests` is the
+   * repository's last good list as the server holds it — the number and the head commit come from there, never from
+   * the request. The dashboard merges nothing, runs no `gh` or git and starts no agent for it: an ended session is
+   * resumed by the user first. Whether the pull request merged is learned only from a later query.
+   */
+  async merge(id: string, pullRequests: readonly PullRequest[]): Promise<PromptResult> {
+    const session = this.get(id);
+    if (isChangeless(session)) throw new SessionError(409, notAChange(session));
+    if (session.inPlace) throw new SessionError(400, "this session runs in a folder that is not a git repository — there is no pull request to merge");
+    const { agent } = this.prepareAgainAnywhere(session);
+    if (session.state !== "running" || !this.live.get(id)?.proc) throw new SessionError(409, "the session is not running; resume it to merge");
+    const pr = pullRequests.find((p) => p.state === "open" && p.head === session.branch);
+    if (!pr) throw new SessionError(409, "this session's branch has no open pull request in the last pull-request list");
+    const readiness = pullRequestReadiness(pr);
+    if (!readiness?.ready) throw new SessionError(409, `pull request #${pr.number} is not ready to merge (${readiness ? readinessDetail(readiness) : "unknown"})`);
+    if (!pr.headOid) throw new SessionError(409, `the pull-request list names no head commit for #${pr.number}; refresh it first`);
+    const prompt = mergePrompt(agent, session.change, { pr: pr.number, head: pr.headOid });
+    return this.sendMerge(session, prompt, { pr: pr.number, head: pr.headOid, by: "user" });
+  }
+
+  /**
+   * Records the Merge prompt before anything is typed, then submits it and reports what came of it. The record is what
+   * keeps a second query from sending it again and keeps the board watching until the pull request merges or moves.
+   */
+  private async sendMerge(session: ChangeSession, prompt: string, target: Pick<MergeAsked, "pr" | "head" | "by">): Promise<PromptResult> {
+    const asked: MergeAsked = { ...target, at: new Date().toISOString(), submitted: false };
+    session.mergeAsked = asked;
+    await this.touch(session);
+    const { submitted } = await this.submit(session.id, prompt).catch(() => ({ submitted: false }));
+    if (session.mergeAsked === asked) {
+      asked.submitted = submitted;
+      this.touchLater(session);
+    }
+    this.report(session, { kind: "session-merge", pr: target.pr, by: target.by, submitted });
+    return { ...session, submitted };
+  }
+
+  /**
+   * A pull-request query for `repoId` has completed with a good list: each running session whose agent was given the
+   * docs auto-merge instruction, and whose open pull request is ready, docs-only and at the commit its worktree has
+   * checked out — a worktree that holds only OpenSpec documents — is sent the Merge prompt, once per pull request and
+   * head commit (agent-merges-docs-prs D3, D4). Decided from the list and read-only git only: no query, no fetch, no
+   * timer, and no agent is started, resumed or restarted for it.
+   */
+  async requestReadyMerges(repoId: string, pullRequests: readonly PullRequest[]): Promise<void> {
+    const enabled = () => {
+      const config = this.deps.getConfig();
+      const repo = config.repos.find((r) => r.id === repoId);
+      return config.agentSessions.enabled && repo?.agent?.autoMergeDocs === true ? { config, repo } : undefined;
+    };
+    if (!enabled()) return;
+    const askedFor = (session: ChangeSession, pr: PullRequest) => session.mergeAsked?.pr === pr.number && session.mergeAsked.head === pr.headOid;
+    for (const session of changeSessions(this.list())) {
+      if (session.repoId !== repoId || session.inPlace || session.adopted || !session.autoMergeAskedAt || session.autoEnded || session.action === "fastForward") continue;
+      if (session.state !== "running" || !this.live.get(session.id)?.proc || this.merging.has(session.id)) continue;
+      const pr = pullRequests.find((p) => p.state === "open" && p.head === session.branch);
+      if (!pr || !mergeReady(pr) || askedFor(session, pr)) continue;
+      // Taken before the first await, so a second query settling meanwhile cannot send the same prompt again.
+      this.merging.add(session.id);
+      try {
+        const now = enabled();
+        if (!now) continue;
+        if (pr.base !== (await defaultBranch(now.repo.path))) continue;
+        // GitHub's file list loses the source side of a rename: the worktree, at exactly that commit, has the last word.
+        if ((await headCommit(session.worktreePath)) !== pr.headOid) continue;
+        if (!(await shipsOnlyOpenSpec(session.worktreePath, await baseRef(now.repo.path)))) continue;
+        const agent = this.deps.getConfig().agentSessions.agents.find((a) => a.id === session.agentId);
+        if (!agent || !enabled() || session.state !== "running" || !this.live.get(session.id)?.proc || askedFor(session, pr)) continue;
+        const prompt = mergePrompt(agent, session.change, { pr: pr.number, head: pr.headOid as string });
+        await this.sendMerge(session, prompt, { pr: pr.number, head: pr.headOid as string, by: "dashboard" });
+      } finally {
+        this.merging.delete(session.id);
       }
     }
   }

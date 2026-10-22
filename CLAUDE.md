@@ -54,7 +54,7 @@ bun test test/scanner.test.ts   # a single test file
    `git worktree add` (directory under `~/.spec-control/worktrees/`, never inside the repository's working tree)
    and removed with a non-forcing `git worktree remove` after the user confirmed and read-only checks proved nothing
    would be lost (`src/server/sessions/worktree.ts`) — or, with no dialog, when a pull-request query that already ran
-   shows merged the pull request of a session whose agent the dashboard asked to enable auto-merge, in a project that
+   shows merged the pull request of a session whose prompt carried the Docs auto-merge instruction, in a project that
    still has Docs auto-merge on (the opt-in is the confirmation; same checks, same command, the branch kept, no fetch,
    no new git or `gh` subcommand, `SessionManager.endMergedAutoMerge`); the **pull action** — `git fetch` of the repository's own
    remote, then a fast-forward-only `git merge` of the main checkout's upstream, with hooks disabled, never a merge
@@ -259,10 +259,19 @@ bun test test/scanner.test.ts   # a single test file
   project opted in (`agent.autoMergeDocs`) and `shipsOnlyOpenSpec` proved, at that moment, that everything it ships is
   under `openspec/`; an **Archive** prompt, started or sent, likewise gets `AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION` — for a
   pull request the agent opens, if any — when the same check, with `allowEmpty` for a fresh archive worktree, proves the
-  worktree holds nothing else — the agent enables auto-merge, never the dashboard. A session records when it was asked
-  (`autoMergeAskedAt`); once the refresh route's completed query lists its branch's pull request merged after that, the
-  session is ended and its worktree removed as described in invariant 1 (`autoEnded` records the outcome). The query
-  is never started for it. A status that holds work the base lacks also
+  worktree holds nothing else. Neither instruction asks the agent to merge or to enable GitHub's auto-merge: both say
+  to open the pull request and leave it, because the dashboard decides when it is ready. A session records when it was
+  asked (`autoMergeAskedAt`); once the refresh route's completed query lists its branch's pull request open, not a
+  draft, against the default branch, mergeable, checks `passing` (never `none`) and docs-only — GitHub's changed files,
+  read with the same `gh pr list` and dropped after parsing — at the commit its worktree has checked out, and
+  `shipsOnlyOpenSpec` still holds there, the running agent is sent the **Merge** prompt once per pull request and head
+  commit (`requestReadyMerges`, recorded as `mergeAsked` before anything is typed). **Merge** is the third prompt-only
+  action (`prompts.merge`, else `DEFAULT_MERGE_PROMPT`, then a fixed sentence naming `#<number>` and the full head
+  commit, both from the server's list, never from the browser): the agent merges, with `--match-head-commit`, behind
+  its own permission prompts; the user can send it from the panel for any ready pull request of a running session.
+  Once the query lists the pull request merged after `autoMergeAskedAt`, the session is ended and its worktree removed
+  as described in invariant 1 (`autoEnded` records the outcome). No query, timer or agent start is ever begun for any
+  of this. A status that holds work the base lacks also
   carries a **conflict signal** — whether the branch still merges into that base, and which files clash — computed with
   `merge-tree` as invariant 1 describes, and as stale as the last fetch, which the UI says. **Resolve conflicts** is the
   second prompt-only action, shaped exactly like Ship (`prompts.resolveConflicts`, else

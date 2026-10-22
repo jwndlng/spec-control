@@ -210,7 +210,7 @@ function readinessChip(readiness: Readiness, fetchedAt: string | undefined, now?
  * the one reason it is not, in its role's colour — a draft's state already says that. A link the user follows — the
  * page itself never requests github.com.
  */
-export function CardPullRequest({ pr, repoName, fetchedAt, now }: { pr: PullRequest; repoName: string; fetchedAt?: string; now?: number }) {
+export function CardPullRequest({ pr, repoName, fetchedAt, now, merging }: { pr: PullRequest; repoName: string; fetchedAt?: string; now?: number; merging?: string }) {
   const word = prStateWord(pr);
   const settled = pr.state !== "open";
   const readiness = pullRequestReadiness(pr);
@@ -232,6 +232,11 @@ export function CardPullRequest({ pr, repoName, fetchedAt, now }: { pr: PullRequ
       {chip && word !== "draft" && (
         <span class={`card-pr-ready ${chip.tone}`}>
           <span aria-hidden="true">· {chip.symbol}</span> {chip.word}
+        </span>
+      )}
+      {merging && (
+        <span class="card-pr-ready" title={`Spec Control ${merging}; the merge shows here once a refresh lists it merged`}>
+          <span aria-hidden="true">·</span> {merging}
         </span>
       )}
     </a>

@@ -189,6 +189,8 @@ export interface Api {
   /** Asks the session's agent to commit, push and open a pull request. */
   shipSession(id: string): Promise<ShipResult>;
   resolveConflicts(id: string): Promise<PromptResult>;
+  /** Asks the session's agent to merge its ready pull request; the server takes the number and head commit from its own list. */
+  mergeSession(id: string): Promise<PromptResult>;
   /** For a worktree whose session record is gone; refused unless that is safe. */
   removeWorktree(repoId: string, name: string): Promise<{ removable: boolean; reason?: string }>;
   /** Ends the agent if it is running; removes the worktree only when asked and safe. */
@@ -318,6 +320,7 @@ export const httpApi: Api = {
   resumeSession: (id) => call<Session>(`/api/sessions/${id}/resume`, { method: "POST" }),
   shipSession: (id) => call<ShipResult>(`/api/sessions/${id}/ship`, { method: "POST" }),
   resolveConflicts: (id) => call<PromptResult>(`/api/sessions/${id}/resolve-conflicts`, { method: "POST" }),
+  mergeSession: (id) => call<PromptResult>(`/api/sessions/${id}/merge`, { method: "POST" }),
   removeWorktree: (repoId, name) => call("/api/worktrees/remove", { method: "POST", body: JSON.stringify({ repoId, name }) }),
   closeSession: (id, removeWorktree) => call(`/api/sessions/${id}/close`, { method: "POST", body: JSON.stringify({ removeWorktree }) }),
   deleteSession: (id) => call<{ deleted: boolean }>(`/api/sessions/${id}`, { method: "DELETE" }),
@@ -413,6 +416,7 @@ export const api: Api = {
   resumeSession: (...args) => current.resumeSession(...args),
   shipSession: (...args) => current.shipSession(...args),
   resolveConflicts: (...args) => current.resolveConflicts(...args),
+  mergeSession: (...args) => current.mergeSession(...args),
   removeWorktree: (...args) => current.removeWorktree(...args),
   closeSession: (...args) => current.closeSession(...args),
   deleteSession: (...args) => current.deleteSession(...args),

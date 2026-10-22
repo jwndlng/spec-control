@@ -43,7 +43,7 @@ interface SessionUi {
   /** The session whose last text sent on the user's behalf was typed but not submitted; its panel says so. */
   unsentId?: string;
   reportUnsent(id: string | undefined): void;
-  /** The session whose last Ship or Archive prompt asked the agent to enable auto-merge; its panel says so. */
+  /** The session whose last Ship or Archive prompt carried the docs auto-merge instruction; its panel says so. */
   autoMerge?: AutoMergeReport;
   reportAutoMerge(report: AutoMergeReport | undefined): void;
   /** Opens the end-session dialog; nothing is ended before the user confirms there. */

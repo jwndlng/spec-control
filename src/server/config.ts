@@ -88,6 +88,7 @@ const agentProfileSchema = z.object({
       archive: promptSchema.optional(),
       ship: shipPromptSchema.optional(),
       resolveConflicts: shipPromptSchema.optional(),
+      merge: shipPromptSchema.optional(),
       integrate: integratePromptSchema.optional(),
     })
     .default({}),
@@ -99,6 +100,7 @@ const agentProfileSchema = z.object({
       archive: suffixSchema.optional(),
       ship: suffixSchema.optional(),
       resolveConflicts: suffixSchema.optional(),
+      merge: suffixSchema.optional(),
       integrate: integrateSuffixSchema.optional(),
     })
     .optional(),

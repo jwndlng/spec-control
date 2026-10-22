@@ -106,7 +106,8 @@ export type SessionActivity =
   | { kind: "session-ended"; exitCode?: number; error?: string }
   | { kind: "session-shipped"; submitted?: boolean }
   | { kind: "session-conflicts-resolve"; submitted?: boolean }
-  | { kind: "session-auto-ended"; pr: number; removed: boolean; reason?: string };
+  | { kind: "session-auto-ended"; pr: number; removed: boolean; reason?: string }
+  | { kind: "session-merge"; pr: number; by: "dashboard" | "user"; submitted: boolean };
 
 export function sessionEvent(session: { repoId: string; change: string }, repoName: string, activity: SessionActivity, now = new Date()): ActivityEvent {
   const at = now.toISOString();

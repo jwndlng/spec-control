@@ -468,3 +468,107 @@ test("an unreadable cache file is treated as no cache at all", async () => {
   expect((await store.list(targets)).repos[0].status).toBe("never");
   await rm(pullRequestsCachePath(), { force: true });
 });
+
+// ---- head commit and docs-only (agent-merges-docs-prs 2.1, 2.2) ----
+
+const OID = "c0ffee0000000000000000000000000000000088";
+const files = (...paths: string[]) => ({ files: paths.map((path) => ({ path, additions: 1, deletions: 0 })), changedFiles: paths.length });
+const fieldsOf = (call: { argv: string[] }) => call.argv[call.argv.indexOf("--json") + 1].split(",");
+
+test("the head commit is a 40-character object name or absent", () => {
+  expect(parsePullRequest(ghPr({ number: 1, headRefOid: OID }))?.headOid).toBe(OID);
+  for (const bad of ["c0ffee", OID.toUpperCase(), `${OID}0`, 42, null, undefined, ""]) {
+    const pr = parsePullRequest(ghPr({ number: 2, headRefOid: bad }));
+    expect(pr && "headOid" in pr).toBe(false);
+  }
+});
+
+test("docs-only: every path under openspec/, as many as GitHub counts, at least one; anything else is not", () => {
+  const docs = (patch: Record<string, unknown>) => parsePullRequest(ghPr({ number: 88, ...patch }))?.docsOnly;
+  expect(docs(files("openspec/specs/secrets/spec.md", "openspec/changes/archive/2026-10-20-rotate-keys/proposal.md"))).toBe(true);
+  expect(docs(files("openspec/changes/rotate-keys/tasks.md", "src/keys.ts"))).toBe(false);
+  // A look-alike is not under openspec/ at the root.
+  expect(docs(files("openspec-notes.md"))).toBe(false);
+  expect(docs(files("docs/openspec/x"))).toBe(false);
+  expect(docs(files("openspec/../src/keys.ts"))).toBe(false);
+  // gh returns at most 100 paths: 140 counted and 100 returned is not a complete list.
+  const hundred = Array.from({ length: 100 }, (_, i) => ({ path: `openspec/changes/c${i}/tasks.md` }));
+  expect(docs({ files: hundred, changedFiles: 140 })).toBe(false);
+  expect(docs({ files: hundred, changedFiles: 100 })).toBe(true);
+  // No files, or a field missing or malformed.
+  expect(docs({ files: [], changedFiles: 0 })).toBe(false);
+  expect(docs({ files: [{ path: "openspec/a.md" }] })).toBe(false);
+  expect(docs({ changedFiles: 1 })).toBe(false);
+  expect(docs({ files: "openspec/a.md", changedFiles: 1 })).toBe(false);
+  expect(docs({ files: [{ name: "openspec/a.md" }], changedFiles: 1 })).toBe(false);
+  // Not asked for at all: no answer, which every reader takes as not docs-only.
+  expect(docs({})).toBeUndefined();
+  // The paths themselves are never part of the parsed pull request.
+  const parsed = parsePullRequest(ghPr({ number: 88, ...files("openspec/a.md") })) as unknown as Record<string, unknown>;
+  expect(["files", "changedFiles"].some((key) => key in parsed)).toBe(false);
+});
+
+test("changed files are asked for only on the open call of a repository with docs auto-merge, and never kept", async () => {
+  await gh.scenario({
+    login: "demo-user",
+    repos: {
+      "acme/alpha-infra": { open: [ghPr({ number: 125, headRefOid: OID, ...files("openspec/a.md") })], closed: [] },
+      "acme/demo-ops": {
+        open: [ghPr({ number: 88, headRefName: "archive-rotate-keys", headRefOid: OID, ...files("openspec/specs/secrets/spec.md", "openspec/changes/archive/2026-10-20-rotate-keys/proposal.md") })],
+        closed: [ghPr({ number: 87, state: "MERGED", mergedAt: ago(DAY), closedAt: ago(DAY), headRefOid: OID, ...files("openspec/a.md") })],
+      },
+    },
+  });
+  await gh.forget();
+  const targets: RepoTarget[] = [
+    { id: "alpha", path: await repoAt("alpha-files", ALPHA), isGit: true },
+    { id: "demo", path: await repoAt("demo-files", "https://github.com/acme/demo-ops.git"), isGit: true, autoMergeDocs: true },
+  ];
+  const answer = await newStore().refresh(targets, { force: true });
+  const [alpha, demo] = answer.repos;
+  // alpha-infra has docs auto-merge off and shares no GitHub repository with a project that has it on.
+  expect(alpha.pullRequests.map((pr) => [pr.number, pr.headOid, pr.docsOnly])).toEqual([[125, OID, undefined]]);
+  expect(demo.pullRequests.map((pr) => [pr.number, pr.headOid, pr.docsOnly])).toEqual([
+    [88, OID, true],
+    [87, OID, undefined],
+  ]);
+
+  const calls = (await gh.calls()).filter((c) => c.argv[0] === "pr");
+  const asked = calls.map((c) => ({ repo: c.argv[c.argv.indexOf("--repo") + 1], closed: c.argv.includes("--search"), files: fieldsOf(c).includes("files") && fieldsOf(c).includes("changedFiles") }));
+  expect(asked.sort((a, b) => `${a.repo}${a.closed}`.localeCompare(`${b.repo}${b.closed}`))).toEqual([
+    { repo: "acme/alpha-infra", closed: false, files: false },
+    { repo: "acme/alpha-infra", closed: true, files: false },
+    { repo: "acme/demo-ops", closed: false, files: true },
+    { repo: "acme/demo-ops", closed: true, files: false },
+  ]);
+  for (const call of calls) expect(fieldsOf(call)).toContain("headRefOid");
+  for (const call of await gh.calls()) expect(call.argv.slice(0, 2).join(" ")).toMatch(/^(pr list|api user)$/);
+
+  // The paths are in neither the cache file nor the answer.
+  const cached = await readFile(pullRequestsCachePath(), "utf8");
+  expect(cached).not.toContain("openspec/specs/secrets/spec.md");
+  expect(cached).not.toContain("changedFiles");
+  expect(JSON.stringify(answer)).not.toContain("openspec/specs/secrets/spec.md");
+  await rm(pullRequestsCachePath(), { force: true });
+});
+
+test("a cache from an earlier version, or one carrying drift, has no head commit and is not docs-only", async () => {
+  const targets: RepoTarget[] = [{ id: "alpha", path: await repoAt("alpha-old-head", ALPHA), isGit: true }];
+  const old = { ...parsePullRequest(ghPr({ number: 9 })) };
+  const drifted = { ...parsePullRequest(ghPr({ number: 10 })), headOid: "not-a-commit", docsOnly: "yes" };
+  const good = { ...parsePullRequest(ghPr({ number: 11, headRefOid: OID, ...files("openspec/a.md") })) };
+  await mkdir(join(pullRequestsCachePath(), ".."), { recursive: true });
+  await writeFile(
+    pullRequestsCachePath(),
+    JSON.stringify({ version: 1, viewer: "demo-user", repos: { "acme/alpha-infra": { fetchedAt: new Date().toISOString(), pullRequests: [old, drifted, good] } } }),
+  );
+  const store = newStore();
+  await store.load();
+  const repo = (await store.list(targets)).repos[0];
+  expect(repo.pullRequests.map((pr) => [pr.number, pr.headOid, pr.docsOnly])).toEqual([
+    [9, undefined, undefined],
+    [10, undefined, undefined],
+    [11, OID, true],
+  ]);
+  await rm(pullRequestsCachePath(), { force: true });
+});

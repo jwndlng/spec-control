@@ -9,7 +9,8 @@ import { api, type TerminalMessage } from "./api.ts";
 import { cdCommand } from "./format.ts";
 import { inPlaceReason } from "./inPlaceText.ts";
 import { NOT_SUBMITTED_NOTICE, shortcutHint, shortcutMessage, visibleShortcuts } from "./quickReplies.ts";
-import { autoEndedText, autoMergeNotice, nextStepFor, reportShip, resolvable, sessionBadge, startersFor, workBadge, worktreeOfSession } from "./sessionState.ts";
+import { usePullRequests } from "./pullRequests.tsx";
+import { autoEndedText, autoMergeNotice, mergeControl, mergeNotice, nextStepFor, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, startersFor, workBadge, worktreeOfSession } from "./sessionState.ts";
 import { ConflictBadge, SessionBadgeView, SessionControls, useSessionUi } from "./sessions.tsx";
 
 export function Copy({ text, label }: { text: string; label: string }) {
@@ -254,6 +255,7 @@ export function useTerminalGeneration(session: Session | undefined): number {
  */
 export function ConsolePanel({ session, worktree, of }: { session?: ChangeSession; worktree?: SessionWorktree; of?: { repoId: string; change: string } }) {
   const ui = useSessionUi();
+  const prs = usePullRequests();
   const [error, setError] = useState<string>();
   // An agent that was started again (Resume, Ship — from here or from the end-session dialog) gets a fresh terminal view.
   const generation = useTerminalGeneration(session);
@@ -269,6 +271,9 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   // The badge sits beside the work badge, not instead of it: "pushed" and "no longer merges" are both true.
   const canResolve = resolvable(session, tree);
   const merged = tree?.work.state === "merged";
+  // Merge: the session's open pull request, from the lists the page already holds (agent-merges-docs-prs D7).
+  const merge = mergeControl(session, prs.data?.repos);
+  const pendingMerge = mergeNotice(session, merge?.pr);
   // The change as the snapshot has it: what both the next steps and the empty state's starters are decided from.
   const card = repoId && change ? ui.snapshot?.repos.find((r) => r.id === repoId)?.changes.find((c) => c.name === change && !c.archived) : undefined;
   // Every starter the change's stage allows — Archive included — but only in the panel of the session that would
@@ -355,6 +360,22 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
               ⚠ Resolve conflicts
             </button>
           )}
+          {merge && session && (
+            <button
+              type="button"
+              class="btn sm"
+              disabled={!merge.enabled}
+              title={merge.title}
+              onClick={() =>
+                act(async () => {
+                  const result = await api.mergeSession(session.id);
+                  ui.reportUnsent(result.submitted ? undefined : session.id);
+                })
+              }
+            >
+              ⤵ Merge
+            </button>
+          )}
           {session && session.state !== "running" && session.resumable && (
             <button
               type="button"
@@ -391,6 +412,16 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
         </div>
         {(error ?? session?.error) && <div class="notice danger">{error ?? session?.error}</div>}
         {session?.autoEnded && <div class={`notice ${session.autoEnded.removed ? "ok" : "warn"}`}>{autoEndedText(session.autoEnded)}</div>}
+        {pendingMerge && (
+          <div class={`notice ${pendingMerge.tone === "warn" ? "warn" : ""}`} role="status" title={pendingMerge.title}>
+            {pendingMerge.text}
+          </div>
+        )}
+        {!pendingMerge && merge?.title === RESUME_TO_MERGE && (
+          <div class="notice" role="status">
+            #{merge.pr.number} is ready. {RESUME_TO_MERGE}
+          </div>
+        )}
       </header>
       {session ? (
         <TerminalView key={`${session.id}:${generation}`} sessionId={session.id} running={session.state === "running"} onExit={ui.refresh} />

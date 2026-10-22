@@ -2,8 +2,8 @@
 // grouping into open and recently closed, sorting, and the counts the overview and the board header show.
 // Free of DOM access at import time, so it can be unit-tested.
 import { linkedPullRequest } from "../shared/pullRequestLink.ts";
-import { pullRequestReadiness } from "../shared/pullRequestReadiness.ts";
-import type { ChangeSnapshot, PullRequest, PullRequestsResponse, RepoPullRequests } from "../shared/types.ts";
+import { mergePending, pullRequestReadiness } from "../shared/pullRequestReadiness.ts";
+import type { ChangeSnapshot, MergeAsked, PullRequest, PullRequestsResponse, RepoPullRequests, Session } from "../shared/types.ts";
 
 export type PrStateFilter = "open" | "closed" | "all";
 
@@ -213,6 +213,22 @@ export interface WatchPlan {
   dueAt: number;
 }
 
+/** The Merge prompts sessions recorded, per `repoId/change`: what the board's watch keeps going for (agent-merges-docs-prs D5). */
+export type PendingMerges = ReadonlyMap<string, readonly Pick<MergeAsked, "pr" | "head">[]>;
+
+const mergeKey = (repoId: string, change: string) => `${repoId}/${change}`;
+
+/** Built from the sessions the board already polls; whether one is still pending is decided against the pull request. */
+export function pendingMergesOf(sessions: readonly Session[]): PendingMerges {
+  const merges = new Map<string, Pick<MergeAsked, "pr" | "head">[]>();
+  for (const session of sessions) {
+    if (session.repoId === undefined || session.change === undefined || !("mergeAsked" in session) || !session.mergeAsked) continue;
+    const key = mergeKey(session.repoId, session.change);
+    merges.set(key, [...(merges.get(key) ?? []), session.mergeAsked]);
+  }
+  return merges;
+}
+
 /**
  * The board's pull-request watch (openspec/specs/pull-requests: "The board watches pull requests that are not ready"):
  * which repositories to refresh and when, or undefined when no card on the board links an open pull request that is
@@ -225,11 +241,19 @@ export function watchPlan(
   lists: readonly RepoPullRequests[] | undefined,
   now: number,
   lastSettledAt: number | undefined,
+  pendingMerges: PendingMerges = new Map(),
 ): WatchPlan | undefined {
   const repoIds: string[] = [];
   let inProgress = false;
   for (const card of cards) {
-    const readiness = pullRequestReadiness(linkedPullRequest(card, lists));
+    const pr = linkedPullRequest(card, lists);
+    // A Merge prompt sent for its current head counts as in progress, ready or not, until it merges, closes or moves.
+    if ((pendingMerges.get(mergeKey(card.repoId, card.name)) ?? []).some((asked) => mergePending(pr, asked))) {
+      if (!repoIds.includes(card.repoId)) repoIds.push(card.repoId);
+      inProgress = true;
+      continue;
+    }
+    const readiness = pullRequestReadiness(pr);
     if (readiness?.ready !== false) continue;
     if (!repoIds.includes(card.repoId)) repoIds.push(card.repoId);
     if (readiness.inProgress) inProgress = true;

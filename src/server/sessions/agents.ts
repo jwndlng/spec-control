@@ -1,5 +1,5 @@
 // Agent profiles (design.md D16): an agent is a command line plus opening prompts. Nothing here knows any vendor.
-import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, type AgentAvailability, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type RepoConfig, type SessionAction } from "../../shared/types.ts";
+import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, type AgentAvailability, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type RepoConfig, type SessionAction } from "../../shared/types.ts";
 import { AGENT_PRESETS } from "../../shared/agentDefaults.ts";
 import { whichOnPath } from "../paths.ts";
 import { CHANGE_NAME } from "../source.ts";
@@ -97,6 +97,25 @@ export function integratePrompt(agent: AgentProfile): string {
 export function resolveConflictsPrompt(agent: AgentProfile, change: string): string {
   if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
   return compose(agent, "resolveConflicts", agent.prompts.resolveConflicts ?? DEFAULT_RESOLVE_CONFLICTS_PROMPT).replaceAll("{change}", change);
+}
+
+/** A pull request number as the Merge sentence names it. */
+const PR_NUMBER = (pr: unknown): pr is number => typeof pr === "number" && Number.isSafeInteger(pr) && pr > 0;
+/** A full commit object name, as `gh` reports `headRefOid`. */
+export const HEAD_COMMIT = /^[0-9a-f]{40}$/;
+
+/**
+ * Like Ship: every agent can be asked to merge, configured for it or not — suffix and all — and `{change}` stays the
+ * only placeholder. The pull request and its head commit follow in a fixed sentence (agent-merges-docs-prs D1); both
+ * come from the parsed pull-request list, and anything that is not a positive number or a 40-character object name is
+ * refused rather than typed. One line: a profile's prompt may span lines, and a line break would submit it early.
+ */
+export function mergePrompt(agent: AgentProfile, change: string, { pr, head }: { pr: number; head: string }): string {
+  if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
+  if (!PR_NUMBER(pr)) throw new Error("invalid pull request number");
+  if (typeof head !== "string" || !HEAD_COMMIT.test(head)) throw new Error("invalid head commit");
+  const prompt = compose(agent, "merge", agent.prompts.merge ?? DEFAULT_MERGE_PROMPT).replaceAll("{change}", change);
+  return `${prompt} ${mergeTargetSentence(pr, head)}`.replace(/\s+/g, " ").trim();
 }
 
 export interface Launch {
