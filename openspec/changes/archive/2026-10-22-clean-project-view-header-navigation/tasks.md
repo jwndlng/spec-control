@@ -20,7 +20,7 @@
 ## 4. Project settings on the board
 
 - [x] 4.1 Wire `useTracking` into the board with an `onConfig` prop from `app.tsx` and render `SettingsButton`, `ProjectSettingsDialog` and `RepoLabelsDialog` there (design decision 5); verify that switching Agent sessions off from the board removes the cards' starters without a reload and that focus returns to the board's gear after closing
-- [~] 4.2 Navigate to `/` after a successful Disable from the board, leaving the dialog open with the reason on failure; verify with a test of the dialog-event handling (extend `test/untrackedUi.test.ts` or the new test) and manually on a fixture project
+- [x] 4.2 Navigate to `/` after a successful Disable from the board, leaving the dialog open with the reason on failure; verify with a test of the dialog-event handling (extend `test/untrackedUi.test.ts` or the new test) and manually on a fixture project
 - [x] 4.3 Hide the settings button for a repository not enabled in the configuration; verify by the `projectDetails` test or a board render check
 
 ## 5. Docs and release notes
