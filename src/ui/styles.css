@@ -1414,6 +1414,10 @@ p.add-github-root { display: block; }
 .notice.danger { color: var(--danger); border-color: var(--danger-border); background: var(--danger-bg); }
 .notice.warn { color: var(--warning); border-color: var(--warning-border); }
 .notice.ok { color: var(--success); border-color: var(--success-border); }
+/* A stale change's reason and its one action (stale-changes spec), in the detail under the header. */
+.stale-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px var(--detail-pad, 16px) 0; }
+.stale-notice p { margin: 0; flex: 1 1 280px; }
+.stale-notice .error { color: var(--danger); flex-basis: 100%; }
 
 /* ---- Section navigation (Settings, Help) ---- */
 /* The navigation is part of the page and scrolls with it, in the page's one scroll area; on wide screens it is moved

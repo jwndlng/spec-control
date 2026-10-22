@@ -4,10 +4,12 @@ import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { CONFLICTABLE_WORK, type ChangeSession, type RepoConfig, type SessionAction, type SessionWorktree, type WorkConflicts, type WorkStatus } from "../../shared/types.ts";
 import { OPENSPEC_PATHS } from "../frameworks/registry.ts";
+import { subdirectory } from "../git.ts";
 import { mergeScratchDir, worktreesDir } from "../paths.ts";
+import { baseRef, contentIsInBase } from "./base.ts";
+import { settledArchive } from "../staleChanges.ts";
 
 const ENV = { GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" };
-const MAX_COMPARED_FILES = 500;
 /** Conflicting paths reported per worktree; the rest is summarised as `truncated`. */
 export const MAX_CONFLICT_FILES = 50;
 /** One path segment; also what `POST /api/worktrees/remove` accepts. */
@@ -27,6 +29,8 @@ async function git(cwd: string, args: string[]): Promise<{ ok: boolean; out: str
   const { code, out } = await run(cwd, args);
   return { ok: code === 0, out };
 }
+
+export { baseRef, contentIsInBase };
 
 /** The commit a worktree has checked out (read-only `rev-parse`); undefined when git cannot say. */
 export async function headCommit(worktreePath: string): Promise<string | undefined> {
@@ -57,27 +61,6 @@ async function isDirectory(path: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-/** The default branch as the repository locally knows it; without a remote, whatever the main checkout is on. */
-export async function baseRef(repoPath: string): Promise<string | undefined> {
-  const remoteHead = await git(repoPath, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
-  if (remoteHead.ok && remoteHead.out) return remoteHead.out;
-  const head = await git(repoPath, ["rev-parse", "--verify", "--quiet", "HEAD"]);
-  return head.ok && head.out ? head.out : undefined;
-}
-
-/**
- * Squash and rebase merges leave the branch's commits unreachable from the base, so content is compared instead: every
- * file `ref` changed since it forked from `base` has the same content in `base`. `cwd` is a worktree or the repository.
- */
-export async function contentIsInBase(cwd: string, base: string, ref = "HEAD"): Promise<boolean> {
-  const changed = await git(cwd, ["diff", "--name-only", "-z", `${base}...${ref}`]);
-  if (!changed.ok) return false;
-  const files = changed.out.split("\0").filter(Boolean);
-  if (files.length > MAX_COMPARED_FILES) return false;
-  if (files.length === 0) return true;
-  return (await git(cwd, ["diff", "--quiet", base, ref, "--", ...files])).ok;
 }
 
 /** Where OpenSpec keeps its documents, as git prints repository-relative paths. Compared as written, no normalisation. */
@@ -192,6 +175,9 @@ export async function listWorktrees(repos: RepoConfig[], sessions: ChangeSession
     repos.map(async (repo) => {
       const dir = join(worktreesDir(), repo.id);
       const names = (await readdir(dir).catch(() => [] as string[])).filter((name) => WORKTREE_NAME.test(name));
+      // The project's folder inside its repository, asked once and only when a worktree needs it.
+      let shownPrefix: Promise<string> | undefined;
+      const prefix = () => (shownPrefix ??= subdirectory(repo.path).catch(() => ""));
       return Promise.all(
         names.map(async (name): Promise<SessionWorktree | undefined> => {
           const path = join(dir, name);
@@ -199,7 +185,10 @@ export async function listWorktrees(repos: RepoConfig[], sessions: ChangeSession
           const session = sessions.find((s) => s.worktreePath === path); // sessions arrive newest first
           const { work, branch, lastCommitAt } = await readWorkStatus(repo.path, path);
           const owner = session ? { change: session.change, action: session.action } : changeOfWorktree(name);
-          return { repoId: repo.id, name, path, ...owner, branch: branch ?? session?.branch, work, lastActivityAt: latest(lastCommitAt, session?.updatedAt), sessionId: session?.id };
+          // Only a worktree nobody works in can be left over (stale-changes spec).
+          const running = sessions.some((s) => s.worktreePath === path && s.state === "running");
+          const settled = work.state === "missing" || running ? undefined : await settledArchive(repo.path, path, owner.change, OPENSPEC_PATHS, await prefix()).catch(() => undefined);
+          return { repoId: repo.id, name, path, ...owner, branch: branch ?? session?.branch, work, lastActivityAt: latest(lastCommitAt, session?.updatedAt), sessionId: session?.id, ...(settled ? { settled } : {}) };
         }),
       );
     }),

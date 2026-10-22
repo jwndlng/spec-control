@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-22-stale-changes",
+    date: "2026-10-22",
+    title: "Stale changes are marked, with a way out",
+    summary:
+      "A card now says **Stale** when its work already landed but the board cannot tell: an archive committed on a branch that never reached the default branch, or a session worktree left over after its change was archived. The change's detail offers **Carry over archive** or **Remove worktree…** accordingly.",
+  },
+  {
     id: "2026-10-22-delete-branches",
     date: "2026-10-22",
     title: "Delete a branch and its worktree from Details",

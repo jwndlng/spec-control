@@ -58,7 +58,8 @@ interface SessionUi {
    * whether the session's console is shown afterwards; a card's starter leaves the user on the board. Fast-forward asks
    * for confirmation first unless the user switched that off; a cancelled one resolves with nothing and starts nothing.
    */
-  start(repoId: string, change: string, action: SessionAction, show: boolean): Promise<string | undefined>;
+  /** `carryOver`: the archive session that carries a stranded archive over; never typed into a running session. */
+  start(repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean }): Promise<string | undefined>;
   refresh(): Promise<void>;
 }
 
@@ -160,7 +161,7 @@ export function SessionProvider({
   );
 
   const start = useCallback(
-    async (repoId: string, change: string, action: SessionAction, show: boolean) => {
+    async (repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean }) => {
       let warningNotSaved: string | undefined;
       if (action === "fastForward" && config?.agentSessions.confirmFastForward !== false) {
         const choice = await askFastForward(repoId, change);
@@ -175,8 +176,8 @@ export function SessionProvider({
         }
       }
       try {
-        const into = nextStepFor(sessions, repoId, change).promptSessionId;
-        const session = into ? await api.promptSession(into, action) : await api.openSession(repoId, change, action);
+        const into = options?.carryOver ? undefined : nextStepFor(sessions, repoId, change).promptSessionId;
+        const session = into ? await api.promptSession(into, action) : await api.openSession(repoId, change, action, options);
         reportAutoMerge((current) => afterStart(current, session.id, session.autoMerge));
         if (into) {
           // Sent under the rules for text sent on the user's behalf: say so when the agent never showed it.

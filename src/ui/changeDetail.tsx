@@ -17,7 +17,9 @@ import { BranchBadge } from "./checkout.tsx";
 import { IconCheck, IconFolder } from "./icons.tsx";
 import { SourceIssueLink } from "./importIssues.tsx";
 import { type DetailPr, DetailPullRequest, detailPullRequest, usePullRequests } from "./pullRequests.tsx";
+import { DeleteBranchDialog } from "./deleteBranch.tsx";
 import { DismissDialog } from "./dismissChange.tsx";
+import { listedWorktreePath, staleHint, staleReason } from "./staleState.ts";
 import { dismissedNotice, dismissOffer } from "./dismissState.ts";
 import { checkoutHint, daysSince, leftoverHint, pendingArchiveHint, relTime, splitPathLabel } from "./format.ts";
 import { currentQuery, followInApp, href, navigate, replaceQuery } from "./url.ts";
@@ -464,6 +466,59 @@ export function FileContent({ state, raw, isTasks, rendered, filePath }: { state
   );
 }
 
+/**
+ * Why a change is stale and the one action that fits (stale-changes: "The change detail offers the fitting action for a
+ * stale change"). Removing a settled worktree is the project details' deletion dialog, unchanged; carrying an archive
+ * over starts an archive session whose commit the server takes from its own scan.
+ */
+export function StaleNotice({ repo, change }: { repo: RepoSnapshot; change: ChangeSnapshot }) {
+  const ui = useSessionUi();
+  const [deleting, setDeleting] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string>();
+  const opener = useRef<HTMLButtonElement>(null);
+  const reason = staleReason(change, ui.worktrees, repo.defaultBranch);
+  if (!reason) return null;
+  const sessionsHere = consoleTabAvailable(ui.config, repo.id);
+  const running = ui.sessions.some((s) => s.repoId === repo.id && s.change === change.name && s.state === "running");
+  const listedPath = reason.kind === "settled" ? listedWorktreePath(reason.worktree, repo.worktrees) : undefined;
+  const carryOver = async () => {
+    setBusy(true);
+    setFailure(await ui.start(repo.id, change.name, "archive", true, { carryOver: true }));
+    setBusy(false);
+  };
+  return (
+    <div class="notice warn stale-notice" role="note">
+      <p>
+        <strong>{reason.title}.</strong> {staleHint(reason, sessionsHere, repo.defaultBranch)}
+      </p>
+      {reason.kind === "settled" && listedPath && (
+        <button type="button" class="btn sm" ref={opener} onClick={() => setDeleting(true)}>
+          Remove worktree…
+        </button>
+      )}
+      {reason.kind === "stranded" && sessionsHere && !running && (
+        <button type="button" class="btn sm primary" disabled={busy} onClick={carryOver}>
+          Carry over archive
+        </button>
+      )}
+      {failure && <p class="error">{failure}</p>}
+      {deleting && listedPath && reason.kind === "settled" && (
+        <DeleteBranchDialog
+          repoId={repo.id}
+          path={listedPath}
+          label={reason.worktree.branch ?? "detached worktree"}
+          note={`Opened because this worktree is stale: everything it holds is already archived on ${repo.defaultBranch ?? "the default branch"} (${reason.worktree.settled?.archive}).`}
+          onClose={() => setDeleting(false)}
+          // The rescan moves the card; the session poll drops the worktree from the listing within seconds.
+          onDone={() => void api.scan().catch(() => undefined)}
+          returnFocus={() => opener.current}
+        />
+      )}
+    </div>
+  );
+}
+
 export function ChangeDetail({
   snapshot,
   repoId,
@@ -620,6 +675,7 @@ export function ChangeDetail({
         onDismiss={onDismissed ? () => setDismissing(true) : undefined}
         pullRequest={detailPullRequest(change, pullRequests.data)}
       />
+      <StaleNotice repo={repo} change={change} />
       {(listing || hasConsole) && (
         <ArtifactTabs artifacts={listing?.artifacts ?? []} selected={selection.artifactId} onSelect={(id) => setQuery({ artifact: id, file: undefined })} console={hasConsole} />
       )}

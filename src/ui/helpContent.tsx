@@ -225,6 +225,13 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           files to <code>~/.spec-control/branch-backups/</code>.
         </li>
         <li>
+          A card marked <strong>Stale</strong> holds work that already landed while the board still shows something
+          unfinished; hover the badge for the reason. An archive committed on a branch that never reached the default
+          branch is offered <strong>Carry over archive</strong> in the change's detail — an archive session that
+          cherry-picks that commit instead of archiving again. A session worktree left over after its change was archived
+          is offered <strong>Remove worktree…</strong>, the same deletion as from Details.
+        </li>
+        <li>
           <strong>Refresh</strong> scans now; the clock beside it repeats that at an interval you choose. Scanning only
           reads.
         </li>

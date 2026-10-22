@@ -23,6 +23,7 @@ import { IconCheck, IconChevronRight, IconCircleDot, IconCopy, IconInfo, IconPlu
 import { SessionControls, useSessionUi } from "./sessions.tsx";
 import { archivedShown, cardMergePending, cardSessionControls, hasRunningSession, cardWorkingState, type CardWorkingState, consoleTabAvailable, projectConsoleUnavailable } from "./sessionState.ts";
 import { ProjectSwitch } from "./projectSwitch.tsx";
+import { staleReason, type StaleReason } from "./staleState.ts";
 import { boardFrom, changePath, CONSOLE_TAB, repoPath, serializeDetailQuery } from "./routes.ts";
 import { currentQuery, followInApp, href, navigate, replaceQuery } from "./url.ts";
 import { ProjectConsoleButton } from "./projectConsole.tsx";
@@ -172,7 +173,7 @@ export function cardLink(card: Pick<Card, "repoId" | "name">, from: string): { p
  * working on the change, or its pull request is not ready yet — shows on the whole card, tinted and, while something is
  * still in progress, with its name swept; the caller decides it (`cardWorkingState`), so the card stays hook-free.
  */
-export function ChangeCard({ card, now, from, working, running = false, merging }: { card: Card; now: number; from: string; working?: CardWorkingState; running?: boolean; merging?: string }) {
+export function ChangeCard({ card, now, from, working, running = false, merging, stale }: { card: Card; now: number; from: string; working?: CardWorkingState; running?: boolean; merging?: string; stale?: StaleReason }) {
   const noTasks = card.warnings?.includes("tasks file has no tasks");
   // The work is finished, a person still has to confirm it — `warning`, not `success`; never on an archived change.
   const validating = !card.archived && (card.tasks?.awaiting ?? 0) > 0;
@@ -205,6 +206,12 @@ export function ChangeCard({ card, now, from, working, running = false, merging 
           </span>
         )}
         {noTasks && <span class="badge warning">no tasks</span>}
+        {/* Marked, never moved (stale-changes spec): the reason is in the title; the detail offers what to do. */}
+        {stale && (
+          <span class="badge warning stale" role="note" title={stale.title} aria-label={stale.title}>
+            Stale
+          </span>
+        )}
         {card.warnings?.filter((w) => w !== "tasks file has no tasks").map((w) => (
           <span class="badge danger" title={w}>
             ⚠ error
@@ -300,11 +307,12 @@ function RepoGroups({ column, cards, now, showRepo, from, groups: controls }: { 
   const working = (c: Card) => cardWorkingState(ui.config, ui.sessions, c);
   const running = (c: Card) => cardSessionControls(ui.config, ui.sessions, c).shown.some((s) => s.state === "running");
   const merging = (c: Card) => cardMergePending(ui.sessions, c, c.pullRequest);
+  const stale = (c: Card) => staleReason(c, ui.worktrees);
   if (!showRepo) {
     return (
       <div class="cards">
         {cards.map((c) => (
-          <ChangeCard key={`${c.repoId}/${c.name}`} card={c} now={now} from={from} working={working(c)} running={running(c)} merging={merging(c)} />
+          <ChangeCard key={`${c.repoId}/${c.name}`} card={c} now={now} from={from} working={working(c)} running={running(c)} merging={merging(c)} stale={stale(c)} />
         ))}
       </div>
     );
@@ -333,7 +341,7 @@ function RepoGroups({ column, cards, now, showRepo, from, groups: controls }: { 
             {expanded && (
               <div class="repo-group-body" id={bodyId}>
                 {g.cards.map((c) => (
-                  <ChangeCard key={`${c.repoId}/${c.name}`} card={c} now={now} from={from} working={working(c)} running={running(c)} merging={merging(c)} />
+                  <ChangeCard key={`${c.repoId}/${c.name}`} card={c} now={now} from={from} working={working(c)} running={running(c)} merging={merging(c)} stale={stale(c)} />
                 ))}
               </div>
             )}
