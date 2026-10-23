@@ -1,5 +1,5 @@
 // Agent profiles (design.md D16): an agent is a command line plus opening prompts. Nothing here knows any vendor.
-import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, type AgentAvailability, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type RepoConfig, type SessionAction } from "../../shared/types.ts";
+import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, CARRY_OVER_ARCHIVE_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, type AgentAvailability, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type RepoConfig, type SessionAction, type StrandedArchive } from "../../shared/types.ts";
 import { AGENT_PRESETS } from "../../shared/agentDefaults.ts";
 import { whichOnPath } from "../paths.ts";
 import { CHANGE_NAME } from "../source.ts";
@@ -57,6 +57,22 @@ export function openingPrompt(
   if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
   const prompt = compose(agent, action, template).replaceAll("{change}", change);
   return autoMerge && action === "archive" ? `${prompt} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION}` : prompt;
+}
+
+/** A branch as `for-each-ref` shortens it, local or remote-tracking; nothing option-like or with `..` reaches a prompt. */
+const BRANCH_TEXT = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+
+/**
+ * The carry-over archive prompt (stale-changes spec): the fixed text with the change, the stranded commit, its branch
+ * and the default branch filled in, then the docs auto-merge archive instruction when `autoMerge` — exactly as for any
+ * archive session. Every value is re-checked here, so nothing malformed is ever typed into an agent.
+ */
+export function carryOverPrompt(change: string, stranded: StrandedArchive, base: string | undefined, { autoMerge = false }: { autoMerge?: boolean } = {}): string {
+  if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
+  if (!/^[0-9a-f]{40}$/.test(stranded.commit)) throw new Error("invalid commit");
+  for (const branch of [stranded.branch, base]) if (branch !== undefined && (!BRANCH_TEXT.test(branch) || branch.includes(".."))) throw new Error("invalid branch name");
+  const prompt = CARRY_OVER_ARCHIVE_PROMPT.replaceAll("{change}", change).replaceAll("{commit}", stranded.commit).replaceAll("{branch}", stranded.branch).replaceAll("{base}", base ?? "the default branch");
+  return autoMerge ? `${prompt} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION}` : prompt;
 }
 
 /**

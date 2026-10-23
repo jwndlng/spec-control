@@ -5,7 +5,8 @@ import type { Dirent } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import type { LabelEntry } from "../shared/labels.ts";
-import { CHANGE_NAME_PATTERN, type Worktree } from "../shared/types.ts";
+import { CHANGE_NAME_PATTERN, type StrandedArchive, type Worktree } from "../shared/types.ts";
+import { type ActiveChange, findStrandedArchives } from "./staleChanges.ts";
 import { checkoutStatus, currentBranch, defaultBranch, fetchInfo, hasCommitToBranchFrom, hasRemoteRefs, isGitRepo, lastCommitDate, localOnlyCommits, type ParsedStatus, statusPaths, subdirectory, worktrees } from "./git.ts";
 
 export const CHANGE_NAME = CHANGE_NAME_PATTERN;
@@ -83,6 +84,11 @@ export interface RepoSource {
   localOnlyCommits(path: string): Promise<number | undefined>;
   /** The project's directory below the git top level; empty when the project is the repository. */
   subdirectory(): Promise<string>;
+  /**
+   * Archives of active changes that a branch holds and neither the main checkout nor the default branch does
+   * (stale-changes spec), by change name. Optional: a source without it reports none.
+   */
+  strandedArchives?(layout: ChangesLayout, changes: readonly ActiveChange[], archivedOnMain: ReadonlyMap<string, string>, defaultBranch: string | undefined): Promise<Map<string, StrandedArchive>>;
   /** Committer date of the last commit touching `absPath` inside the repo. */
   lastActivity(absPath: string): Promise<string | undefined>;
   /** Modified and untracked files under `relRoot` (a framework's root, e.g. `openspec`), per git. Empty for non-git repositories or on failure. */
@@ -224,6 +230,10 @@ export class LocalRepoSource implements RepoSource {
 
   hasCommitToBranchFrom(): Promise<boolean | undefined> {
     return hasCommitToBranchFrom(this.path);
+  }
+
+  strandedArchives(layout: ChangesLayout, changes: readonly ActiveChange[], archivedOnMain: ReadonlyMap<string, string>, defaultBranch: string | undefined): Promise<Map<string, StrandedArchive>> {
+    return findStrandedArchives(this.path, layout, changes, archivedOnMain, defaultBranch);
   }
 
   worktrees(): Promise<Worktree[]> {

@@ -82,6 +82,7 @@ export function DeleteBranchDialog({
   onClose,
   onDone,
   returnFocus,
+  note,
 }: {
   repoId: string;
   path: string;
@@ -90,6 +91,8 @@ export function DeleteBranchDialog({
   onClose: () => void;
   onDone: () => void;
   returnFocus: () => HTMLElement | null;
+  /** Why the dialog was opened, said above the preview — e.g. that a stale worktree's content is archived already. */
+  note?: string;
 }) {
   const [preview, setPreview] = useState<BranchDeletePreview>();
   const [acknowledged, setAcknowledged] = useState(false);
@@ -136,6 +139,7 @@ export function DeleteBranchDialog({
       returnFocus={returnFocus}
     >
       <div class="delete-branch">
+        {note && !result && <p class="details-line">{note}</p>}
         {!preview && !error && <div class="hint">Checking what this worktree holds…</div>}
         {result ? (
           <Result result={result} />

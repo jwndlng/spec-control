@@ -12,7 +12,7 @@ import { isCleaningUp } from "../cleanup.ts";
 import { isDismissing } from "../dismissChange.ts";
 import { canonicalPath, worktreesDir } from "../paths.ts";
 import { CHANGE_NAME } from "../source.ts";
-import { agentEnv, agentFor, availability, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, shipPrompt } from "./agents.ts";
+import { agentEnv, agentFor, availability, carryOverPrompt, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, shipPrompt } from "./agents.ts";
 import { consoleFolderProblem, prepareConsoleFolder } from "./consoleFolder.ts";
 import type { SessionActivity } from "../activity/events.ts";
 import { isBusy } from "../keepAwake.ts";
@@ -164,13 +164,16 @@ export class SessionManager {
     return session;
   }
 
-  async open(input: { repoId?: unknown; change?: unknown; action?: unknown }): Promise<StartResult> {
+  async open(input: { repoId?: unknown; change?: unknown; action?: unknown; carryOver?: unknown }): Promise<StartResult> {
     const config = this.deps.getConfig();
     if (!config.agentSessions.enabled) throw new SessionError(403, "agent sessions are disabled");
     if (typeof input.change !== "string" || !CHANGE_NAME.test(input.change)) throw new SessionError(400, "invalid change name");
     if (!SESSION_ACTIONS.includes(input.action as SessionAction)) throw new SessionError(400, "unknown action");
     const change = input.change;
     const action = input.action as SessionAction;
+    // Carry-over is an archive session with a prompt of its own (stale-changes spec); nothing else carries anything over.
+    const carryOver = input.carryOver === true;
+    if (carryOver && action !== "archive") throw new SessionError(400, "only an archive session can carry an archive over");
 
     const repo = config.repos.find((r) => r.id === input.repoId);
     if (!repo) throw new SessionError(404, "unknown repository");
@@ -182,10 +185,14 @@ export class SessionManager {
     if (isDismissing(repo.id, change)) throw new SessionError(409, "this change is being dismissed");
     const snapshot = scanned.changes.find((c) => c.name === change && !c.archived);
     if (!snapshot) throw new SessionError(404, "unknown change");
+    // The commit and branch come from this server's own scan, never from the request.
+    const stranded = carryOver ? snapshot.strandedArchive : undefined;
+    if (carryOver && !stranded) throw new SessionError(409, "the last scan found no archive of this change stranded on a branch");
     // Fast-forward implements too, so a blocked change is refused with the same named reason as Implement.
     const heldBack = action === "implement" ? blockedReason(snapshot) : action === "fastForward" ? blockedReason(snapshot, "Fast-forward") : undefined;
     if (heldBack) throw new SessionError(400, heldBack);
-    if (!availableActions(snapshot).includes(action)) throw new SessionError(400, `"${action}" is not available for this change in its current stage`);
+    // A stranded archive exists whatever the change's stage on the main checkout; that is the whole point of carrying it over.
+    if (!stranded && !availableActions(snapshot).includes(action)) throw new SessionError(400, `"${action}" is not available for this change in its current stage`);
 
     // One open session per change, whatever the action: a change never has two consoles, and Archive is no exception.
     // Nothing is typed here — a starter for a change whose agent is up goes through `prompt`, which reports whether
@@ -207,7 +214,7 @@ export class SessionManager {
 
     const agent = agentFor(config, repo);
     if (!agent) throw new SessionError(503, "no agent is configured");
-    let prompt = openingPrompt(agent, action, change, { convention: repo.prTitleConvention });
+    let prompt = stranded ? carryOverPrompt(change, stranded, scanned.defaultBranch) : openingPrompt(agent, action, change, { convention: repo.prTitleConvention });
     if (!prompt) throw new SessionError(400, `${agent.name} has no "${action}" prompt configured`);
     if (!Bun.which(agent.command[0])) throw new SessionError(503, `${agent.name} was not found (${agent.command[0]}); install it or change its command in Settings`);
 
@@ -247,7 +254,7 @@ export class SessionManager {
     // Decided once the worktree exists, so a leftover archive branch with code in it is seen (archive-auto-merge-docs D4).
     const autoMerge = await this.archiveAutoMerge(repo, session, action);
     if (autoMerge) {
-      prompt = openingPrompt(agent, action, change, { autoMerge }) as string;
+      prompt = stranded ? carryOverPrompt(change, stranded, scanned.defaultBranch, { autoMerge }) : (openingPrompt(agent, action, change, { autoMerge }) as string);
       session.autoMergeAskedAt = new Date().toISOString();
     }
     this.sessions.set(session.id, session);

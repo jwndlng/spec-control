@@ -297,7 +297,14 @@ export async function scanRepo(repo: RepoConfig, source: RepoSource = new LocalR
   copies.push(...fromWorktrees.copies);
   warnings.push(...fromWorktrees.warnings);
 
-  const active = isGit ? mergeChanges(copies, archivedOnMain, fromWorktrees.pending) : copies.map((c) => c.change);
+  const merged = isGit ? mergeChanges(copies, archivedOnMain, fromWorktrees.pending) : copies.map((c) => c.change);
+  // An archive committed on a branch that never reached the default branch: marked, never moved (stale-changes spec).
+  const open = merged.filter((c) => !c.archived);
+  const stranded =
+    isGit && !noCommit && open.length > 0 && source.strandedArchives && framework.layout.archiveDir
+      ? await source.strandedArchives(framework.layout, open.map((c) => ({ name: c.name, created: c.created })), archivedOnMain, mainBranch).catch(() => undefined)
+      : undefined;
+  const active = stranded?.size ? merged.map((c) => (!c.archived && stranded.has(c.name) ? { ...c, strandedArchive: stranded.get(c.name) } : c)) : merged;
   const changes = resolveDependencies([...active, ...archived]);
 
   return {

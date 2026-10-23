@@ -99,8 +99,23 @@ export interface ChangeSnapshot {
    * derived with `issueUrl`, never read from the file.
    */
   sourceIssue?: SourceIssue;
+  /**
+   * An archive of this active change that a branch holds but neither the main checkout nor the default branch does
+   * (stale-changes spec): marked on the board, offered for carry-over. Never an input to columns or counts.
+   */
+  strandedArchive?: StrandedArchive;
   /** Non-fatal problems while reading this change. */
   warnings?: string[];
+}
+
+/** An archive commit that never reached the default branch. */
+export interface StrandedArchive {
+  /** The branch holding it, as git shortens it: `feat/x` for a local branch, `origin/feat/x` for a remote-tracking one. */
+  branch: string;
+  /** The archive directory's name, e.g. `2026-10-22-fix-release-pipeline`. */
+  archive: string;
+  /** The newest commit on that branch that touched the archive directory (full hash). */
+  commit: string;
 }
 
 /** Working-tree state of one checkout. Counts only — never the names of changed files. */
@@ -473,6 +488,15 @@ export const DEFAULT_RESOLVE_CONFLICTS_PROMPT =
 /** Agent-neutral like Ship's. It names the GitHub CLI — the host's tool, not an agent vendor — because only
  *  `--match-head-commit` makes "merge exactly this commit" precise; the merge method is the repository's convention,
  *  which the agent knows (agent-merges-docs-prs D1). */
+/**
+ * The opening prompt of a carry-over archive session (stale-changes: "The change detail offers the fitting action for a
+ * stale change"). Fixed and agent-neutral — no slash command, no profile text — because what it asks is plain git: the
+ * archive already exists as a commit, it only has to reach the default branch. `{change}`, `{commit}`, `{branch}` and
+ * `{base}` come from the server's own scan.
+ */
+export const CARRY_OVER_ARCHIVE_PROMPT =
+  "The OpenSpec change {change} was already archived in commit {commit} on the branch {branch}, but that commit never reached {base}. Do not archive the change again. Bring exactly that commit onto this worktree's branch with git cherry-pick {commit} — if this branch already contains it, there is nothing to pick — and resolve any conflict so that the change ends up archived exactly once. Do not push or open a pull request yet; I will ask you to ship it. Then tell me what you did.";
+
 export const DEFAULT_MERGE_PROMPT =
   "Merge the pull request of this worktree's branch for {change} into its base, with the merge method this repository uses, but only if its head is still the commit named below — with the GitHub CLI: gh pr merge <number> --match-head-commit <commit>. Do not delete the branch. If the merge is refused or anything was pushed since, stop and tell me why.";
 
@@ -542,6 +566,16 @@ export interface SessionWorktree {
   lastActivityAt?: string;
   /** Most recent session in this worktree, if its record still exists. */
   sessionId?: string;
+  /** Everything it holds is already archived on the default branch (stale-changes spec); absent otherwise. */
+  settled?: SettledWorktree;
+}
+
+/** A session worktree of an archived change whose commits and uncommitted files the default branch already covers. */
+export interface SettledWorktree {
+  /** The archive directory on the default branch, e.g. `2026-10-22-update-routines`. */
+  archive: string;
+  /** Uncommitted or untracked files, all inside the change's own directories. */
+  uncommitted: number;
 }
 
 /** A session is a process in a terminal: it runs, or it has ended. `failed` means it could not be started. */
