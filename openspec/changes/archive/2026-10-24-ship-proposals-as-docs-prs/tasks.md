@@ -24,4 +24,4 @@
 ## 4. Verification
 
 - [x] 4.1 Run `bun run check` and `bun run build`, and verify the compiled binary starts and serves the board
-- [~] 4.2 In a project with docs auto-merge on, run Draft artifacts end to end: the agent opens the proposal pull request, the dashboard asks it to merge once ready, and the session ends and its worktree is removed after the merge (needs the user's repositories)
+- [x] 4.2 In a project with docs auto-merge on, run Draft artifacts end to end: the agent opens the proposal pull request, the dashboard asks it to merge once ready, and the session ends and its worktree is removed after the merge (needs the user's repositories)
