@@ -12,6 +12,7 @@ import { lstat, readdir, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { sessionBranch } from "../shared/sessionBranch.ts";
 import {
+  type ChangeRecord,
   isChangeless,
   isProjectConsole,
   type KeptLeftover,
@@ -68,10 +69,7 @@ export function sessionHints(sessions: readonly Session[], repoId: string): Sess
 }
 
 /** The branches recorded in a change's metadata (`spec-control.branch`, `spec-control.archive-branch`), when known. */
-export interface RecordedBranches {
-  branch?: string;
-  archiveBranch?: string;
-}
+export type RecordedBranches = ChangeRecord;
 
 /**
  * The change's branches, exactly (stale-changes: "A change's branches are named exactly"): the recorded ones, the

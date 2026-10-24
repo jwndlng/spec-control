@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import { defaultAgentSessions, defaultConfig, newRepoConfig, validateConfig } from "../src/server/config.ts";
-import { agentEnv, agentFor, fastForwardPrompt, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, shipPrompt } from "../src/server/sessions/agents.ts";
+import { agentEnv, agentFor, carryOverPrompt, fastForwardPrompt, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, shipPrompt } from "../src/server/sessions/agents.ts";
 import { Scrollback, sessionBranch, worktreeName } from "../src/server/sessions/manager.ts";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE, CODEX_PROFILE, DEFAULT_SHORTCUTS, FORMER_PROMPTS } from "../src/shared/agentDefaults.ts";
-import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, availableActions, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, mergeTargetSentence, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
+import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, availableActions, pastDraftingReason, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, mergeTargetSentence, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
 import { agentForRepo, cardIsLive, cardSessionControls, NEEDS_YOU_AFTER_MS, parseArgLines, sessionBadge, sessionForChange, sessionsEnabledFor, silenceDuration, slugId, startersFor } from "../src/ui/sessionState.ts";
+import { openSpec } from "../src/server/frameworks/openspec/index.ts";
 import { fakeProfile } from "./sessionHelpers.ts";
 
 const base = defaultConfig();
@@ -381,7 +382,7 @@ test("a card shows the running session's badge instead of a starter, and a faile
   const mine = (patch: Partial<ChangeSession>) => session({ repoId: repo.id, change: "c", ...patch });
 
   // No session: the stage's starter, and nothing to show a badge for.
-  expect(cardSessionControls(cfg, [], card)).toEqual({ shown: [], starters: ["implement"] });
+  expect(cardSessionControls(cfg, [], card)).toMatchObject({ shown: [], starters: ["implement"], main: { kind: "start", action: "implement" }, menu: [] });
 
   // A running session stands in for the starter, whatever its terminal is doing — the badge's words differ, the rule
   // does not, so no button appears and vanishes as the terminal falls silent.
@@ -399,13 +400,13 @@ test("a card shows the running session's badge instead of a starter, and a faile
     expect(after.shown).toHaveLength(1);
   }
   // A clean exit is not worth a badge, and leaves the starter on its own.
-  expect(cardSessionControls(cfg, [mine({ state: "exited", exitCode: 0 })], card)).toEqual({ shown: [], starters: ["implement"] });
+  expect(cardSessionControls(cfg, [mine({ state: "exited", exitCode: 0 })], card)).toMatchObject({ shown: [], starters: ["implement"], main: { kind: "start", action: "implement" }, menu: [] });
 
   // An archive session running next to the change's own one still counts as running: no starter.
   expect(cardSessionControls(cfg, [mine({ id: "arch", action: "archive" })], { ...card, stage: "done" }).starters).toEqual([]);
 
   // Another change's session is none of this card's business.
-  expect(cardSessionControls(cfg, [session({ repoId: repo.id, change: "other" })], card)).toEqual({ shown: [], starters: ["implement"] });
+  expect(cardSessionControls(cfg, [session({ repoId: repo.id, change: "other" })], card)).toMatchObject({ shown: [], starters: ["implement"], main: { kind: "start", action: "implement" }, menu: [] });
 
   // `subState` has to reach `availableActions` through here, or a change awaiting confirmation would never offer
   // Validate on its card. The stock fake agent has no validate prompt, so one that has is what shows the difference.
@@ -418,7 +419,7 @@ test("a card shows the running session's badge instead of a starter, and a faile
 
   // Feature off, or the repository switched off: no badge and no starter, as before.
   for (const off of [{ ...cfg, agentSessions: { ...cfg.agentSessions, enabled: false } }, { ...cfg, repos: [{ ...repo, agent: { enabled: false } }] }]) {
-    expect(cardSessionControls(off, [mine({})], card)).toEqual({ shown: [], starters: [] });
+    expect(cardSessionControls(off, [mine({})], card)).toEqual({ shown: [], starters: [], menu: [] });
   }
 });
 
@@ -617,6 +618,23 @@ test("an agent's waiting report comes first, worded as the agent's report", () =
   expect(sessionBadge(session({ lastOutputAt: "2026-01-01T00:50:00Z", waitingReportedAt: "nonsense" }), now).label).toBe("may need you 10m");
 });
 
+test("starters: Draft is decided by stage, and in Ready only for an artifact implementing does not need", () => {
+  const optional = (status: "done" | "ready") => [{ id: "proposal", status: "done" as const, required: true }, { id: "tasks", status: "done" as const, required: true }, { id: "design", status, required: false }];
+  // Done without a design: only Archive, and Draft is refused as past drafting.
+  expect(availableActions({ artifacts: optional("ready"), stage: "done" })).toEqual(["archive"]);
+  expect(availableActions({ artifacts: optional("ready"), stage: "done", subState: "validate" })).toEqual(["validate", "archive"]);
+  expect(pastDraftingReason({ stage: "done" })).toContain("past drafting");
+  // Implementing without a design: Implement only.
+  expect(availableActions({ artifacts: optional("ready"), stage: "implementing" })).toEqual(["implement"]);
+  expect(pastDraftingReason({ stage: "implementing" })).toContain("past drafting");
+  // Ready may still draft its design; with every artifact written it is Implement only.
+  expect(availableActions({ artifacts: optional("ready"), stage: "ready" })).toEqual(["draft", "implement"]);
+  expect(availableActions({ artifacts: optional("done"), stage: "ready" })).toEqual(["implement"]);
+  expect(pastDraftingReason({ stage: "ready" })).toBeUndefined();
+  // Before planning, Draft is offered whatever the artifacts say.
+  for (const stage of ["unknown", "backlog", "drafts"] as const) expect(availableActions({ artifacts: optional("ready"), stage })).toContain("draft");
+});
+
 test("Fast-forward: offered only while a change is unplanned and not blocked, and only to an agent that can draft and implement", () => {
   const a = (...s: ("done" | "ready" | "blocked")[]) => s.map((status, i) => ({ id: `a${i}`, status }));
   expect(availableActions({ artifacts: [], stage: "unknown" })).toEqual(["draft", "fastForward"]);
@@ -686,4 +704,47 @@ test("every preset's Archive prompt asks for the whole move to be committed; the
     const edited = { ...profile, prompts: { archive: `${previous} Then stop.` } };
     expect(validateConfig(withAgents([edited], profile.id)).agentSessions.agents[0].prompts.archive).toBe(`${previous} Then stop.`);
   }
+});
+
+// agent-sessions: "An agent asked to open a pull request is asked to record its branch". The server picks the text
+// (`SessionManager.recordInstruction`); these are the places it goes.
+const RECORD = openSpec.recordInstruction({ change: "rotate-keys", archive: false });
+const ARCHIVE_RECORD = openSpec.recordInstruction({ change: "rotate-keys", archive: true });
+
+test("Ship carries the record instruction right after the prompt, and is unchanged without one", () => {
+  expect(shipPrompt(fakeProfile(), "rotate-keys", { record: RECORD })).toBe(`${DEFAULT_SHIP_PROMPT} ${RECORD}`);
+  expect(shipPrompt(fakeProfile(), "rotate-keys", { record: undefined })).toBe(DEFAULT_SHIP_PROMPT);
+  expect(shipPrompt(fakeProfile(), "rotate-keys", { record: ARCHIVE_RECORD })).toContain("archive-branch:");
+  // A profile with its own Ship prompt gets it all the same.
+  const own = fakeProfile({ prompts: { ...fakeProfile().prompts, ship: "Ship {change}." } });
+  expect(shipPrompt(own, "rotate-keys", { record: RECORD })).toBe(`Ship rotate-keys. ${RECORD}`);
+});
+
+test("Ship with every addition: prompt, Conventional Commits, record, additional instructions, auto-merge", () => {
+  const extra = "Mention the ticket.";
+  const profile = fakeProfile({ promptSuffixes: { ship: extra } });
+  expect(shipPrompt(profile, "rotate-keys", { convention: "conventional-commits", record: RECORD, autoMerge: true })).toBe(
+    `${DEFAULT_SHIP_PROMPT} ${CONVENTIONAL_COMMITS_SHIP_SENTENCE} ${RECORD} ${extra} ${AUTO_MERGE_DOCS_INSTRUCTION}`,
+  );
+});
+
+test("Fast-forward carries the record instruction exactly once, within its Ship part", () => {
+  const profile = fakeProfile();
+  const prompt = openingPrompt(profile, "fastForward", "rotate-keys", { record: RECORD }) as string;
+  expect(prompt.split(RECORD).length - 1).toBe(1);
+  expect(prompt.endsWith(shipPrompt(profile, "rotate-keys", { record: RECORD }))).toBe(true);
+  expect(openingPrompt(profile, "fastForward", "rotate-keys")).not.toContain("spec-control:");
+});
+
+test("Archive: the record instruction follows the archive auto-merge instruction, and only with it", () => {
+  const profile = fakeProfile();
+  expect(openingPrompt(profile, "archive", "rotate-keys", { autoMerge: true, record: ARCHIVE_RECORD })).toBe(`archive rotate-keys ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION} ${ARCHIVE_RECORD}`);
+  expect(openingPrompt(profile, "archive", "rotate-keys", { record: ARCHIVE_RECORD })).toBe("archive rotate-keys");
+  for (const action of ["draft", "implement", "validate"] as const) {
+    expect(openingPrompt(profile, action, "rotate-keys", { autoMerge: true, record: RECORD })).toBe(openingPrompt(profile, action, "rotate-keys"));
+  }
+  const stranded = { branch: "feat/rotate-keys", archive: "2026-10-20-rotate-keys", commit: "c0ffee0000000000000000000000000000000001" };
+  const plain = carryOverPrompt("rotate-keys", stranded, "main");
+  expect(carryOverPrompt("rotate-keys", stranded, "main", { record: ARCHIVE_RECORD })).toBe(plain);
+  expect(carryOverPrompt("rotate-keys", stranded, "main", { autoMerge: true, record: ARCHIVE_RECORD })).toBe(`${plain} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION} ${ARCHIVE_RECORD}`);
 });

@@ -358,8 +358,11 @@ test("checks running after a ship: tinted and sweeping, starters, badge, column 
   const card = workingCard(withPr({ checks: "pending" }));
   expect(cardWorkingState(sessionsOn, [ended], card, NOW)).toEqual({ tinted: true, sweeping: true });
   expect(cardWorkingState(sessionsOn, [ended], plain, NOW)).toEqual({ tinted: false, sweeping: false });
-  expect(cardSessionControls(sessionsOn, [ended], card)).toEqual(cardSessionControls(sessionsOn, [ended], plain));
+  // The starters are the stage's either way; only which one is recommended follows the pull request.
+  expect(cardSessionControls(sessionsOn, [ended], card).starters).toEqual(cardSessionControls(sessionsOn, [ended], plain).starters);
   expect(cardSessionControls(sessionsOn, [], card).starters.length).toBeGreaterThan(0);
+  expect(cardSessionControls(sessionsOn, [ended], card).main).toEqual({ kind: "waiting", reason: "checks running" });
+  expect(cardSessionControls(sessionsOn, [ended], card).menu).toEqual(cardSessionControls(sessionsOn, [ended], card).starters.map((action) => ({ kind: "start", action })));
   expect(sessionBadge(ended, NOW).live).not.toBe(true);
   expect(card.column).toBe(plain.column);
   expect(cardProgress(card)).toEqual(cardProgress(plain));

@@ -1513,8 +1513,32 @@ p.add-github-root { display: block; }
 .session-badge { cursor: pointer; font: inherit; font-size: 11px; line-height: 16px; }
 .session-badge:hover { border-color: var(--border); }
 .session-start { border-color: var(--brand-soft); color: var(--brand-fg); background: var(--brand-softer); }
-/* Fast-forward is the small one: two letters, the full name in its tooltip and accessible name. */
-.session-ff { padding-inline: 6px; letter-spacing: 0.04em; font-weight: 600; }
+/* A change's actions as one split button: the recommended action, and an arrow joined to it that opens the rest. */
+.split { display: inline-flex; align-items: stretch; min-width: 0; }
+.split.has-menu > .split-main, .split.has-menu > .split-status { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.split.has-menu > .split-arrow { margin-left: -1px; padding-inline: 5px; border-top-left-radius: 0; border-bottom-left-radius: 0; border-color: var(--brand-soft); color: var(--brand-fg); background: var(--brand-softer); }
+.split.has-menu > .split-status + .split-arrow { border-color: var(--border); color: var(--fg-subtle); background: transparent; }
+.split-arrow[aria-expanded="true"] { background: var(--bg-surface); }
+.split-main, .split-arrow { position: relative; }
+.split-main:focus-visible, .split-arrow:focus-visible { z-index: 1; }
+a.split-main { text-decoration: none; }
+/* Waiting on the pull request: in the action's place and at its height, but a status, never a control. */
+.split-status {
+  display: inline-flex; align-items: center; padding: 3px 8px; font-size: 12px; color: var(--fg-subtle);
+  border: 1px dashed var(--border); border-radius: var(--radius-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: help;
+}
+.split-status:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--brand-ring); border-color: var(--brand); }
+.split-menu {
+  position: fixed; z-index: 30; min-width: 170px; display: flex; flex-direction: column; padding: 4px;
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg);
+}
+.split-item {
+  display: block; width: 100%; padding: 6px 10px; text-align: left; font: inherit; font-size: 12px; color: var(--fg-heading);
+  background: transparent; border: 0; border-radius: var(--radius-sm); cursor: pointer; text-decoration: none; white-space: nowrap;
+}
+.split-item:hover, .split-item:focus-visible { outline: none; background: var(--brand-softer); color: var(--brand-fg); }
+.split-item.disabled { color: var(--fg-disabled); cursor: default; }
+.split-item.disabled:hover, .split-item.disabled:focus-visible { background: var(--bg-surface); color: var(--fg-disabled); }
 .session-head { display: flex; flex-direction: column; gap: 4px; padding: 4px var(--gap-1); border-bottom: 1px solid var(--border-light); }
 .session-head .hint { font-size: 12px; color: var(--fg-subtle); word-break: break-all; }
 .session-confirm { display: flex; flex-direction: column; gap: 6px; padding: var(--gap-1); border: 1px solid var(--warning-border); border-radius: var(--radius); background: var(--bg-raised); }

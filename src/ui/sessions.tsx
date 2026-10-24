@@ -2,12 +2,14 @@
 // card shows (starter buttons, or a badge that opens the session panel).
 import { createContext, type ComponentChildren } from "preact";
 import { useCallback, useContext, useEffect, useMemo, useState } from "preact/hooks";
-import { changeSessions, isConsole, isIntegration, isProjectConsole, type AgentAvailability, type ChangeSession, type ChangeSnapshot, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleSession, type SessionAction, type SessionWorktree, type Snapshot } from "../shared/types.ts";
+import { changeSessions, isConsole, isIntegration, isProjectConsole, type AgentAvailability, type ChangeSession, type ChangeSnapshot, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleSession, type PullRequest, type SessionAction, type SessionWorktree, type Snapshot } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { FastForwardDialog, type FastForwardChoice } from "./fastForwardDialog.tsx";
 import { cdCommand, relTime } from "./format.ts";
 import { assignRepoHues, repoTint } from "./repoGroups.ts";
-import { afterStart, agentForRepo, type AutoMergeReport, cardSessionControls, conflictBadge, openWork, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
+import { type NextStep, type PullRequestStep, waitingLabel } from "../shared/nextStep.ts";
+import { ActionMenu, type ActionItem, type ActionStatus } from "./actionMenu.tsx";
+import { afterStart, agentForRepo, type AutoMergeReport, cardSessionControls, conflictBadge, openWork, pullRequestSession, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, startersFor, starterSplit, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
 import { boardFrom, changePath, CONSOLE_TAB, parseDetailQuery, routeFromPath, serializeDetailQuery } from "./routes.ts";
 import { currentPath, currentQuery, navigate } from "./url.ts";
 
@@ -52,6 +54,8 @@ interface SessionUi {
   error?: string;
   /** Shows a session: navigates to its change's detail view with the Console tab selected. */
   openPanel(id: string | undefined): void;
+  /** Navigates to a change's Console tab, showing `sessionId` when given — also for a session not in the list yet. */
+  openChangeConsole(repoId: string, change: string, sessionId?: string): void;
   /**
    * Starts a session, or sends the next step into the change's running one. Resolves with the reason when the request
    * was refused and no session exists to report it — the caller shows it where the starter was activated. `show` says
@@ -64,7 +68,7 @@ interface SessionUi {
 }
 
 const noop = async () => undefined;
-const Context = createContext<SessionUi>({ config: null, snapshot: null, sessions: [], consoles: [], consoleOpen: false, showConsole: () => {}, integrations: [], showIntegration: () => {}, projectConsoles: [], showProjectConsole: () => {}, agents: [], worktrees: [], focusTick: { tick: 0 }, reportUnsent: () => {}, reportAutoMerge: () => {}, requestEnd: () => {}, openPanel: () => {}, start: noop, refresh: noop });
+const Context = createContext<SessionUi>({ config: null, snapshot: null, sessions: [], consoles: [], consoleOpen: false, showConsole: () => {}, integrations: [], showIntegration: () => {}, projectConsoles: [], showProjectConsole: () => {}, agents: [], worktrees: [], focusTick: { tick: 0 }, reportUnsent: () => {}, reportAutoMerge: () => {}, requestEnd: () => {}, openPanel: () => {}, openChangeConsole: () => {}, start: noop, refresh: noop });
 
 export const useSessionUi = () => useContext(Context);
 
@@ -132,7 +136,7 @@ export function SessionProvider({
    * Console tab selected. `from` keeps the board to return to: the one on screen, or — when another change's detail
    * view is already open — whatever board that one was opened from.
    */
-  const openConsole = useCallback((repoId: string, change: string, sessionId: string) => {
+  const openConsole = useCallback((repoId: string, change: string, sessionId?: string) => {
     const path = currentPath();
     const view = routeFromPath(path).view;
     const from = view === "board" || view === "repo" ? boardFrom(path, currentQuery()) : parseDetailQuery(currentQuery()).from;
@@ -200,8 +204,8 @@ export function SessionProvider({
 
   const shown = consoleOpen && enabled;
   const value = useMemo(
-    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, start, refresh }),
-    [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, endingId, focusTick, unsentId, autoMerge, error, openPanel, start, refresh],
+    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, refresh }),
+    [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, endingId, focusTick, unsentId, autoMerge, error, openPanel, openConsole, start, refresh],
   );
   const answerFastForward = useCallback(
     (choice: FastForwardChoice | undefined) => {
@@ -372,7 +376,7 @@ export function OpenWork() {
   );
 }
 
-const STARTER_LABEL: Record<SessionAction, string> = { draft: "Draft artifacts", fastForward: "FF", implement: "Implement", validate: "Validate", archive: "Archive" };
+const STARTER_LABEL: Record<SessionAction, string> = { draft: "Draft artifacts", fastForward: "Fast-forward", implement: "Implement", validate: "Validate", archive: "Archive" };
 const STARTER_HINT: Record<SessionAction, string> = {
   draft: "Start an agent in a terminal to write this change's missing artifacts",
   fastForward: "Fast-forward: write the artifacts, implement and open a pull request, without stopping for review",
@@ -380,52 +384,101 @@ const STARTER_HINT: Record<SessionAction, string> = {
   validate: "Start an agent in a terminal to walk you through this change's tasks awaiting validation",
   archive: "Start an agent in a terminal to sync the specs and archive this completed change",
 };
+/** Draft in `Ready` is for what implementing does not need; it says so wherever it is offered. */
+const DRAFT_READY_HINT = "Start an agent in a terminal to write the artifacts not required for implementing, such as a design";
+const STEP_LABEL: Record<PullRequestStep, string> = { merge: "⤵ Merge", resolveConflicts: "⚠ Resolve conflicts", fixChecks: "Fix checks" };
+
+function starterHint(action: SessionAction, stage: ChangeSnapshot["stage"]): string {
+  return action === "draft" && stage === "ready" ? DRAFT_READY_HINT : STARTER_HINT[action];
+}
+
+/** What a pull-request step does where no running session can be sent a prompt: it leads to the session, or to GitHub. */
+function pullRequestItem(step: PullRequestStep, pr: PullRequest, target: ChangeSession | undefined, open: (sessionId?: string) => void): ActionItem {
+  const label = STEP_LABEL[step];
+  if (step === "merge" && !target) return { key: step, label, href: pr.url, title: `#${pr.number} is ready: opens it on GitHub, in a new tab` };
+  const where = target ? `the Console tab of ${target.branch}` : "the Console tab";
+  const title =
+    step === "merge"
+      ? `#${pr.number} is ready: opens ${where}, where Merge asks the agent to merge it`
+      : step === "resolveConflicts"
+        ? `#${pr.number} conflicts with its base: opens ${where}, where the agent can be asked to resolve the conflicts`
+        : `#${pr.number}'s checks fail: opens ${where}, where the agent can be resumed to fix them`;
+  return { key: step, label, title, onActivate: () => open(target?.id) };
+}
 
 /**
  * A change's session state and its next step, in one place so the two can never disagree: the session badge (working,
- * may need you, waiting for you, failed) and the starters. Rendered in a card's footer, and in the Console tab of a change no agent has
- * worked on yet. Shows nothing at all unless the feature is on and the repository has not been switched off.
+ * may need you, waiting for you, failed) and the starters, as one split button (kanban-board: "A change's actions are
+ * one split button"). Rendered in a card's footer, and in the Console tab. Shows nothing at all unless the feature is
+ * on and the repository has not been switched off.
  *
  * While any of the change's sessions runs, the badge stands in for the starters and nothing else is offered: the badge
  * opens the terminal, which is where the next step and **End session** live. A badge that is not running is the failure
  * case, so it keeps its starters — the next attempt stays one activation away. The work status is the detail view's
  * (see `WorkStatus`), never a card's. `place` decides whether a start shows the new session (`startShowsConsole`).
+ *
+ * `into` is the Console tab's running session: the starters are then the prompts that reach it, sent into it, and
+ * `steps` supplies what the pull request's own steps do there (Merge and Resolve conflicts are prompts into it too).
  */
-export function SessionControls({ card, place }: { card: Pick<ChangeSnapshot, "repoId" | "name" | "archived" | "artifacts" | "stage" | "subState" | "blocked">; place: StarterPlace }) {
+export function SessionControls({
+  card,
+  place,
+  pullRequest,
+  into,
+  steps,
+}: {
+  card: Pick<ChangeSnapshot, "repoId" | "name" | "archived" | "artifacts" | "stage" | "subState" | "blocked">;
+  place: StarterPlace;
+  pullRequest?: PullRequest;
+  into?: ChangeSession;
+  steps?: Partial<Record<PullRequestStep, ActionItem | ActionStatus>>;
+}) {
   const ui = useSessionUi();
   const [starting, setStarting] = useState<SessionAction>();
   const [failure, setFailure] = useState<string>();
   if (!sessionsEnabledFor(ui.config, card.repoId)) return null;
 
-  const { shown, starters } = cardSessionControls(ui.config, ui.sessions, card);
+  const controls = cardSessionControls(ui.config, ui.sessions, { ...card, pullRequest });
+  const shown = into ? [] : controls.shown;
+  const { main, menu } = into ? starterSplit(card, startersFor(ui.config, card), pullRequest) : controls;
   const agent = agentForRepo(ui.config, card.repoId);
   const found = ui.agents.find((a) => a.id === agent?.id);
-  const unavailable = found && !found.available ? `${found.name} was not found on this machine — check its command in Settings` : undefined;
+  const unavailable = !into && found && !found.available ? `${found.name} was not found on this machine — check its command in Settings` : undefined;
+  const target = pullRequestSession(ui.sessions, card, pullRequest);
+
+  const starterItem = (action: SessionAction, isMain: boolean): ActionItem => {
+    const hint = into ? `Sends the “${STARTER_LABEL[action]}” prompt to this session’s agent` : `${starterHint(action, card.stage)} (${agent?.name})`;
+    const glyph = into ? "↳" : action === "fastForward" ? "⏵⏵" : "▶";
+    return {
+      key: action,
+      label: starting === action ? "Starting…" : isMain ? `${glyph} ${STARTER_LABEL[action]}` : STARTER_LABEL[action],
+      title: unavailable ?? hint,
+      ariaLabel: action === "fastForward" && !into ? `${STARTER_HINT.fastForward} (${agent?.name})` : undefined,
+      disabled: Boolean(unavailable),
+      onActivate: async () => {
+        setStarting(action);
+        setFailure(undefined);
+        // On a card nothing runs, so this is always an opening; in the Console tab it is sent into `into`.
+        setFailure(await ui.start(card.repoId, card.name, action, startShowsConsole(place)));
+        setStarting(undefined);
+      },
+    };
+  };
+  const item = (next: NextStep, isMain: boolean): ActionItem | ActionStatus | undefined => {
+    if (next.kind === "start") return starterItem(next.action, isMain);
+    if (next.kind === "waiting") return { status: waitingLabel(next.reason), title: "The pull request is not ready yet; every action is still in the menu" };
+    if (!pullRequest) return undefined;
+    if (into) return steps?.[next.step];
+    return pullRequestItem(next.step, pullRequest, target, (sessionId) => ui.openChangeConsole(card.repoId, card.name, sessionId));
+  };
+  const mainPart = main ? item(main, true) : undefined;
+  const items = menu.map((m) => item(m, false)).filter((m): m is ActionItem => m !== undefined && !("status" in m));
   return (
     <>
       {shown.map((session) => (
         <SessionBadgeView key={session.id} badge={sessionBadge(session)} onClick={() => ui.openPanel(session.id)} />
       ))}
-      {starters.map((action) => (
-        // Always an opening: a card offers no starter while a session runs, so `start` never types into one from here.
-        <button
-          type="button"
-          class={`btn sm session-start${action === "fastForward" ? " session-ff" : ""}`}
-          key={action}
-          title={unavailable ?? `${STARTER_HINT[action]} (${agent?.name})`}
-          // `FF` alone says nothing to a screen reader: the name is the whole hint.
-          aria-label={action === "fastForward" ? `${STARTER_HINT[action]} (${agent?.name})` : undefined}
-          disabled={Boolean(unavailable) || starting !== undefined}
-          onClick={async () => {
-            setStarting(action);
-            setFailure(undefined);
-            setFailure(await ui.start(card.repoId, card.name, action, startShowsConsole(place)));
-            setStarting(undefined);
-          }}
-        >
-          {starting === action ? "Starting…" : `${action === "fastForward" ? "⏵⏵" : "▶"} ${STARTER_LABEL[action]}`}
-        </button>
-      ))}
+      <ActionMenu main={mainPart} items={items} name={card.name} disabled={starting !== undefined} />
       {failure && (
         <span class="notice danger session-failure" role="status">
           {failure}

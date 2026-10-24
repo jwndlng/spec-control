@@ -24,11 +24,22 @@ function better(a: PullRequest, b: PullRequest): PullRequest {
   return (Number(a.number) || 0) >= (Number(b.number) || 0) ? a : b;
 }
 
-/** A change's candidate head branches: its `branchMatch`, then the branches the dashboard's own sessions create for it. */
-export function candidateBranches(change: Pick<ChangeSnapshot, "name" | "branchMatch">): string[] {
+/** A recorded branch as the link reads it: a non-empty string, whatever an older cache holds. */
+const branchOrNone = (branch: unknown): string[] => (typeof branch === "string" && branch !== "" ? [branch] : []);
+
+/** The head branches the agent recorded for the change: its implementation branch, then its archive branch. */
+export function recordedBranches(change: Pick<ChangeSnapshot, "recorded">): string[] {
+  const recorded = change.recorded && typeof change.recorded === "object" ? change.recorded : undefined;
+  return [...new Set([...branchOrNone(recorded?.branch), ...branchOrNone(recorded?.archiveBranch)])];
+}
+
+/**
+ * A change's candidate head branches: its recorded branches, its `branchMatch`, then the branches the dashboard's own
+ * sessions create for it.
+ */
+export function candidateBranches(change: Pick<ChangeSnapshot, "name" | "branchMatch" | "recorded">): string[] {
   const names = typeof change.name === "string" && change.name !== "" ? [sessionBranch("implement", change.name), sessionBranch("archive", change.name)] : [];
-  const branch = typeof change.branchMatch === "string" && change.branchMatch !== "" ? [change.branchMatch] : [];
-  return [...new Set([...branch, ...names])];
+  return [...new Set([...recordedBranches(change), ...branchOrNone(change.branchMatch), ...names])];
 }
 
 const DAY = 86_400_000;
@@ -45,17 +56,8 @@ function settledBeforeCreated(pr: PullRequest, created: string | undefined): boo
   return !Number.isNaN(settled) && settled < createdAt - DAY;
 }
 
-/**
- * The change's pull request: one of its own repository's cached pull requests whose head branch is exactly one of its
- * `candidateBranches`, compared as written. No containment, no normalisation, nothing read from a title — showing
- * someone else's pull request is worse than showing none. A repository whose pull requests are unavailable links nothing.
- */
-export function linkedPullRequest(
-  change: Pick<ChangeSnapshot, "repoId" | "name" | "branchMatch" | "created">,
-  lists: readonly RepoPullRequests[] | undefined,
-): PullRequest | undefined {
-  const branches = new Set(candidateBranches(change));
-  if (branches.size === 0 || !Array.isArray(lists)) return undefined;
+/** The best of the change's own repository's cached pull requests whose head branch is exactly one of `branches`. */
+function bestOn(branches: ReadonlySet<string>, change: Pick<ChangeSnapshot, "repoId" | "created">, lists: readonly RepoPullRequests[]): PullRequest | undefined {
   let best: PullRequest | undefined;
   for (const list of lists) {
     if (!list || list.repoId !== change.repoId || list.status === "unavailable" || !Array.isArray(list.pullRequests)) continue;
@@ -66,4 +68,22 @@ export function linkedPullRequest(
     }
   }
   return best;
+}
+
+/**
+ * The change's pull request: one of its own repository's cached pull requests whose head branch is exactly one of the
+ * branches the agent recorded for it, else exactly one of its `candidateBranches`, compared as written. The record wins
+ * over every guess. No containment, no normalisation, nothing read from a title — showing someone else's pull request
+ * is worse than showing none. A repository whose pull requests are unavailable links nothing.
+ */
+export function linkedPullRequest(
+  change: Pick<ChangeSnapshot, "repoId" | "name" | "branchMatch" | "created" | "recorded">,
+  lists: readonly RepoPullRequests[] | undefined,
+): PullRequest | undefined {
+  if (!Array.isArray(lists)) return undefined;
+  const recorded = new Set(recordedBranches(change));
+  const fromRecord = recorded.size ? bestOn(recorded, change, lists) : undefined;
+  if (fromRecord) return fromRecord;
+  const candidates = new Set(candidateBranches(change));
+  return candidates.size ? bestOn(candidates, change, lists) : undefined;
 }

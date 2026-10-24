@@ -22,6 +22,20 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
       "Once a change is archived and merged on the default branch, its leftover worktrees, local branches and uncommitted copy in the main checkout are marked **Stale** — even with uncommitted files in them. **End session** then offers **Clean up leftovers**, and the change's detail offers **Clean up leftovers…**: one confirmation copies their uncommitted files under `~/.spec-control/branch-backups/` and removes them.",
   },
   {
+    id: "2026-10-24-one-next-action-per-stage",
+    date: "2026-10-24",
+    title: "One recommended action per card",
+    summary:
+      "Each card now offers one recommended action, with every other one in the menu behind its arrow — **Fast-forward** moved there — and **Draft artifacts** is no longer offered once implementation started. A card with an open pull request recommends **Merge**, **Resolve conflicts** or **Implement** for failing checks, or says what it waits for.",
+  },
+  {
+    id: "2026-10-24-recorded-pull-request",
+    date: "2026-10-24",
+    title: "Cards follow the branch the agent recorded",
+    summary:
+      "When it ships, the agent now records the branch it pushed in the change's `.openspec.yaml`, so a card shows that branch's pull request even when it is not named `feat/<change>` — and a card no longer borrows the pull request of a change with a similar name.",
+  },
+  {
     id: "2026-10-22-stale-changes",
     date: "2026-10-22",
     title: "Stale changes are marked, with a way out",

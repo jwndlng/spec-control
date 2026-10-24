@@ -143,21 +143,32 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         </p>
         <ul>
           <li>
-            A card offers the next step for its column — <strong>Draft artifacts</strong>, <strong>Implement</strong>,{" "}
-            <strong>Validate</strong> or <strong>Archive</strong>. It starts your agent in a git worktree of its own, on its
-            own branch, under <code>~/.spec-control/worktrees/</code>; your main checkout is not touched.
+            A card offers one recommended action for its column — <strong>Draft artifacts</strong>, <strong>Implement</strong>,{" "}
+            <strong>Validate</strong> or <strong>Archive</strong> — and the arrow beside it opens a menu with every other
+            action the change allows, such as <strong>Draft artifacts</strong> for a design on a ready change. A starter
+            runs your agent in a git worktree of its own, on its own branch, under <code>~/.spec-control/worktrees/</code>;
+            your main checkout is not touched. Once implementation started, <strong>Draft artifacts</strong> is no longer
+            offered.
+          </li>
+          <li>
+            While the change has an open pull request, that pull request decides what is recommended:{" "}
+            <strong>Resolve conflicts</strong> when it conflicts, <strong>Merge</strong> when it is ready (which opens the
+            console of the session that shipped it, or the pull request on GitHub), <strong>Implement</strong> when its
+            checks fail — <strong>Fix checks</strong> on a finished change — and otherwise a note saying what it waits for.
+            The menu still offers everything.
           </li>
           <li>
             The agent's terminal is the <strong>Console</strong> tab of the change's detail view. What it changes is decided by
             its own permission prompts.
           </li>
           <li>
-            <strong>Ship</strong> asks the agent to commit, push and open a pull request; <strong>Resolve conflicts</strong>{" "}
-            asks it to bring a branch that no longer merges up to date. The dashboard itself commits, merges and pushes
-            nothing.
+            <strong>Ship</strong> asks the agent to commit, push and open a pull request, and to record the branch it pushes
+            in the change's <code>.openspec.yaml</code>, under <code>spec-control:</code>, in the same commit;{" "}
+            <strong>Resolve conflicts</strong> asks it to bring a branch that no longer merges up to date. The dashboard
+            itself commits, merges and pushes nothing.
           </li>
           <li>
-            <strong>FF</strong> (Fast-forward), beside <strong>Draft artifacts</strong> on a change that is not planned yet,
+            <strong>Fast-forward</strong>, in the menu beside <strong>Draft artifacts</strong> on a change that is not planned yet,
             asks the agent to write the artifacts, implement the change and open a pull request in one go, without
             stopping for your review — the pull request is the only review, and it is never merged for you. It asks you
             to confirm first; <strong>Don't show this warning again</strong> skips that, and{" "}
@@ -254,7 +265,10 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         <code>gh</code>), signed in with <code>gh auth login</code>, only when you open a view that shows them or press
         Refresh — and while an open board shows a pull request that is not ready yet: then that board asks again for those
         projects on its own, every minute while checks run, every five minutes while it waits on a draft, a conflict or a
-        failing check, and not at all while the tab is hidden. <strong>Import from issues</strong> reads a project's open
+        failing check, and not at all while the tab is hidden. A card shows its change's pull request by head branch: the
+        branch the agent recorded for the change when it shipped, else exactly <code>feat/&lt;change&gt;</code>,{" "}
+        <code>chore/archive-&lt;change&gt;</code> or the branch of the worktree the change is in — never a branch that
+        merely contains the change's name. <strong>Import from issues</strong> reads a project's open
         issues the same way, only when you open it or press its Refresh. Nothing is ever changed on GitHub. Without{" "}
         <code>gh</code> the view says so and everything else works.
       </p>

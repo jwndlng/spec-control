@@ -5,12 +5,14 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { SHIPPABLE_WORK, type ChangeSession, type Session, type SessionAction, type SessionWorktree, type Shortcut } from "../shared/types.ts";
+import type { PullRequestStep } from "../shared/nextStep.ts";
+import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { api, type TerminalMessage } from "./api.ts";
 import { cdCommand } from "./format.ts";
 import { inPlaceReason } from "./inPlaceText.ts";
 import { NOT_SUBMITTED_NOTICE, shortcutHint, shortcutMessage, visibleShortcuts } from "./quickReplies.ts";
 import { usePullRequests } from "./pullRequests.tsx";
-import { autoEndedText, autoMergeNotice, mergeControl, mergeNotice, nextStepFor, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, startersFor, workBadge, worktreeOfSession } from "./sessionState.ts";
+import { autoEndedText, autoMergeNotice, mergeControl, mergeNotice, nextStepFor, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, startersFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
 import { ConflictBadge, SessionBadgeView, SessionControls, useSessionUi } from "./sessions.tsx";
 
 export function Copy({ text, label }: { text: string; label: string }) {
@@ -280,6 +282,11 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   // receive it, which is the change's running one. An ended session's panel offers none: nothing can be typed there.
   const receiving = session !== undefined && nextStepFor(ui.sessions, session.repoId, session.change).promptSessionId === session.id;
   const nextSteps = receiving && card ? startersFor(ui.config, card) : [];
+  // The change's pull request decides which of them is recommended, as on its card; it never adds or removes one.
+  const linked = card ? linkedPullRequest(card, prs.data?.repos) : undefined;
+  const split = receiving && card ? starterSplit(card, nextSteps, linked) : undefined;
+  // A pull-request step the split button offers is not offered a second time beside it.
+  const inSplit = (step: PullRequestStep) => split !== undefined && [split.main, ...split.menu].some((n) => n?.kind === "pullRequest" && n.step === step);
   // Nothing has ever run for this change: the tab says so and offers the openings, which is why it exists at all.
   const untouched = !session && !tree;
 
@@ -341,7 +348,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
               ⇪ Ship
             </button>
           )}
-          {canResolve && session && (
+          {canResolve && session && !inSplit("resolveConflicts") && (
             <button
               type="button"
               class="btn sm"
@@ -360,7 +367,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
               ⚠ Resolve conflicts
             </button>
           )}
-          {merge && session && (
+          {merge && session && !inSplit("merge") && (
             <button
               type="button"
               class="btn sm"
@@ -386,18 +393,39 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
               ▶ Resume
             </button>
           )}
-          {session &&
-            nextSteps.map((action) => (
-              <button
-                type="button"
-                class="btn sm session-start"
-                key={action}
-                title={`Sends the “${STEP_LABEL[action]}” prompt to this session’s agent`}
-                onClick={() => act(() => ui.start(session.repoId, session.change, action, true))}
-              >
-                ↳ {STEP_LABEL[action]}
-              </button>
-            ))}
+          {session && card && receiving && (
+            <SessionControls
+              card={card}
+              place="console"
+              pullRequest={linked}
+              into={session}
+              steps={{
+                merge: merge && {
+                  key: "merge",
+                  label: "⤵ Merge",
+                  title: merge.title,
+                  disabled: !merge.enabled,
+                  onActivate: () =>
+                    act(async () => {
+                      const result = await api.mergeSession(session.id);
+                      ui.reportUnsent(result.submitted ? undefined : session.id);
+                    }),
+                },
+                resolveConflicts: {
+                  key: "resolveConflicts",
+                  label: "⚠ Resolve conflicts",
+                  title: `Sends ${session.agentName} a prompt asking it to bring the branch up to date and resolve the conflicts. The dashboard merges nothing itself.`,
+                  onActivate: () =>
+                    act(async () => {
+                      const result = await api.resolveConflicts(session.id);
+                      ui.reportUnsent(result.submitted ? undefined : session.id);
+                    }),
+                },
+                // Nothing to send for it: the agent is right here, and the failure is on GitHub for it to read.
+                fixChecks: { status: "Checks failing: ask the agent here to fix them", title: linked ? `#${linked.number}'s checks fail` : undefined },
+              }}
+            />
+          )}
           {session && (
             <button type="button" class="btn sm" onClick={() => ui.requestEnd(session.id)}>
               {session.state === "running" ? "End session" : "Clean up"}
@@ -430,7 +458,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
           <p class="detail-hint">No agent has worked on this change yet. Start one here and its terminal takes this tab.</p>
           {card && (
             <div class="console-starters">
-              <SessionControls card={card} place="console" />
+              <SessionControls card={card} place="console" pullRequest={linked} />
             </div>
           )}
         </div>

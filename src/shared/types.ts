@@ -56,9 +56,15 @@ export interface ChangeSnapshot {
   lastActivityAt?: string;
   /**
    * The branch of the linked worktree the change's data comes from; for a change that lives in the main checkout, the
-   * first branch or worktree branch whose name contains the change name.
+   * main checkout's branch or else the first linked worktree's branch that is exactly one of the change's candidates
+   * (its recorded branches, `feat/<name>`, `chore/archive-<name>`). Never a branch that merely contains the name.
    */
   branchMatch?: string;
+  /**
+   * The branches the change's pull requests were opened from, as the agent recorded them in the change's own files
+   * (OpenSpec: the `spec-control:` map of `.openspec.yaml`). An input to the pull-request link and `branchMatch` only.
+   */
+  recorded?: ChangeRecord;
   /**
    * The checkout this change's data comes from: the leading copy among all checkouts holding the change. Absent in
    * snapshots cached by older versions and for non-git repositories.
@@ -112,6 +118,14 @@ export interface ChangeSnapshot {
   stale?: StaleLeftovers;
   /** Non-fatal problems while reading this change. */
   warnings?: string[];
+}
+
+/** A change's record of its pull requests' head branches (change-scanner: "The scan reports a change's recorded branches"). */
+export interface ChangeRecord {
+  /** Head branch of the implementation pull request. */
+  branch?: string;
+  /** Head branch of the pull request that archives the change. */
+  archiveBranch?: string;
 }
 
 /** An archive commit that never reached the default branch. */
@@ -929,11 +943,14 @@ const UNPLANNED_STAGES: readonly Stage[] = ["unknown", "backlog", "drafts"];
 export function availableActions(change: Pick<ChangeSnapshot, "archived" | "artifacts" | "stage" | "subState" | "blocked">): SessionAction[] {
   if (change.archived) return [];
   const actions: SessionAction[] = [];
-  if (change.artifacts.length === 0 || change.artifacts.some((a) => a.status !== "done")) {
+  // Draft is for a change not planned yet; in `Ready` it may still write an artifact implementing does not need (a
+  // design). Once implementation started it is never offered, whatever artifacts are missing.
+  const unplanned = UNPLANNED_STAGES.includes(change.stage);
+  if (unplanned || (change.stage === "ready" && change.artifacts.some((a) => a.status !== "done"))) {
     actions.push("draft");
     // Fast-forward is for a change not planned yet — once Ready it is Implement and Ship. It goes on to implement, so a
     // change waiting for its dependencies may only be drafted.
-    if (!change.blocked && UNPLANNED_STAGES.includes(change.stage)) actions.push("fastForward");
+    if (!change.blocked && unplanned) actions.push("fastForward");
   }
   // A change waiting for its dependencies may still be drafted; only implementing it would break the order.
   if ((change.stage === "ready" || change.stage === "implementing") && !change.blocked) actions.push("implement");
@@ -941,6 +958,11 @@ export function availableActions(change: Pick<ChangeSnapshot, "archived" | "arti
   if (change.stage === "done" && change.subState === "validate") actions.push("validate");
   if (change.stage === "done") actions.push("archive"); // every task settled, not archived yet
   return actions;
+}
+
+/** Stages past drafting: Draft artifacts is refused there, with this reason (agent-sessions). */
+export function pastDraftingReason(change: Pick<ChangeSnapshot, "stage">): string | undefined {
+  return change.stage === "implementing" || change.stage === "done" ? "the change is past drafting: its implementation has started" : undefined;
 }
 
 /** Another known repository with the same `origin` remote: probably a second clone, but never merged or hidden. */

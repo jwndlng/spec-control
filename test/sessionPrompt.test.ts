@@ -110,7 +110,7 @@ test("a draft session takes the implement prompt once the change is ready, and r
   managers.push(h.manager);
   const change = changeOf(h, "upgrade-runtime");
   const artifacts = change.artifacts;
-  Object.assign(change, { stage: artifacts[0].id, artifacts: artifacts.map((a, i) => (i === 0 ? { ...a, status: "ready" } : a)) });
+  Object.assign(change, { stage: "drafts", artifacts: artifacts.map((a, i) => (i === 0 ? { ...a, status: "ready" } : a)) });
   const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "draft" });
   expect(s.action).toBe("draft");
   Object.assign(change, { stage: "ready", artifacts }); // the agent finished drafting; the scanner noticed

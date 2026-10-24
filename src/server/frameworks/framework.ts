@@ -4,7 +4,7 @@
 // shape the board uses (`FrameworkChange`); `shared/columns.ts` derives stage and column from that shape alone. A module
 // only reads: it lists, reads and resolves paths through a `RepoSource`, and for writes it supplies paths and file
 // contents that the enumerated writers (`createChange.ts`, `dismissChange.ts`, …) use — never a write of its own.
-import { FRAMEWORK_INFO, type ArtifactStatus, type FrameworkId, type TaskProgress } from "../../shared/types.ts";
+import { FRAMEWORK_INFO, type ArtifactStatus, type ChangeRecord, type FrameworkId, type TaskProgress } from "../../shared/types.ts";
 import type { ChangeDirEntry, ChangeListing, ChangesLayout, RepoSource } from "../source.ts";
 import { parseTaskProgress } from "../tasksParser.ts";
 
@@ -32,6 +32,8 @@ export interface FrameworkChange {
   tasksPath?: string;
   /** ISO date the change was created, when the framework records it. */
   created?: string;
+  /** The branches the change's pull requests were opened from, when the agent recorded them. */
+  recorded?: ChangeRecord;
   warnings: string[];
 }
 
@@ -102,6 +104,13 @@ export abstract class SpecFramework {
    * when the framework has none, and then shared config is not offered for its repositories.
    */
   readonly sharedConfigFile?: string;
+
+  /**
+   * The fixed text that asks an agent about to push a change's pull request to record its head branch in the change's
+   * own files, in the same commit as its work — `archive` for the pull request that archives it. Undefined when the
+   * framework has nowhere to record it; then nothing is asked and the link keeps guessing from branch names.
+   */
+  recordInstruction?(input: { change: string; archive: boolean }): string;
 
   /** The files a new change starts with. The writer decides whether and how to write them. */
   abstract scaffold(input: { project: FrameworkProject; today: string }): ChangeScaffold;
