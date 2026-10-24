@@ -94,6 +94,20 @@ test("resumes in the same folder and starts a new console after the previous one
   await expect(manager.resume(session.id)).rejects.toMatchObject({ status: 409 });
 });
 
+test("launch arguments go after the executable of the console and of its resume command", async () => {
+  const h = await harness({ agent: { launchArgs: ["--mode", "auto"] } });
+  const manager = track(h.manager);
+  const { session } = await manager.openConsole();
+  const view = await watch(manager, session.id);
+  await waitFor(() => view.text().includes('args=["--mode","auto"]'), "console start with launch arguments");
+  view.detach();
+  await manager.close(session.id);
+  await manager.resume(session.id);
+  const resumed = await watch(manager, session.id);
+  await waitFor(() => resumed.text().includes('args=["--mode","auto","--resumed"]'), "resume with launch arguments");
+  resumed.detach();
+});
+
 test("runs the console agent when one is chosen, and the default agent otherwise", async () => {
   const h = await harness();
   const manager = track(h.manager);

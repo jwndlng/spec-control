@@ -165,6 +165,19 @@ export function AgentEditor({
               <textarea class="input mono" rows={Math.max(2, agent.command.length)} value={agent.command.join("\n")} onInput={(e) => onChange({ command: parseArgLines(e.currentTarget.value) })} />
             </label>
             <label class="agent-tools">
+              <span class="agent-prompt-label">Launch arguments</span>
+              <span class="hint">
+                Optional, <strong>one argument per line</strong>, e.g. a mode or a model: added after the executable each time this agent starts, consoles and resumes included. No
+                placeholders.
+              </span>
+              <textarea
+                class="input mono"
+                rows={Math.max(2, agent.launchArgs?.length ?? 0)}
+                value={(agent.launchArgs ?? []).join("\n")}
+                onInput={(e) => onChange({ launchArgs: parseArgLines(e.currentTarget.value).length ? parseArgLines(e.currentTarget.value) : undefined })}
+              />
+            </label>
+            <label class="agent-tools">
               <span class="agent-prompt-label">Resume command</span>
               <span class="hint">Optional, one argument per line: continues the agent's latest conversation in the same worktree.</span>
               <textarea

@@ -126,7 +126,7 @@ test("each prompt's additional instructions follow that prompt before the next p
   const labels = elements(tree)
     .filter((el) => el.props.class === "agent-prompt-label")
     .map((el) => textOf(el));
-  expect(labels).toEqual(["Name", "Command", "Resume command", "Draft artifacts", "Implement", "Validate", "Archive", "Ship", "Resolve conflicts", "Merge", "Integrate"]);
+  expect(labels).toEqual(["Name", "Command", "Launch arguments", "Resume command", "Draft artifacts", "Implement", "Validate", "Archive", "Ship", "Resolve conflicts", "Merge", "Integrate"]);
 });
 
 test("the Agent sessions section is grouped as Agents, Shortcuts, Fast-forward, Console, Projects and lists no worktree", async () => {
@@ -289,4 +289,19 @@ test("Keep awake while agents work reads ticked until switched off, says display
   expect(source).toContain("update({ keepAwake: on ? undefined : false })");
   // Shown whether or not sessions are enabled: after the fieldset the Enable switch disables.
   expect(source.indexOf("<KeepAwakeSetting")).toBeGreaterThan(source.indexOf("</fieldset>"));
+});
+
+test("Launch arguments are edited one per line in the Command group; clearing them stores none", () => {
+  let patch: Partial<AgentProfile> | undefined;
+  const tree = AgentEditor({ agent: profile({ launchArgs: ["--mode", "auto"] }), isDefault: true, canRemove: false, open: true, onToggle: () => {}, onChange: (p) => (patch = p), onRemove: () => {}, onDefault: () => {} });
+  const label = elements(tree).find((el) => el.type === "label" && textOf(el).includes("Launch arguments"));
+  expect(label).toBeDefined();
+  expect(textOf(label)).toContain("consoles and resumes included");
+  const field = byTag(label, "textarea")[0];
+  expect(field.props.value).toBe("--mode\nauto");
+  const type = (value: string) => (field.props.onInput as (e: { currentTarget: { value: string } }) => void)({ currentTarget: { value } });
+  type("--model\n fast \n");
+  expect(patch).toEqual({ launchArgs: ["--model", "fast"] });
+  type("  \n");
+  expect(patch).toEqual({ launchArgs: undefined });
 });

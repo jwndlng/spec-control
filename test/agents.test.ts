@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { defaultAgentSessions, defaultConfig, newRepoConfig, validateConfig } from "../src/server/config.ts";
-import { agentEnv, agentFor, carryOverPrompt, fastForwardPrompt, integratePrompt, proposalInstruction, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, shipPrompt } from "../src/server/sessions/agents.ts";
+import { agentEnv, agentFor, carryOverPrompt, fastForwardPrompt, integratePrompt, proposalInstruction, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, resumeLaunch, shipPrompt } from "../src/server/sessions/agents.ts";
 import { Scrollback, sessionBranch, worktreeName } from "../src/server/sessions/manager.ts";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE, CODEX_PROFILE, DEFAULT_SHORTCUTS, FORMER_PROMPTS } from "../src/shared/agentDefaults.ts";
 import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, availableActions, pastDraftingReason, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, mergeTargetSentence, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
@@ -780,4 +780,18 @@ test("Archive: the record instruction follows the archive auto-merge instruction
   const plain = carryOverPrompt("rotate-keys", stranded, "main");
   expect(carryOverPrompt("rotate-keys", stranded, "main", { record: ARCHIVE_RECORD })).toBe(plain);
   expect(carryOverPrompt("rotate-keys", stranded, "main", { autoMerge: true, record: ARCHIVE_RECORD })).toBe(`${plain} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION} ${ARCHIVE_RECORD}`);
+});
+
+test("launch arguments go directly after the executable on every start; without them the argv is unchanged", () => {
+  const agy = { ...ANTIGRAVITY_PROFILE, launchArgs: ["--mode", "auto"] };
+  const prompt = openingPrompt(agy, "implement", "cache-api-calls") as string;
+  expect(launchCommand(agy, prompt)).toEqual({ argv: ["agy", "--mode", "auto", `--prompt-interactive=${prompt}`] });
+  expect(launchWithoutPrompt(agy)).toEqual(["agy", "--mode", "auto"]); // no option left over that expects a value
+  expect(resumeLaunch(agy)).toEqual(["agy", "--mode", "auto", "--continue"]);
+  expect(launchCommand(fakeProfile({ command: ["my-agent-cli"], launchArgs: ["--model", "fast"] }), "hi")).toEqual({ argv: ["my-agent-cli", "--model", "fast"], typed: "hi" });
+  expect(resumeLaunch(fakeProfile({ resumeCommand: undefined, launchArgs: ["--model", "fast"] }))).toBeUndefined();
+
+  expect(launchCommand(ANTIGRAVITY_PROFILE, prompt)).toEqual({ argv: ["agy", `--prompt-interactive=${prompt}`] });
+  expect(launchWithoutPrompt(ANTIGRAVITY_PROFILE)).toEqual(["agy"]);
+  expect(resumeLaunch(CODEX_PROFILE)).toEqual(["codex", "resume", "--last"]);
 });
