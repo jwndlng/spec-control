@@ -1,14 +1,16 @@
 // Stale changes (openspec/specs/stale-changes): stranded archives and archived-and-merged leftovers, both found by the
 // scan from a change's exact branches. Real temp git repositories, no network.
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { newRepoConfig } from "../src/server/config.ts";
 import { OPENSPEC_PATHS } from "../src/server/frameworks/registry.ts";
 import { worktreesDir } from "../src/server/paths.ts";
 import { scanRepo } from "../src/server/scanner.ts";
+import { LocalRepoSource } from "../src/server/source.ts";
+import type { RepoSnapshot } from "../src/shared/types.ts";
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
-import { archiveDate, changeBranches, findStrandedArchives, parseRecordedBranches, type SessionHint, staleLeftovers } from "../src/server/staleChanges.ts";
+import { archiveDate, changeBranches, findDuplicates, findStrandedArchives, parseRecordedBranches, type SessionHint, staleLeftovers } from "../src/server/staleChanges.ts";
 import { parseWorktrees } from "../src/server/git.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
 import { git, tempGitRepo } from "./sessionHelpers.ts";
@@ -350,4 +352,98 @@ test("the scan marks the archived change stale and leaves its column alone; noth
   expect(git(wt, "status", "--porcelain")).toBe(before);
   // The worktree's own copy is not an active card: the default branch archived it.
   expect(snapshot.changes.filter((c) => c.name === CHANGE && !c.archived).every((c) => !c.stale)).toBe(true);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Duplicate after archive
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * A repository with a remote whose `main` holds the change's archive *and* its directory, as a half-committed archive
+ * leaves it: the archive was added, the directory never removed, and the copy kept a file the archive lacks.
+ */
+async function duplicateRepo(): Promise<string> {
+  const repo = await tempGitRepo();
+  await withOrigin(repo);
+  await mkdir(archiveDir(repo), { recursive: true });
+  await cp(changeDir(repo), archiveDir(repo), { recursive: true });
+  await writeFile(join(changeDir(repo), "tasks.md"), "- [x] 1.1 Ticked after the archive\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", `chore(openspec): archive ${CHANGE}`);
+  git(repo, "push", "-q", "origin", "main");
+  return repo;
+}
+
+const duplicates = (repo: string, onMain = new Map([[CHANGE, "2026-07-01"]])) => findDuplicates(repo, OPENSPEC_PATHS, onMain);
+
+test("a change committed next to its archive on the default branch is a duplicate", async () => {
+  const repo = await duplicateRepo();
+  expect((await duplicates(repo)).get(CHANGE)).toEqual({ archive: ARCHIVE, differing: ["tasks.md"], differingCount: 1, pulled: true });
+  // Only that change: every other active change has no archive of its name.
+  expect([...(await duplicates(repo)).keys()]).toEqual([CHANGE]);
+});
+
+test("identical copies are a duplicate with nothing differing", async () => {
+  const repo = await duplicateRepo();
+  await rm(join(changeDir(repo), "tasks.md"));
+  git(repo, "commit", "-q", "-am", "drop the tick");
+  git(repo, "push", "-q", "origin", "main");
+  expect((await duplicates(repo)).get(CHANGE)).toEqual({ archive: ARCHIVE, differing: [], differingCount: 0, pulled: true });
+});
+
+test("a change created after its archive reuses the name and is no duplicate", async () => {
+  const repo = await duplicateRepo();
+  await writeFile(join(changeDir(repo), ".openspec.yaml"), "schema: spec-driven\ncreated: 2026-08-01\n");
+  git(repo, "commit", "-q", "-am", "a new change of the same name");
+  git(repo, "push", "-q", "origin", "main");
+  expect((await duplicates(repo)).size).toBe(0);
+});
+
+test("a copy without a created date counts as not later", async () => {
+  const repo = await duplicateRepo();
+  await rm(join(changeDir(repo), ".openspec.yaml"));
+  git(repo, "commit", "-q", "-am", "no marker");
+  git(repo, "push", "-q", "origin", "main");
+  expect((await duplicates(repo)).get(CHANGE)?.differing).toEqual([".openspec.yaml", "tasks.md"]);
+});
+
+test("a duplicate only the main checkout still has is no duplicate: pulling resolves it", async () => {
+  const repo = await duplicateRepo();
+  // The default branch removed the directory; the main checkout has not pulled that yet.
+  const other = join(await realpath(await tempDir("osd-clone-")), "clone");
+  git(repo, "clone", "-q", git(repo, "remote", "get-url", "origin"), other);
+  git(other, "config", "user.email", "t@example.invalid");
+  git(other, "config", "user.name", "t");
+  git(other, "rm", "-q", "-r", `${OPENSPEC_PATHS.changesDir}/${CHANGE}`);
+  git(other, "commit", "-q", "-m", "remove the duplicate");
+  git(other, "push", "-q", "origin", "main");
+  git(repo, "fetch", "-q", "origin");
+  expect((await duplicates(repo)).size).toBe(0);
+});
+
+test("the main checkout's state and an existing archive branch are reported", async () => {
+  const repo = await duplicateRepo();
+  expect((await duplicates(repo, new Map())).get(CHANGE)?.pulled).toBe(false);
+  git(repo, "branch", "-q", `chore/archive-${CHANGE}`);
+  expect((await duplicates(repo)).get(CHANGE)?.archiveBranch).toBe(`chore/archive-${CHANGE}`);
+});
+
+test("a failing git command reports nothing and fails nothing", async () => {
+  const plain = await tempDir("osd-plain-");
+  expect((await findDuplicates(plain, OPENSPEC_PATHS, new Map())).size).toBe(0);
+});
+
+test("the scan marks the archived card as a duplicate and keeps its column, stage and counts", async () => {
+  const repo = await duplicateRepo();
+  const scan = await scanRepo(newRepoConfig(repo, true));
+  const cards = scan.changes.filter((c) => c.name === CHANGE);
+  expect(cards).toHaveLength(1);
+  expect(cards[0].archived).toBe("2026-07-01");
+  expect(cards[0].column).toBe("Archived");
+  expect(cards[0].duplicate).toEqual({ archive: ARCHIVE, differing: ["tasks.md"], differingCount: 1, pulled: true });
+  // Without the report, the very same cards in the very same columns.
+  const board = (s: RepoSnapshot) => s.changes.map((c) => [c.name, c.archived, c.stage, c.column]);
+  const unmarked = await scanRepo(newRepoConfig(repo, true), Object.assign(new LocalRepoSource(repo), { duplicates: undefined }));
+  expect(unmarked.changes.some((c) => c.duplicate)).toBe(false);
+  expect(board(scan)).toEqual(board(unmarked));
 });

@@ -12,7 +12,7 @@ import { isBranchName, isCleaningUp } from "../cleanup.ts";
 import { isDismissing } from "../dismissChange.ts";
 import { canonicalPath, worktreesDir } from "../paths.ts";
 import { CHANGE_NAME } from "../source.ts";
-import { agentEnv, agentFor, availability, carryOverPrompt, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, shipPrompt } from "./agents.ts";
+import { agentEnv, agentFor, availability, carryOverPrompt, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, removeDuplicatePrompt, resolveConflictsPrompt, shipPrompt } from "./agents.ts";
 import { consoleFolderProblem, prepareConsoleFolder } from "./consoleFolder.ts";
 import type { SessionActivity } from "../activity/events.ts";
 import { isBusy } from "../keepAwake.ts";
@@ -21,7 +21,7 @@ import { SessionStore } from "./store.ts";
 import { submitText, validSubmission, type SubmitOptions } from "./submit.ts";
 import { spawnTerminal, type TerminalProcess } from "./terminal.ts";
 import { baseRef, headCommit, listWorktrees, readWorkStatus, shipsOnlyOpenSpec, WORKTREE_NAME } from "./workStatus.ts";
-import { currentBranch, defaultBranch } from "../git.ts";
+import { currentBranch, defaultBranch, hasLocalBranch, worktrees as listCheckouts } from "../git.ts";
 import { frameworkById } from "../frameworks/registry.ts";
 import { conflictSignal } from "../../shared/conflictSignal.ts";
 import { linkedPullRequest } from "../../shared/pullRequestLink.ts";
@@ -171,7 +171,7 @@ export class SessionManager {
    * `pullRequests` is the repository's cached pull-request list as the server holds it; only Resolve conflicts
    * (`resolveConflicts: true`) reads it, and nothing in the request can name a branch or a pull request instead.
    */
-  async open(input: { repoId?: unknown; change?: unknown; action?: unknown; carryOver?: unknown; resolveConflicts?: unknown }, pullRequests?: RepoPullRequests): Promise<StartResult> {
+  async open(input: { repoId?: unknown; change?: unknown; action?: unknown; carryOver?: unknown; removeDuplicate?: unknown; resolveConflicts?: unknown }, pullRequests?: RepoPullRequests): Promise<StartResult> {
     const config = this.deps.getConfig();
     if (!config.agentSessions.enabled) throw new SessionError(403, "agent sessions are disabled");
     if (typeof input.change !== "string" || !CHANGE_NAME.test(input.change)) throw new SessionError(400, "invalid change name");
@@ -182,6 +182,10 @@ export class SessionManager {
     // Carry-over is an archive session with a prompt of its own (stale-changes spec); nothing else carries anything over.
     const carryOver = input.carryOver === true;
     if (carryOver && action !== "archive") throw new SessionError(400, "only an archive session can carry an archive over");
+    // So is removing a duplicate after archive: the archive's missing half, a deletion under openspec/.
+    const removeDuplicate = input.removeDuplicate === true;
+    if (removeDuplicate && action !== "archive") throw new SessionError(400, "only an archive session can remove a duplicate after archive");
+    if (removeDuplicate && carryOver) throw new SessionError(400, "carry over and remove duplicate are separate sessions");
 
     const repo = config.repos.find((r) => r.id === input.repoId);
     if (!repo) throw new SessionError(404, "unknown repository");
@@ -191,8 +195,12 @@ export class SessionManager {
     if (!scanned?.ok) throw new SessionError(409, "the repository's last scan failed");
     if (isCleaningUp(repo.id)) throw new SessionError(409, "a cleanup of this repository is running");
     if (isDismissing(repo.id, change)) throw new SessionError(409, "this change is being dismissed");
-    const snapshot = scanned.changes.find((c) => c.name === change && !c.archived);
+    // A duplicate is usually shown as its archived card; it is the one card that may start a session.
+    const snapshot = removeDuplicate ? scanned.changes.find((c) => c.name === change && c.duplicate) : scanned.changes.find((c) => c.name === change && !c.archived);
+    if (removeDuplicate && !snapshot) throw new SessionError(409, "the last scan found no duplicate of this change next to its archive");
     if (!snapshot) throw new SessionError(404, "unknown change");
+    // The archive directory and the differing paths come from this server's own scan, never from the request.
+    const duplicate = removeDuplicate ? snapshot.duplicate : undefined;
     // The commit and branch come from this server's own scan, never from the request.
     const stranded = carryOver ? snapshot.strandedArchive : undefined;
     if (carryOver && !stranded) throw new SessionError(409, "the last scan found no archive of this change stranded on a branch");
@@ -200,7 +208,7 @@ export class SessionManager {
     const heldBack = action === "implement" ? blockedReason(snapshot) : action === "fastForward" ? blockedReason(snapshot, "Fast-forward") : action === "draft" && !stranded ? pastDraftingReason(snapshot) : undefined;
     if (heldBack) throw new SessionError(400, heldBack);
     // A stranded archive exists whatever the change's stage on the main checkout; that is the whole point of carrying it over.
-    if (!stranded && !availableActions(snapshot).includes(action)) throw new SessionError(400, `"${action}" is not available for this change in its current stage`);
+    if (!stranded && !duplicate && !availableActions(snapshot).includes(action)) throw new SessionError(400, `"${action}" is not available for this change in its current stage`);
 
     // One open session per change, whatever the action: a change never has two consoles, and Archive is no exception.
     // Nothing is typed here — a starter for a change whose agent is up goes through `prompt`, which reports whether
@@ -209,6 +217,7 @@ export class SessionManager {
     // returns the one the user started last. In-place sessions need this as much as worktrees do: their working
     // directory is the repository folder itself, which no per-worktree rule would have kept a second agent out of.
     const existing = this.list().find((s) => s.repoId === repo.id && s.change === change && OPEN_SESSION_STATES.includes(s.state));
+    if (existing && duplicate) throw new SessionError(409, "a session for this change is running; end it first");
     if (existing) return { ...existing, autoMerge: false };
     // A tracked folder without git is a supported repository, it just cannot be isolated: the agent runs in the folder
     // itself. So does a git repository with no commit yet, which has nothing to branch a worktree from. Decided from the
@@ -220,10 +229,18 @@ export class SessionManager {
       this.refuseOtherAgentInFolder(repo.path);
     }
 
+    const layout = frameworkById(scanned.framework)?.layout;
+    if (duplicate) {
+      if (inPlace || !layout) throw new SessionError(409, "a duplicate after archive is removed on a branch of its own");
+      await this.refuseOldArchiveBranch(repo.path, change);
+    }
+
     const agent = agentFor(config, repo);
     if (!agent) throw new SessionError(503, "no agent is configured");
     const record = this.recordInstruction(repo.id, change, action);
-    let prompt = stranded ? carryOverPrompt(change, stranded, scanned.defaultBranch) : openingPrompt(agent, action, change, { convention: repo.prTitleConvention, record });
+    const fixedPrompt = (options: { autoMerge?: boolean; record?: string } = {}) =>
+      stranded ? carryOverPrompt(change, stranded, scanned.defaultBranch, options) : duplicate && layout ? removeDuplicatePrompt(change, duplicate, layout, scanned.defaultBranch, options) : undefined;
+    let prompt = fixedPrompt() ?? openingPrompt(agent, action, change, { convention: repo.prTitleConvention, record });
     if (!prompt) throw new SessionError(400, `${agent.name} has no "${action}" prompt configured`);
     if (!Bun.which(agent.command[0])) throw new SessionError(503, `${agent.name} was not found (${agent.command[0]}); install it or change its command in Settings`);
 
@@ -254,8 +271,9 @@ export class SessionManager {
         } else {
           await ensureWorktree(repo.path, session.worktreePath, branch);
         }
-        // The change may live only in some other worktree (on another branch), not in the main checkout.
-        await copyChangeIfMissing(snapshot.checkout?.path ?? repo.path, session.worktreePath, change);
+        // The change may live only in some other worktree (on another branch), not in the main checkout. A duplicate is
+        // on the default branch the worktree was made from; nothing is copied into it.
+        if (!duplicate) await copyChangeIfMissing(snapshot.checkout?.path ?? repo.path, session.worktreePath, change);
       } catch (err) {
         throw new SessionError(err instanceof NoCommitError ? 409 : 500, err instanceof Error ? err.message : String(err));
       }
@@ -263,7 +281,7 @@ export class SessionManager {
     // Decided once the worktree exists, so a leftover archive branch with code in it is seen (archive-auto-merge-docs D4).
     const autoMerge = await this.archiveAutoMerge(repo, session, action);
     if (autoMerge) {
-      prompt = stranded ? carryOverPrompt(change, stranded, scanned.defaultBranch, { autoMerge, record }) : (openingPrompt(agent, action, change, { autoMerge, record }) as string);
+      prompt = fixedPrompt({ autoMerge, record }) ?? (openingPrompt(agent, action, change, { autoMerge, record }) as string);
       session.autoMergeAskedAt = new Date().toISOString();
     }
     this.sessions.set(session.id, session);
@@ -273,6 +291,18 @@ export class SessionManager {
     if (session.state === "running") this.report(session, { kind: "session-started", action, agentName: session.agentName });
     for (const removed of await this.store.prune(this.list())) this.sessions.delete(removed);
     return { ...session, autoMerge };
+  }
+
+  /**
+   * A remove-duplicate session needs a fresh `chore/archive-<name>` from the default branch: an existing one, usually the
+   * merged branch of the original archive, would be checked out as it is (remove-duplicate-archived-changes D3).
+   */
+  private async refuseOldArchiveBranch(repoPath: string, change: string): Promise<void> {
+    const branch = sessionBranch("archive", change);
+    const onIt = (await listCheckouts(repoPath)).some((w) => w.branch === branch);
+    if (onIt || (await hasLocalBranch(repoPath, branch))) {
+      throw new SessionError(409, `the branch ${branch} still exists; Clean up leftovers… removes it once it is merged`);
+    }
   }
 
   /**

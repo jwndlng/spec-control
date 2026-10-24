@@ -54,6 +54,11 @@ export function normalizeRemote(url: string): string | undefined {
   return `${match[1].toLowerCase()}/${path}`;
 }
 
+/** Whether a local branch of that exact name exists; read-only `show-ref`. */
+export async function hasLocalBranch(cwd: string, branch: string): Promise<boolean> {
+  return (await git(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`])) !== undefined;
+}
+
 /**
  * The repository's default branch as it is known locally — never asks the remote: what `origin/HEAD` points to, else a
  * local `main`, else a local `master`.

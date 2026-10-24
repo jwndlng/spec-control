@@ -6,7 +6,7 @@ import { deriveStage, isPlanned } from "../shared/columns.ts";
 import { ISSUE_FILE, toSourceIssue } from "../shared/issues.ts";
 import { detectLabels } from "../shared/labels.ts";
 import { sessionBranch } from "../shared/sessionBranch.ts";
-import type { ChangeRecord, ChangeSnapshot, Config, DetectedLabel, RepoConfig, RepoSnapshot, SharedConfig, Snapshot, StaleLeftovers, Worktree } from "../shared/types.ts";
+import type { ChangeRecord, ChangeSnapshot, Config, DetectedLabel, DuplicateAfterArchive, RepoConfig, RepoSnapshot, SharedConfig, Snapshot, StaleLeftovers, Worktree } from "../shared/types.ts";
 import { summarizeWorkInProgress } from "../shared/workInProgress.ts";
 import { emptySnapshot, writeSnapshot } from "./cache.ts";
 import type { FrameworkProject, SpecFramework } from "./frameworks/framework.ts";
@@ -338,7 +338,12 @@ export async function scanRepo(
           })
           .catch(() => undefined)
       : undefined;
-  const changes = resolveDependencies(markStale([...active, ...archived], stale));
+  // The default branch holds the change next to its archive: marked, never moved (stale-changes spec).
+  const duplicates =
+    isGit && !noCommit && source.duplicates && framework.layout.archiveDir
+      ? await source.duplicates(framework.layout, archivedOnMain, listed).catch(() => undefined)
+      : undefined;
+  const changes = resolveDependencies(markStale([...active, ...archived], stale, duplicates));
 
   return {
     ...base,
@@ -362,19 +367,20 @@ export async function scanRepo(
 }
 
 /**
- * Puts each change's leftovers on the card it is shown as: the active change while the main checkout has not pulled the
- * archive, else its newest archive. Kept ones too — a running session's worktree tells the end-session dialog the
- * archive is on the default branch — but only a stale leftover marks the card (`staleReason`).
+ * Puts each change's leftovers and duplicate report on the card it is shown as: the active change while the main
+ * checkout has not pulled the archive, else its newest archive. Kept leftovers too — a running session's worktree tells
+ * the end-session dialog the archive is on the default branch — but only a stale leftover marks the card (`staleReason`).
  */
-function markStale(changes: ChangeSnapshot[], stale: Map<string, StaleLeftovers> | undefined): ChangeSnapshot[] {
-  if (!stale?.size) return changes;
+function markStale(changes: ChangeSnapshot[], stale: Map<string, StaleLeftovers> | undefined, duplicates?: Map<string, DuplicateAfterArchive>): ChangeSnapshot[] {
+  if (!stale?.size && !duplicates?.size) return changes;
   const marked = new Set<string>();
   return changes.map((c) => {
-    const found = stale.get(c.name);
-    if (!found || marked.has(c.name)) return c;
+    const found = stale?.get(c.name);
+    const duplicate = duplicates?.get(c.name);
+    if ((!found && !duplicate) || marked.has(c.name)) return c;
     if (c.archived && changes.some((o) => o.name === c.name && !o.archived)) return c;
     marked.add(c.name);
-    return { ...c, stale: found };
+    return { ...c, ...(found ? { stale: found } : {}), ...(duplicate ? { duplicate } : {}) };
   });
 }
 

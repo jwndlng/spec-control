@@ -1,5 +1,5 @@
 // Agent profiles (design.md D16): an agent is a command line plus opening prompts. Nothing here knows any vendor.
-import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, CARRY_OVER_ARCHIVE_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, resolveConflictsTargetSentence, type AgentAvailability, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type PullRequest, type RepoConfig, type SessionAction, type StrandedArchive } from "../../shared/types.ts";
+import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, CARRY_OVER_ARCHIVE_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, REMOVE_DUPLICATE_DIFFERING_SENTENCE, REMOVE_DUPLICATE_IDENTICAL_SENTENCE, REMOVE_DUPLICATE_PROMPT, resolveConflictsTargetSentence, type AgentAvailability, type DuplicateAfterArchive, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type PullRequest, type RepoConfig, type SessionAction, type StrandedArchive } from "../../shared/types.ts";
 import { AGENT_PRESETS } from "../../shared/agentDefaults.ts";
 import { whichOnPath } from "../paths.ts";
 import { isBranchName } from "../cleanup.ts";
@@ -86,6 +86,46 @@ export function carryOverPrompt(change: string, stranded: StrandedArchive, base:
   if (!/^[0-9a-f]{40}$/.test(stranded.commit)) throw new Error("invalid commit");
   for (const branch of [stranded.branch, base]) if (branch !== undefined && (!BRANCH_TEXT.test(branch) || branch.includes(".."))) throw new Error("invalid branch name");
   const prompt = CARRY_OVER_ARCHIVE_PROMPT.replaceAll("{change}", change).replaceAll("{commit}", stranded.commit).replaceAll("{branch}", stranded.branch).replaceAll("{base}", base ?? "the default branch");
+  return autoMerge ? withRecord(`${prompt} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION}`, record) : prompt;
+}
+
+/** A path from git as it may be typed into an agent: no control character (a newline would be an Enter), nothing climbing out. */
+function isPathText(path: string): boolean {
+  if (path === "" || path.split("/").includes("..")) return false;
+  for (let i = 0; i < path.length; i++) {
+    const code = path.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return false;
+  }
+  return true;
+}
+
+/**
+ * The remove-duplicate prompt (stale-changes spec): the fixed text with the change, its directory, the archive directory,
+ * the default branch and the differing paths of the scan filled in, then the docs auto-merge archive instruction and the
+ * `record` instruction when `autoMerge` — exactly as for any archive session. Every value is re-checked here.
+ */
+export function removeDuplicatePrompt(
+  change: string,
+  duplicate: Pick<DuplicateAfterArchive, "archive" | "differing" | "differingCount">,
+  layout: { changesDir: string; archiveDir?: string },
+  base: string | undefined,
+  { autoMerge = false, record }: { autoMerge?: boolean; record?: string } = {},
+): string {
+  if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
+  const date = /^(\d{4}-\d{2}-\d{2})-(.+)$/.exec(duplicate.archive);
+  if (!date || date[2] !== change || !layout.archiveDir) throw new Error("invalid archive directory");
+  if (base !== undefined && (!BRANCH_TEXT.test(base) || base.includes(".."))) throw new Error("invalid branch name");
+  for (const path of [layout.changesDir, layout.archiveDir, ...duplicate.differing]) if (!isPathText(path)) throw new Error("invalid path");
+  const changeDir = `${layout.changesDir}/${change}`;
+  const more = duplicate.differingCount - duplicate.differing.length;
+  const paths = `${duplicate.differing.join(", ")}${more > 0 ? ` and ${more} more` : ""}`;
+  // The paths come from git and go in last, so nothing in them is taken for a placeholder.
+  const prompt = REMOVE_DUPLICATE_PROMPT.replaceAll("{differing}", duplicate.differing.length > 0 ? REMOVE_DUPLICATE_DIFFERING_SENTENCE : REMOVE_DUPLICATE_IDENTICAL_SENTENCE)
+    .replaceAll("{changeDir}", changeDir)
+    .replaceAll("{change}", change)
+    .replaceAll("{archiveDir}", `${layout.archiveDir}/${duplicate.archive}`)
+    .replaceAll("{base}", base ?? "the default branch")
+    .replaceAll("{paths}", paths);
   return autoMerge ? withRecord(`${prompt} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION}`, record) : prompt;
 }
 

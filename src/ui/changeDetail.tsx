@@ -19,7 +19,7 @@ import { SourceIssueLink } from "./importIssues.tsx";
 import { type DetailPr, DetailPullRequest, detailPullRequest, usePullRequests } from "./pullRequests.tsx";
 import { StaleCleanupDialog } from "./staleCleanup.tsx";
 import { DismissDialog } from "./dismissChange.tsx";
-import { staleHint, staleReason } from "./staleState.ts";
+import { duplicateNotice, staleHint, staleReason } from "./staleState.ts";
 import { dismissedNotice, dismissOffer } from "./dismissState.ts";
 import { checkoutHint, daysSince, leftoverHint, pendingArchiveHint, relTime, splitPathLabel } from "./format.ts";
 import { currentQuery, followInApp, href, navigate, replaceQuery } from "./url.ts";
@@ -468,9 +468,9 @@ export function FileContent({ state, raw, isTasks, rendered, filePath }: { state
 }
 
 /**
- * Why a change is stale and the one action that fits (stale-changes: "The change detail offers the fitting action for a
- * stale change"). Clean up leftovers… opens the stale cleanup's dialog, which reads the leftovers afresh; carrying an
- * archive over starts an archive session whose commit the server takes from its own scan.
+ * Why a change is stale and the action that fits each reason (stale-changes: "The change detail offers the fitting action
+ * for a stale change"). Clean up leftovers… opens the stale cleanup's dialog, which reads the leftovers afresh; carrying
+ * an archive over and removing a duplicate start archive sessions whose prompts the server takes from its own scan.
  */
 export function StaleNotice({ repo, change }: { repo: RepoSnapshot; change: ChangeSnapshot }) {
   const ui = useSessionUi();
@@ -482,24 +482,31 @@ export function StaleNotice({ repo, change }: { repo: RepoSnapshot; change: Chan
   if (!reason) return null;
   const sessionsHere = consoleTabAvailable(ui.config, repo.id);
   const running = ui.sessions.some((s) => s.repoId === repo.id && s.change === change.name && s.state === "running");
-  const carryOver = async () => {
+  const startArchive = async (options: { carryOver?: boolean; removeDuplicate?: boolean }) => {
     setBusy(true);
-    setFailure(await ui.start(repo.id, change.name, "archive", true, { carryOver: true }));
+    setFailure(await ui.start(repo.id, change.name, "archive", true, options));
     setBusy(false);
   };
+  const duplicate = reason.duplicate ? duplicateNotice(change.name, reason.duplicate, { sessionsAvailable: sessionsHere, running }, repo.defaultBranch) : undefined;
   return (
     <div class="notice warn stale-notice" role="note">
       <p>
         <strong>{reason.title}.</strong> {staleHint(reason, sessionsHere, repo.defaultBranch)}
       </p>
+      {duplicate && <p>{duplicate.text}</p>}
       {reason.kind === "leftovers" && (
         <button type="button" class="btn sm" ref={opener} onClick={() => setCleaning(true)}>
           Clean up leftovers…
         </button>
       )}
       {reason.kind === "stranded" && sessionsHere && !running && (
-        <button type="button" class="btn sm primary" disabled={busy} onClick={carryOver}>
+        <button type="button" class="btn sm primary" disabled={busy} onClick={() => startArchive({ carryOver: true })}>
           Carry over archive
+        </button>
+      )}
+      {duplicate?.offered && (
+        <button type="button" class="btn sm primary" disabled={busy} onClick={() => startArchive({ removeDuplicate: true })}>
+          Remove duplicate
         </button>
       )}
       {failure && <p class="error">{failure}</p>}

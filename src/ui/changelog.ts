@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-24-remove-duplicate-archived-changes",
+    date: "2026-10-24",
+    title: "Remove a change left committed next to its archive",
+    summary:
+      "An archived change whose folder is still committed on the default branch next to its archive is now marked **Stale**. Its detail offers **Remove duplicate**: an archive session that asks you what to carry over into the archive, deletes the folder and opens a docs-only pull request.",
+  },
+  {
     id: "2026-10-24-stale-means-archived-and-merged",
     date: "2026-10-24",
     title: "Clean up what an archived change left behind",

@@ -2,10 +2,11 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ChangeSnapshot, RepoSnapshot, StaleCleanupPreview, StaleLeftover, StaleLeftovers } from "../src/shared/types.ts";
+import type { ChangeSnapshot, DuplicateAfterArchive, RepoSnapshot, StaleCleanupPreview, StaleLeftover, StaleLeftovers } from "../src/shared/types.ts";
 import { boardCards, ChangeCard } from "../src/ui/kanban.tsx";
 import {
   cleanupItemText,
+  duplicateNotice,
   cleanupNeedsReport,
   endCleanupOffer,
   keptUntilStale,
@@ -107,12 +108,15 @@ test("an archived and merged card keeps the Archived column with its badge", () 
   expect(staleReason(card)?.kind).toBe("leftovers");
 });
 
-test("the detail offers Clean up leftovers… through the stale cleanup's dialog and Carry over archive through an archive session", () => {
+test("the detail offers Clean up leftovers… through the stale cleanup's dialog, Carry over archive and Remove duplicate through archive sessions", () => {
   const detail = readFileSync(join(import.meta.dir, "..", "src", "ui", "changeDetail.tsx"), "utf8");
   expect(detail).toContain("<StaleNotice repo={repo} change={change} />");
   expect(detail).toContain("<StaleCleanupDialog");
   expect(detail).not.toContain("Remove worktree…");
-  expect(detail).toContain('ui.start(repo.id, change.name, "archive", true, { carryOver: true })');
+  expect(detail).toContain('ui.start(repo.id, change.name, "archive", true, options)');
+  expect(detail).toContain("startArchive({ carryOver: true })");
+  expect(detail).toContain("{duplicate?.offered && (");
+  expect(detail).toContain("startArchive({ removeDuplicate: true })");
 });
 
 test("the request carries exactly the listed items and what the user saw of each", () => {
@@ -167,4 +171,50 @@ test("each item's outcome is reported, with the backup and the restore command, 
   expect(restoreCommands(result)).toEqual([`git branch feat/rotate-keys ${COMMIT}`]);
   expect(cleanupNeedsReport(result)).toBe(true);
   expect(cleanupNeedsReport({ repoId: "demo", name: "x", items: [{ kind: "branch", id: "b", outcome: "deleted", branch: "b", commit: COMMIT }] })).toBe(false);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Duplicate after archive
+// ---------------------------------------------------------------------------------------------------------------------
+
+const duplicate = (patch: Partial<DuplicateAfterArchive> = {}): DuplicateAfterArchive => ({ archive: "2026-10-20-rotate-keys", differing: ["tasks.md"], differingCount: 1, pulled: true, ...patch });
+const archivedDuplicate = (patch: Partial<ChangeSnapshot> = {}) =>
+  change({ name: "rotate-keys", archived: "2026-10-20", stage: "archived", column: "Archived", duplicate: duplicate(), ...patch });
+
+test("a duplicate after archive is stale with its own reason and keeps the Archived column", () => {
+  const reason = staleReason(archivedDuplicate(), "main");
+  expect(reason).toMatchObject({ kind: "duplicate", duplicate: duplicate() });
+  expect(reason?.title).toBe("Stale: archived on main, but openspec/changes/rotate-keys/ is still committed there too");
+  expect(staleHint(reason as NonNullable<typeof reason>, true, "main")).toBe("");
+  const repo: RepoSnapshot = { id: "demo", name: "demo-ops", path: "/w/acme/demo-ops", ok: true, scannedAt: new Date(NOW).toISOString(), isGit: true, worktrees: [], changes: [archivedDuplicate()] };
+  const card = boardCards([repo], new Map([["demo", 120]]))[0];
+  expect(card.column).toBe("Archived");
+  const badges = byTag(ChangeCard({ card, now: NOW, from: "/board", stale: staleReason(card) }), "span").filter((s) => String(s.props.class ?? "").includes("stale"));
+  expect(badges).toHaveLength(1);
+  expect(badges[0].props["aria-label"]).toContain("still committed there too");
+});
+
+test("a change stale for leftovers and a duplicate shows one badge naming both reasons", () => {
+  const reason = staleReason(archivedDuplicate({ stale: stale([branchLeftover]) }), "main");
+  expect(reason?.kind).toBe("leftovers");
+  expect(reason?.duplicate).toEqual(duplicate());
+  expect(reason?.title).toBe("Stale: archived and merged on main, while 1 branch is left over; and openspec/changes/rotate-keys/ is still committed next to its archive on main");
+});
+
+test("the duplicate notice offers Remove duplicate, or says why not, or what to do by hand", () => {
+  const offered = duplicateNotice("rotate-keys", duplicate(), { sessionsAvailable: true, running: false }, "main");
+  expect(offered.offered).toBe(true);
+  expect(offered.text).toBe(
+    "Its archive is openspec/changes/archive/2026-10-20-rotate-keys/. The copy differs from the archive in tasks.md. Remove duplicate starts an archive session that asks you what to carry over into the archive, deletes openspec/changes/rotate-keys/ and opens a pull request for main.",
+  );
+  const branch = duplicateNotice("rotate-keys", duplicate({ archiveBranch: "chore/archive-rotate-keys" }), { sessionsAvailable: true, running: false });
+  expect(branch).toEqual({ offered: false, text: expect.stringContaining("not offered while the branch chore/archive-rotate-keys exists: Clean up leftovers… removes it once it is merged.") });
+  expect(duplicateNotice("rotate-keys", duplicate(), { sessionsAvailable: true, running: true }).offered).toBe(false);
+  const byHand = duplicateNotice("rotate-keys", duplicate({ differing: [], differingCount: 0 }), { sessionsAvailable: false, running: false }, "main");
+  expect(byHand).toEqual({
+    offered: false,
+    text: "Its archive is openspec/changes/archive/2026-10-20-rotate-keys/. The two copies are identical. Delete openspec/changes/rotate-keys/ in a commit: the deletion has to be committed to main.",
+  });
+  expect(duplicateNotice("rotate-keys", duplicate({ pulled: false, differing: ["a.md"], differingCount: 3 }), { sessionsAvailable: true, running: false }).text).toContain("in a.md and 2 more. ");
+  expect(duplicateNotice("rotate-keys", duplicate({ pulled: false }), { sessionsAvailable: true, running: false }).text).toEndWith("Pull brings it.");
 });

@@ -177,10 +177,11 @@ export interface Api {
   /** Agent sessions (optional feature): an agent CLI in a terminal, one per change. */
   sessions(): Promise<{ sessions: Session[]; agents: AgentAvailability[]; presets: AgentAvailability[]; worktrees: SessionWorktree[]; keepAwake?: KeepAwakeStatus }>;
   /**
-   * `carryOver` starts the archive session that carries a stranded archive over (stale-changes spec); `resolveConflicts`
+   * `carryOver` starts the archive session that carries a stranded archive over and `removeDuplicate` the one that
+   * removes a duplicate after archive (stale-changes spec); `resolveConflicts`
    * opens one for Resolve conflicts, on the branch the server takes from its own pull-request list (resolve-pr-conflicts).
    */
-  openSession(repoId: string, change: string, action: SessionAction, options?: { carryOver?: boolean; resolveConflicts?: boolean }): Promise<StartResult>;
+  openSession(repoId: string, change: string, action: SessionAction, options?: { carryOver?: boolean; removeDuplicate?: boolean; resolveConflicts?: boolean }): Promise<StartResult>;
   /** Opens the main console, or returns the one that is running. */
   openConsole(): Promise<ConsoleSession>;
   /**
@@ -333,7 +334,7 @@ export const httpApi: Api = {
   previewSharedConfig: (assignments) => call<{ previews: SharedConfigPreview[] }>("/api/shared-config/preview", { method: "POST", body: JSON.stringify({ assignments }) }),
   applySharedConfig: (assignments) => call<{ results: SharedConfigApplyResult[] }>("/api/shared-config/apply", { method: "POST", body: JSON.stringify({ assignments }) }),
   sessions: () => call<{ sessions: Session[]; agents: AgentAvailability[]; presets: AgentAvailability[]; worktrees: SessionWorktree[]; keepAwake?: KeepAwakeStatus }>("/api/sessions"),
-  openSession: (repoId, change, action, options) => call<StartResult>("/api/sessions", { method: "POST", body: JSON.stringify({ repoId, change, action, ...(options?.carryOver ? { carryOver: true } : {}), ...(options?.resolveConflicts ? { resolveConflicts: true } : {}) }) }),
+  openSession: (repoId, change, action, options) => call<StartResult>("/api/sessions", { method: "POST", body: JSON.stringify({ repoId, change, action, ...(options?.carryOver ? { carryOver: true } : {}), ...(options?.removeDuplicate ? { removeDuplicate: true } : {}), ...(options?.resolveConflicts ? { resolveConflicts: true } : {}) }) }),
   openConsole: () => call<ConsoleSession>("/api/console", { method: "POST" }),
   openProjectConsole: (repoId) => call<ProjectConsoleLike>(`/api/repos/${encodeURIComponent(repoId)}/console`, { method: "POST" }),
   startIntegration: (path) => call<IntegrationSession>("/api/integrations", { method: "POST", body: JSON.stringify({ path }) }),

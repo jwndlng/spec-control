@@ -705,7 +705,9 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
     openSession: (repoId, change, action, options) =>
       options?.resolveConflicts
         ? new Promise((_, reject) => setTimeout(() => reject(new ApiError(503, "the demo does not start sessions on a pull request's branch")), latencyMs))
-        : attempt(() => demoSessions.open(repoId, change, action)),
+        : options?.removeDuplicate
+          ? new Promise((_, reject) => setTimeout(() => reject(new ApiError(503, "the demo does not start a session to remove a duplicate")), latencyMs))
+          : attempt(() => demoSessions.open(repoId, change, action)),
     openConsole: () => attempt(() => demoSessions.openConsole()),
     openProjectConsole: (repoId) => attempt(() => demoSessions.openProjectConsole(repoId)),
     startIntegration: (path) => attempt(() => demoSessions.openIntegration(path)),
