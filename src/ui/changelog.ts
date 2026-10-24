@@ -22,6 +22,13 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
       "Once a change is archived and merged on the default branch, its leftover worktrees, local branches and uncommitted copy in the main checkout are marked **Stale** — even with uncommitted files in them. **End session** then offers **Clean up leftovers**, and the change's detail offers **Clean up leftovers…**: one confirmation copies their uncommitted files under `~/.spec-control/branch-backups/` and removes them.",
   },
   {
+    id: "2026-10-24-resolve-pr-conflicts",
+    date: "2026-10-24",
+    title: "Resolve conflicts follows GitHub too",
+    summary:
+      "**Resolve conflicts** is now also offered when GitHub reports a change's pull request as conflicting, from the change's detail. When the session's worktree is gone, it starts the agent on the pull request's own branch, so the fix updates that pull request instead of opening a second one.",
+  },
+  {
     id: "2026-10-24-one-next-action-per-stage",
     date: "2026-10-24",
     title: "One recommended action per card",

@@ -701,7 +701,11 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
 
     // Agent sessions are simulated: state lives in memory, terminals play hand-written recordings, nothing is started.
     sessions: () => reply(demoSessions.list()),
-    openSession: (repoId, change, action) => attempt(() => demoSessions.open(repoId, change, action)),
+    // Its pull requests are synthetic, with no branch behind them to check out.
+    openSession: (repoId, change, action, options) =>
+      options?.resolveConflicts
+        ? new Promise((_, reject) => setTimeout(() => reject(new ApiError(503, "the demo does not start sessions on a pull request's branch")), latencyMs))
+        : attempt(() => demoSessions.open(repoId, change, action)),
     openConsole: () => attempt(() => demoSessions.openConsole()),
     openProjectConsole: (repoId) => attempt(() => demoSessions.openProjectConsole(repoId)),
     startIntegration: (path) => attempt(() => demoSessions.openIntegration(path)),

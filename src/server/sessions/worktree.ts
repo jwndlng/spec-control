@@ -101,7 +101,22 @@ export async function linkedWorktreeOf(repoPath: string, branch: string): Promis
   return parseWorktrees(`${listed.out}\n`).find((w) => !w.isMain && !w.prunable && !w.bare && w.branch === branch)?.path;
 }
 
-export async function ensureWorktree(repoPath: string, worktreePath: string, branch: string): Promise<{ created: boolean; base?: string }> {
+/**
+ * A pull request's head branch that is known neither locally nor as `origin/<branch>` (resolve-pr-conflicts D2). The
+ * dashboard does not fetch for it; the user does.
+ */
+export class UnknownBranchError extends Error {
+  constructor(branch: string) {
+    super(`the branch ${branch} is not known locally — fetch or pull first`);
+  }
+}
+
+/**
+ * `fromRemote`: the branch is a pull request's head branch, so a missing local branch is created from
+ * `origin/<branch>` with it as upstream — never from the base — and refused with `UnknownBranchError` when that does
+ * not exist either. An existing local branch is checked out as it is, whether or not it is level with the remote.
+ */
+export async function ensureWorktree(repoPath: string, worktreePath: string, branch: string, options: { fromRemote?: boolean } = {}): Promise<{ created: boolean; base?: string }> {
   if (await isDirectory(worktreePath)) {
     const inside = await git(worktreePath, ["rev-parse", "--is-inside-work-tree"]);
     if (inside.ok && inside.out === "true") return { created: false };
@@ -109,6 +124,16 @@ export async function ensureWorktree(repoPath: string, worktreePath: string, bra
   }
   // Everything is decided read-only first, so a refusal leaves nothing behind — not even the worktree's parent folder.
   const hasBranch = (await git(repoPath, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`])).ok;
+  if (options.fromRemote && !hasBranch) {
+    const remote = `origin/${branch}`;
+    if (!(await git(repoPath, ["show-ref", "--verify", "--quiet", `refs/remotes/${remote}`])).ok) throw new UnknownBranchError(branch);
+    await mkdir(dirname(worktreePath), { recursive: true });
+    await git(repoPath, ["worktree", "prune"]);
+    // `--track` writes the same two `branch.<name>` keys git's default `branch.autoSetupMerge` gives every session branch.
+    const added = await git(repoPath, ["worktree", "add", "--track", "-b", branch, worktreePath, remote]);
+    if (!added.ok) throw new Error(`could not create the worktree: ${added.err.split("\n").pop()}`);
+    return { created: true, base: remote };
+  }
   const remoteHead = hasBranch ? undefined : await git(repoPath, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
   const base = remoteHead?.ok && remoteHead.out ? remoteHead.out : "HEAD";
   if (!hasBranch && base === "HEAD" && !(await git(repoPath, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])).ok) throw new NoCommitError();

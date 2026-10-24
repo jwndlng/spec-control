@@ -4,7 +4,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { SHIPPABLE_WORK, type ChangeSession, type Session, type SessionAction, type SessionWorktree, type Shortcut } from "../shared/types.ts";
+import { SHIPPABLE_WORK, type ChangeSnapshot, type ChangeSession, type Session, type SessionAction, type SessionWorktree, type Shortcut } from "../shared/types.ts";
 import type { PullRequestStep } from "../shared/nextStep.ts";
 import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { api, type TerminalMessage } from "./api.ts";
@@ -12,7 +12,7 @@ import { cdCommand } from "./format.ts";
 import { inPlaceReason } from "./inPlaceText.ts";
 import { NOT_SUBMITTED_NOTICE, shortcutHint, shortcutMessage, visibleShortcuts } from "./quickReplies.ts";
 import { usePullRequests } from "./pullRequests.tsx";
-import { autoEndedText, autoMergeNotice, mergeControl, mergeNotice, nextStepFor, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, startersFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
+import { autoEndedText, autoMergeNotice, conflictAction, mergeControl, mergeNotice, nextStepFor, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, sessionsEnabledFor, startersFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
 import { ConflictBadge, SessionBadgeView, SessionControls, useSessionUi } from "./sessions.tsx";
 
 export function Copy({ text, label }: { text: string; label: string }) {
@@ -271,13 +271,14 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   const work = tree && workBadge(tree, ui.sessions);
   const shippable = session !== undefined && tree !== undefined && SHIPPABLE_WORK.includes(tree.work.state);
   // The badge sits beside the work badge, not instead of it: "pushed" and "no longer merges" are both true.
-  const canResolve = resolvable(session, tree);
+  // The change's pull request, from the lists the page already holds: GitHub's conflict counts here too.
+  const card = repoId && change ? ui.snapshot?.repos.find((r) => r.id === repoId)?.changes.find((c) => c.name === change && !c.archived) : undefined;
+  const canResolve = resolvable(session, tree, card ? linkedPullRequest(card, prs.data?.repos) : undefined, prs.data?.repos.find((r) => r.repoId === repoId)?.fetchedAt);
   const merged = tree?.work.state === "merged";
   // Merge: the session's open pull request, from the lists the page already holds (agent-merges-docs-prs D7).
   const merge = mergeControl(session, prs.data?.repos);
   const pendingMerge = mergeNotice(session, merge?.pr);
-  // The change as the snapshot has it: what both the next steps and the empty state's starters are decided from.
-  const card = repoId && change ? ui.snapshot?.repos.find((r) => r.id === repoId)?.changes.find((c) => c.name === change && !c.archived) : undefined;
+  // `card`, the change as the snapshot has it, is also what the next steps and the empty state's starters are decided from.
   // Every starter the change's stage allows — Archive included — but only in the panel of the session that would
   // receive it, which is the change's running one. An ended session's panel offers none: nothing can be typed there.
   const receiving = session !== undefined && nextStepFor(ui.sessions, session.repoId, session.change).promptSessionId === session.id;
@@ -411,16 +412,20 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
                       ui.reportUnsent(result.submitted ? undefined : session.id);
                     }),
                 },
-                resolveConflicts: {
-                  key: "resolveConflicts",
-                  label: "⚠ Resolve conflicts",
-                  title: `Sends ${session.agentName} a prompt asking it to bring the branch up to date and resolve the conflicts. The dashboard merges nothing itself.`,
-                  onActivate: () =>
-                    act(async () => {
-                      const result = await api.resolveConflicts(session.id);
-                      ui.reportUnsent(result.submitted ? undefined : session.id);
-                    }),
-                },
+                // The pull request's step asks the same rule as the detail header: this session, on the head branch.
+                resolveConflicts:
+                  conflictAction(card, ui.worktrees, ui.sessions, prs.data)?.sessionId !== session.id
+                    ? { status: "Conflicts: resolve them on the pull request's branch", title: linked ? `#${linked.number} is on ${linked.head}, not ${session.branch}` : undefined }
+                    : {
+                      key: "resolveConflicts",
+                      label: "⚠ Resolve conflicts",
+                      title: `Sends ${session.agentName} a prompt asking it to bring the branch up to date and resolve the conflicts. The dashboard merges nothing itself.`,
+                      onActivate: () =>
+                        act(async () => {
+                          const result = await api.resolveConflicts(session.id);
+                          ui.reportUnsent(result.submitted ? undefined : session.id);
+                        }),
+                    },
                 // Nothing to send for it: the agent is right here, and the failure is on GitHub for it to read.
                 fixChecks: { status: "Checks failing: ask the agent here to fix them", title: linked ? `#${linked.number}'s checks fail` : undefined },
               }}
@@ -472,5 +477,59 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * Resolve conflicts for the change (resolve-pr-conflicts D1, D5): offered on the local signal, on GitHub's, or both, each
+ * said with its base and freshness. It goes to the change's session on the pull request's branch, or starts one on that
+ * branch; the server decides which from its own lists, and nothing is fetched or queried for it.
+ */
+export function ResolveConflicts({ change }: { change: ChangeSnapshot }) {
+  const ui = useSessionUi();
+  const pullRequests = usePullRequests();
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  if (change.archived || !sessionsEnabledFor(ui.config, change.repoId)) return null;
+  const action = conflictAction(change, ui.worktrees, ui.sessions, pullRequests.data);
+  if (!action) return null;
+  const { github } = action.signal;
+  const run = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      if (action.sessionId) {
+        const result = await api.resolveConflicts(action.sessionId);
+        ui.reportUnsent(result.submitted ? undefined : action.sessionId);
+        await ui.refresh();
+        ui.openPanel(action.sessionId);
+      } else {
+        const failed = await ui.start(change.repoId, change.name, "implement", true, { resolveConflicts: true });
+        if (failed) setError(failed);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const where = action.sessionId ? "the change's session" : `a new session on ${github?.head ?? "the pull request's branch"}`;
+  return (
+    <>
+      {github && (
+        <span class="badge warning" title={action.lines.join(" ")}>
+          ⚠ GitHub: conflicts with {github.base}
+          {github.pushPending ? " · push pending" : ""}
+        </span>
+      )}
+      <button type="button" class="btn sm" disabled={busy} title={`${action.lines.join(" ")} Asks ${where} to resolve them; the dashboard merges nothing itself.`} onClick={run}>
+        ⚠ Resolve conflicts
+      </button>
+      {error && (
+        <span class="badge danger" role="alert">
+          {error}
+        </span>
+      )}
+    </>
   );
 }

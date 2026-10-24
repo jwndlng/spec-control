@@ -178,9 +178,9 @@ export async function listWorktrees(repos: RepoConfig[], sessions: ChangeSession
           const path = join(dir, name);
           if (!(await isDirectory(path))) return undefined;
           const session = sessions.find((s) => s.worktreePath === path); // sessions arrive newest first
-          const { work, branch, lastCommitAt } = await readWorkStatus(repo.path, path);
+          const [{ work, branch, lastCommitAt }, head] = await Promise.all([readWorkStatus(repo.path, path), headCommit(path)]);
           const owner = session ? { change: session.change, action: session.action } : changeOfWorktree(name);
-          return { repoId: repo.id, name, path, ...owner, branch: branch ?? session?.branch, work, lastActivityAt: latest(lastCommitAt, session?.updatedAt), sessionId: session?.id };
+          return { repoId: repo.id, name, path, ...owner, branch: branch ?? session?.branch, work, lastActivityAt: latest(lastCommitAt, session?.updatedAt), sessionId: session?.id, ...(head ? { head } : {}) };
         }),
       );
     }),

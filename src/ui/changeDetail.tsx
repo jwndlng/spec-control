@@ -8,7 +8,7 @@ import { ApiError, api } from "./api.ts";
 import { CopyButton, CopyRefButton, Meter } from "./kanban.tsx";
 import { renderMarkdown } from "./markdown.tsx";
 import { backTarget, CONSOLE_TAB, changePath, type DetailQuery, parseDetailQuery, repoPath, serializeDetailQuery } from "./routes.ts";
-import { ConsolePanel, ConsoleSessionList } from "./sessionPanel.tsx";
+import { ConsolePanel, ConsoleSessionList, ResolveConflicts } from "./sessionPanel.tsx";
 import { changeWorktreePath, consoleAvailable, consoleSession, consoleSessions, consoleTabAvailable } from "./sessionState.ts";
 import { useSessionUi, WorkStatus } from "./sessions.tsx";
 import { isComplete } from "../shared/columns.ts";
@@ -282,6 +282,7 @@ function ChangeFacts({ change, pullRequest, now = Date.now() }: { change: Change
         {change.sourceIssue && <SourceIssueLink issue={change.sourceIssue} place="detail" />}
         {pullRequest && <DetailPullRequest info={pullRequest} />}
         <WorkStatus repoId={change.repoId} name={change.name} />
+        <ResolveConflicts change={change} />
       </div>
       {prompt && (
         <div class="detail-prompt" role="note" aria-label={`prompt: ${prompt}`}>
