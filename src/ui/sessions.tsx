@@ -62,8 +62,11 @@ interface SessionUi {
    * whether the session's console is shown afterwards; a card's starter leaves the user on the board. Fast-forward asks
    * for confirmation first unless the user switched that off; a cancelled one resolves with nothing and starts nothing.
    */
-  /** `carryOver`: the archive session that carries a stranded archive over; never typed into a running session. */
-  start(repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean }): Promise<string | undefined>;
+  /**
+   * `carryOver`: the archive session that carries a stranded archive over; never typed into a running session.
+   * `resolveConflicts`: Resolve conflicts, where the server decides the session and branch from its own lists.
+   */
+  start(repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; resolveConflicts?: boolean }): Promise<string | undefined>;
   refresh(): Promise<void>;
 }
 
@@ -165,7 +168,7 @@ export function SessionProvider({
   );
 
   const start = useCallback(
-    async (repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean }) => {
+    async (repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; resolveConflicts?: boolean }) => {
       let warningNotSaved: string | undefined;
       if (action === "fastForward" && config?.agentSessions.confirmFastForward !== false) {
         const choice = await askFastForward(repoId, change);
@@ -180,7 +183,7 @@ export function SessionProvider({
         }
       }
       try {
-        const into = options?.carryOver ? undefined : nextStepFor(sessions, repoId, change).promptSessionId;
+        const into = options?.carryOver || options?.resolveConflicts ? undefined : nextStepFor(sessions, repoId, change).promptSessionId;
         const session = into ? await api.promptSession(into, action) : await api.openSession(repoId, change, action, options);
         reportAutoMerge((current) => afterStart(current, session.id, session.autoMerge));
         if (into) {

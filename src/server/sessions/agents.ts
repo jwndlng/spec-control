@@ -1,7 +1,8 @@
 // Agent profiles (design.md D16): an agent is a command line plus opening prompts. Nothing here knows any vendor.
-import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, CARRY_OVER_ARCHIVE_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, type AgentAvailability, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type RepoConfig, type SessionAction, type StrandedArchive } from "../../shared/types.ts";
+import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, CARRY_OVER_ARCHIVE_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, resolveConflictsTargetSentence, type AgentAvailability, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type PullRequest, type RepoConfig, type SessionAction, type StrandedArchive } from "../../shared/types.ts";
 import { AGENT_PRESETS } from "../../shared/agentDefaults.ts";
 import { whichOnPath } from "../paths.ts";
+import { isBranchName } from "../cleanup.ts";
 import { CHANGE_NAME } from "../source.ts";
 
 export function agentFor(config: Config, repo: RepoConfig): AgentProfile | undefined {
@@ -122,10 +123,17 @@ export function integratePrompt(agent: AgentProfile): string {
   return compose(agent, "integrate", agent.prompts.integrate ?? DEFAULT_INTEGRATE_PROMPT);
 }
 
-/** Like Ship: every agent can be asked to resolve conflicts, configured for it or not — suffix and all. */
-export function resolveConflictsPrompt(agent: AgentProfile, change: string): string {
+/**
+ * Like Ship: every agent can be asked to resolve conflicts, configured for it or not — suffix and all. With the change's
+ * open pull request, a fixed sentence naming it and both its branches follows (resolve-pr-conflicts D3); all three come
+ * from the server's list and are validated again here, so nothing that is not a number or a branch name is typed.
+ */
+export function resolveConflictsPrompt(agent: AgentProfile, change: string, pr?: Pick<PullRequest, "number" | "head" | "base">): string {
   if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
-  return compose(agent, "resolveConflicts", agent.prompts.resolveConflicts ?? DEFAULT_RESOLVE_CONFLICTS_PROMPT).replaceAll("{change}", change);
+  const prompt = compose(agent, "resolveConflicts", agent.prompts.resolveConflicts ?? DEFAULT_RESOLVE_CONFLICTS_PROMPT).replaceAll("{change}", change);
+  if (!pr) return prompt;
+  if (!PR_NUMBER(pr.number) || !isBranchName(pr.head) || !isBranchName(pr.base)) throw new Error("invalid pull request");
+  return `${prompt} ${resolveConflictsTargetSentence(pr.number, pr.head, pr.base)}`;
 }
 
 /** A pull request number as the Merge sentence names it. */

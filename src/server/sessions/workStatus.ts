@@ -183,12 +183,12 @@ export async function listWorktrees(repos: RepoConfig[], sessions: ChangeSession
           const path = join(dir, name);
           if (!(await isDirectory(path))) return undefined;
           const session = sessions.find((s) => s.worktreePath === path); // sessions arrive newest first
-          const { work, branch, lastCommitAt } = await readWorkStatus(repo.path, path);
+          const [{ work, branch, lastCommitAt }, head] = await Promise.all([readWorkStatus(repo.path, path), headCommit(path)]);
           const owner = session ? { change: session.change, action: session.action } : changeOfWorktree(name);
           // Only a worktree nobody works in can be left over (stale-changes spec).
           const running = sessions.some((s) => s.worktreePath === path && s.state === "running");
           const settled = work.state === "missing" || running ? undefined : await settledArchive(repo.path, path, owner.change, OPENSPEC_PATHS, await prefix()).catch(() => undefined);
-          return { repoId: repo.id, name, path, ...owner, branch: branch ?? session?.branch, work, lastActivityAt: latest(lastCommitAt, session?.updatedAt), sessionId: session?.id, ...(settled ? { settled } : {}) };
+          return { repoId: repo.id, name, path, ...owner, branch: branch ?? session?.branch, work, lastActivityAt: latest(lastCommitAt, session?.updatedAt), sessionId: session?.id, ...(head ? { head } : {}), ...(settled ? { settled } : {}) };
         }),
       );
     }),
