@@ -3,6 +3,7 @@ import { menuActions, type NextStep, recommendedAction } from "../shared/nextSte
 import { conflictSignal, type ConflictSignal } from "../shared/conflictSignal.ts";
 import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { relTime } from "./format.ts";
+import { isProposalSession, receivingSession } from "../shared/sessionBranch.ts";
 import { mergePending, pullRequestReadiness, readinessDetail } from "../shared/pullRequestReadiness.ts";
 import { availableActions, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type RepoPullRequests, type Session, type SessionAction, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
 
@@ -61,9 +62,11 @@ export function cardSessionControls(
 ): { shown: ChangeSession[]; starters: SessionAction[]; main?: NextStep; menu: NextStep[] } {
   if (!sessionsEnabledFor(config, card.repoId)) return { shown: [], starters: [], menu: [] };
   const shown = sessionsForChange(sessions, card.repoId, card.name);
-  // A running session's badge stands in for the whole split button, pull-request steps included.
-  if (shown.some((s) => s.state === "running")) return { shown, starters: [], menu: [] };
-  const starters = startersFor(config, card);
+  const running = shown.filter((s) => s.state === "running");
+  // A running session's badge stands in for the whole split button, pull-request steps included — except beside a session
+  // drafting the proposal on its own branch, which takes Draft only: implementing starts beside it (ship-proposals-as-docs-prs).
+  if (running.length > 0 && !running.every(isProposalSession)) return { shown, starters: [], menu: [] };
+  const starters = startersFor(config, card).filter((a) => running.length === 0 || (a !== "draft" && a !== "fastForward"));
   return { shown, starters, ...starterSplit(card, starters, card.pullRequest) };
 }
 
@@ -138,12 +141,13 @@ export function startShowsConsole(place: StarterPlace): boolean {
 }
 
 /**
- * Where a starter goes: into the change's running session (the prompt is typed there), or into a new session. The
- * action does not enter into it — one change has one console, and every action the stage allows is sent to it,
- * Archive included. Only the console's next-step buttons ask: a card offers no starter while a session runs (see
- * `cardSessionControls`).
+ * Where a starter goes: into the change's running session (the prompt is typed there), or into a new session. One
+ * change has one console, and every action the stage allows is sent to it, Archive included — except that a session
+ * drafting the proposal on its own branch takes only Draft (`receivingSession`, the rule the server applies too).
+ * Without an action, any running session of the change.
  */
-export function nextStepFor(sessions: ChangeSession[], repoId: string, change: string): { promptSessionId?: string } {
+export function nextStepFor(sessions: ChangeSession[], repoId: string, change: string, action?: SessionAction): { promptSessionId?: string } {
+  if (action) return { promptSessionId: receivingSession(sessions, repoId, change, action)?.id };
   return { promptSessionId: sessions.find((s) => s.repoId === repoId && s.change === change && s.state === "running")?.id };
 }
 

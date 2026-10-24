@@ -175,6 +175,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             request. Pull requests from forks are not supported, and the dashboard fetches nothing for it.
           </li>
           <li>
+            In a project with <strong>Docs auto-merge</strong> on, <strong>Draft artifacts</strong> works on a branch of its
+            own, <code>docs/&lt;change&gt;</code>, and asks the agent to open the proposal as a pull request of its own once
+            every artifact is written; the card labels it <strong>Proposal</strong>. <strong>Implement</strong> then starts
+            beside it on <code>feat/&lt;change&gt;</code>, from the proposal while that is not merged yet.
+          </li>
+          <li>
             <strong>Fast-forward</strong>, in the menu beside <strong>Draft artifacts</strong> on a change that is not planned yet,
             asks the agent to write the artifacts, implement the change and open a pull request in one go, without
             stopping for your review — the pull request is the only review, and it is never merged for you. It asks you

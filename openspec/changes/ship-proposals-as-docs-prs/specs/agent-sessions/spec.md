@@ -132,6 +132,41 @@ A **change session in a git repository with no commit yet** is the fourth in-pla
 - **WHEN** `docs/rotate-keys` is checked out in the running Draft session's worktree and the user starts **Implement** for `rotate-keys`
 - **THEN** the Implement session gets its own worktree on `feat/rotate-keys` and does not adopt the Draft session's worktree
 
+### Requirement: Session lifecycle and control
+A session SHALL be `running` while its agent process lives, `exited` with the process's exit code once it has ended, or `failed` when the agent could not be started. At most one session per change may be running, and no two sessions may run in the same worktree — with one exception: a **Draft artifacts** session on `docs/<change>` ("A Draft session in a docs auto-merge project opens its proposal pull request") does not count towards that limit for any action but Draft, so that one other session of the change may run beside it on its own branch. A request to open a session for a change that already has one running SHALL return that running session and SHALL start no second process, create no second worktree and send nothing to a terminal, whatever action was asked for — **Archive** included, so one change never has two consoles — except that a running session on `docs/<change>` SHALL be returned only for Draft: any other action SHALL be opened as a session of its own (on `feat/<change>`, or its archive branch), or returned as the other running session when there is one, and sending any action but Draft into the session on `docs/<change>` SHALL be refused with a reason naming its branch. A card SHALL keep offering every starter but Draft and Fast-forward while the only running sessions of its change are on `docs/<change>`, and a Console tab SHALL offer only the steps its own session would receive. The refusals an opening is subject to still come first, so an action the change's stage does not allow is refused rather than answered with the running session. Where a session runs in place, in a tracked folder that is not a git repository, the same rule keeps a second agent out of that folder. **End session** SHALL terminate the agent as closing its terminal window would (hang-up, then a forced kill if it does not exit). When the agent's profile has a resume command, an ended session SHALL offer **Resume**, which starts that command in the same worktree within the same session. Because a terminal cannot outlive the process that owns it, stopping the dashboard MUST end every agent, and sessions recorded as running at start-up MUST be shown as ended with that reason.
+
+#### Scenario: Duplicate open
+- **WHEN** a session for a change is running and the same starter is used again
+- **THEN** the existing session is returned and no second process is started
+
+#### Scenario: Archive next to a running session
+- **WHEN** a change's Implement session is still running, the change is in `Done`, and Archive is opened for it
+- **THEN** no second session starts: the running session is returned, no archive worktree or branch is created, and Archive can instead be sent into that session
+
+#### Scenario: A folder without git keeps one agent
+- **WHEN** a session is running for a change in a tracked folder that has no `.git`, and Archive is opened for that change
+- **THEN** the running session is returned and no second agent is started in that folder
+
+#### Scenario: Agent exits
+- **WHEN** the user quits the agent from within the terminal
+- **THEN** the session becomes `exited` with the exit code, every attached viewer is told, and the terminal's output remains viewable
+
+#### Scenario: Resume
+- **WHEN** an ended session's agent has the resume command `claude`, `--continue` and the user presses Resume
+- **THEN** that command is started in the session's worktree and the session is `running` again
+
+#### Scenario: Dashboard stopped
+- **WHEN** the dashboard receives a termination signal while a session is running
+- **THEN** the agent is ended and the session is recorded as ended because the dashboard was stopped
+
+#### Scenario: Implement beside the proposal session
+- **WHEN** the Draft session of `rotate-keys` runs on `docs/rotate-keys` and the user activates **Implement** on its card
+- **THEN** a second session starts on `feat/rotate-keys` in its own worktree, both run, and a further Draft goes into the session on `docs/rotate-keys` while a further Implement returns the one on `feat/rotate-keys`
+
+#### Scenario: Implement sent into the proposal session
+- **WHEN** Implement is sent into the running session on `docs/rotate-keys`
+- **THEN** it is refused with a reason naming `docs/rotate-keys`, and nothing is typed
+
 ### Requirement: A merged auto-merge pull request ends its session
 When the dashboard appends the Ship or Archive auto-merge instruction, or the proposal instruction of a Draft session ("A Draft session in a docs auto-merge project opens its proposal pull request"), to a prompt for a change session — starting the session, sending the action into its running session, or Ship — it SHALL record on that session the time it did so (the latest such time when it happens more than once). The same record is what makes a session eligible for an automatic Merge prompt ("A ready docs-only pull request is handed to its agent to merge"); a Merge prompt SHALL NOT change it. A session without that record SHALL never be ended or have its worktree removed by this requirement.
 

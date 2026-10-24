@@ -1,5 +1,5 @@
 // Agent profiles (design.md D16): an agent is a command line plus opening prompts. Nothing here knows any vendor.
-import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, CARRY_OVER_ARCHIVE_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, resolveConflictsTargetSentence, type AgentAvailability, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type PullRequest, type RepoConfig, type SessionAction, type StrandedArchive } from "../../shared/types.ts";
+import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, PROPOSAL_TITLE_CONVENTIONAL, PROPOSAL_TITLE_PLAIN, CARRY_OVER_ARCHIVE_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, resolveConflictsTargetSentence, type AgentAvailability, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type PullRequest, type RepoConfig, type SessionAction, type StrandedArchive } from "../../shared/types.ts";
 import { AGENT_PRESETS } from "../../shared/agentDefaults.ts";
 import { whichOnPath } from "../paths.ts";
 import { isBranchName } from "../cleanup.ts";
@@ -54,10 +54,12 @@ interface PullRequestPromptOptions {
  * The opening prompt for a starter, or undefined when this agent has none (the starter is then not offered). With
  * `autoMerge` (the project opted in and the worktree holds only OpenSpec documents) an Archive prompt ends with the fixed
  * archive auto-merge instruction, after the suffix like Ship's, and then the `record` instruction; every other starter
- * ignores both (archive-auto-merge-docs). `convention` is the project's pull request title convention, which only
- * Fast-forward's Ship part uses — together with `record`, once, in that Ship part.
+ * ignores both (archive-auto-merge-docs). With `proposal` (the same proof, for a Draft session on the proposal branch) a
+ * Draft prompt ends with the proposal instruction instead; every other starter ignores that (ship-proposals-as-docs-prs).
+ * `convention` is the project's pull request title convention, which Fast-forward's Ship part uses — together with
+ * `record`, once, in that Ship part — and the proposal instruction's title.
  */
-export function openingPrompt(agent: AgentProfile, action: SessionAction, change: string, { autoMerge = false, convention, record }: PullRequestPromptOptions = {}): string | undefined {
+export function openingPrompt(agent: AgentProfile, action: SessionAction, change: string, { autoMerge = false, proposal = false, convention, record }: PullRequestPromptOptions & { proposal?: boolean } = {}): string | undefined {
   if (action === "fastForward") return fastForwardPrompt(agent, change, { convention, record });
   const template = agent.prompts[action];
   // Checked before the suffix: additional instructions are an addition, never a prompt of their own, so they never make
@@ -65,7 +67,15 @@ export function openingPrompt(agent: AgentProfile, action: SessionAction, change
   if (!template) return undefined;
   if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
   const prompt = compose(agent, action, template).replaceAll("{change}", change);
-  return autoMerge && action === "archive" ? withRecord(`${prompt} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION}`, record) : prompt;
+  if (autoMerge && action === "archive") return withRecord(`${prompt} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION}`, record);
+  return proposal && action === "draft" ? `${prompt} ${proposalInstruction(change, convention)}` : prompt;
+}
+
+/** The proposal instruction with its title: the project's declared convention decides which, the change name fills it. */
+export function proposalInstruction(change: string, convention: PrTitleConvention | undefined): string {
+  if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
+  const title = (convention === "conventional-commits" ? PROPOSAL_TITLE_CONVENTIONAL : PROPOSAL_TITLE_PLAIN).replaceAll("{change}", change);
+  return AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION.replaceAll("{title}", title);
 }
 
 /** `text` followed by the record instruction, when there is one. */

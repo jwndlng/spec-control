@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-24-proposal-pull-requests",
+    date: "2026-10-24",
+    title: "Proposals ship as docs-only pull requests",
+    summary:
+      "With **Docs auto-merge** on, **Draft artifacts** now works on its own branch `docs/<change>` and asks the agent to open the proposal as a pull request of its own, which merges like any other docs-only one; the card labels it **Proposal**. **Implement** starts beside it on `feat/<change>`, from the proposal while that is still open.",
+  },
+  {
     id: "2026-10-24-stale-means-archived-and-merged",
     date: "2026-10-24",
     title: "Clean up what an archived change left behind",

@@ -116,16 +116,18 @@ test("a change's branches are named exactly: recorded, the session branches and 
     "fix/rotate-keys",
     "chore/archive-rotate-keys",
     "feat/rotate-keys",
+    "docs/rotate-keys",
   ]);
   const sessions: SessionHint[] = [
     { change: "rotate-keys", branch: "feat/rotate-keys-2", worktreePath: "/w/x", running: false },
     { change: "other", branch: "feat/other", worktreePath: "/w/y", running: false },
   ];
-  expect(changeBranches("rotate-keys", undefined, sessions)).toEqual(["feat/rotate-keys", "chore/archive-rotate-keys", "feat/rotate-keys-2"]);
+  expect(changeBranches("rotate-keys", undefined, sessions)).toEqual(["feat/rotate-keys", "chore/archive-rotate-keys", "docs/rotate-keys", "feat/rotate-keys-2"]);
   // A recorded name git would not accept is ignored.
-  expect(changeBranches("auth", { branch: "-x", archiveBranch: "a..b" }, [])).toEqual(["feat/auth", "chore/archive-auth"]);
+  expect(changeBranches("auth", { branch: "-x", archiveBranch: "a..b" }, [])).toEqual(["feat/auth", "chore/archive-auth", "docs/auth"]);
   // Containment is not a match.
   expect(changeBranches("auth", undefined, [])).not.toContain("feat/auth-v2");
+  expect(changeBranches("auth", undefined, [])).not.toContain("docs/auth-v2");
 });
 
 test("the recorded branches are read from the spec-control block of .openspec.yaml only", () => {
@@ -229,6 +231,19 @@ test("an archive worktree with the move half committed is a stale leftover repor
   const stale = await leftovers(repo);
   const item = stale?.leftovers.find((l) => l.kind === "worktree");
   expect(item).toMatchObject({ kind: "worktree", branch: `chore/archive-${CHANGE}`, uncommitted: [`${OPENSPEC_PATHS.changesDir}/${CHANGE}/proposal.md`], outside: [] });
+});
+
+test("a kept proposal worktree on docs/<name> is a stale leftover like any other of the change's branches", async () => {
+  const repo = await tempGitRepo();
+  await withOrigin(repo);
+  const config = newRepoConfig(repo, true);
+  const wt = join(worktreesDir(), config.id, `docs-${CHANGE}`);
+  await mkdir(join(worktreesDir(), config.id), { recursive: true });
+  await ensureWorktree(repo, wt, `docs/${CHANGE}`);
+  await archive(repo);
+  git(repo, "push", "-q", "origin", "main");
+  const stale = await leftovers(repo);
+  expect(stale?.leftovers).toEqual([{ kind: "worktree", path: await realpath(wt), branch: `docs/${CHANGE}`, commit: git(wt, "rev-parse", "HEAD"), uncommitted: [], uncommittedCount: 0, outside: [], managed: true }]);
 });
 
 test("a squash-merged branch without a worktree is a stale leftover", async () => {

@@ -64,6 +64,8 @@ None.
 - `agent-sessions`: the Draft session's branch and worktree in a docs auto-merge project, the Implement start point,
   the proposal instruction, and the proposal instruction as a source of the auto-merge record.
 - `pull-requests`: `docs/<name>` as a candidate branch.
+- `stale-changes`: `docs/<name>` among a change's exactly named branches (`stale-means-archived-and-merged` was archived
+  first).
 - `kanban-board`: the card names a proposal pull request.
 
 ## Order and overlaps
@@ -88,6 +90,14 @@ None.
 - `src/server/sessions/workStatus.ts`: `changeOfWorktree` knows the `docs-` prefix.
 - `src/shared/types.ts`: `AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION`.
 - `src/shared/pullRequestLink.ts`: `docs/<name>` as a candidate; whether the linked pull request is the proposal's.
-- `src/ui/kanban.tsx`, `src/ui/changeDetail.tsx`: the "proposal pull request" wording.
-- `src/ui/helpContent.tsx`, `src/ui/changelog.ts`: help and what's new.
-- Tests: `test/sessions*.test.ts`, `test/worktree.test.ts`, `test/pullRequestLink.test.ts`, `test/workStatus.test.ts`.
+- `src/ui/kanban.tsx`, `src/ui/pullRequests.tsx`, `src/shared/nextStep.ts`: the "proposal pull request" wording on
+  the badge, in the detail header and in the recommended step's labels.
+- `src/shared/sessionBranch.ts`, `src/ui/sessionState.ts`, `src/ui/sessions.tsx`, `src/ui/sessionPanel.tsx`: a session
+  of the change may run beside the proposal session, which receives Draft only (found while implementing: "at most one
+  session per change" would otherwise put Implement onto `docs/<name>`); `src/server/sessions/manager.ts` also sends
+  Resolve conflicts to the running session on the pull request's branch.
+- `src/server/staleChanges.ts`: `docs/<name>` in `changeBranches`; tests in `test/staleChanges.test.ts`.
+- `src/ui/helpContent.tsx`, `src/ui/projectSettings.tsx`, `src/ui/changelog.ts`: help, the Docs auto-merge hint and
+  what's new.
+- Tests: `test/proposalSessions.test.ts`, `test/worktree.test.ts`, `test/pullRequestLink.test.ts`,
+  `test/workStatus.test.ts`, `test/agents.test.ts`, `test/pullRequestBoard.test.ts`.

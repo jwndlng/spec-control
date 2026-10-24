@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { boardColumns, isComplete } from "../shared/columns.ts";
 import { waitingNote } from "../shared/dependencies.ts";
-import { linkedPullRequest } from "../shared/pullRequestLink.ts";
+import { isProposalPullRequest, linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { frameworkInfo, type ChangeSession, type ChangeSnapshot, type Config, type PullRequest, type PullRequestsResponse, type RepoSnapshot, type Snapshot } from "../shared/types.ts";
 import { NoRepos } from "./empty.tsx";
 import { parseFilters, resolveLayout, serializeFilters, STACK_BELOW_PX, type Filters } from "./filters.ts";
@@ -43,6 +43,8 @@ export interface Card extends ChangeSnapshot {
   pullRequest?: PullRequest;
   /** When the list that pull request came from was fetched, so its readiness can say how fresh it is. */
   pullRequestFetchedAt?: string;
+  /** Whether that pull request is the change's proposal pull request (from `docs/<name>`), which the badge says. */
+  proposalPullRequest?: boolean;
 }
 
 /**
@@ -56,6 +58,7 @@ export function boardCards(repos: RepoSnapshot[], hues: Map<string, number>, pul
       const pr = linkedPullRequest(c, pullRequests?.repos);
       if (pr) {
         card.pullRequest = pr;
+        if (isProposalPullRequest(c, pr)) card.proposalPullRequest = true;
         const fetchedAt = pullRequests?.repos.find((l) => l.repoId === c.repoId)?.fetchedAt;
         if (fetchedAt) card.pullRequestFetchedAt = fetchedAt;
       }
@@ -218,7 +221,7 @@ export function ChangeCard({ card, now, from, working, running = false, merging,
           </span>
         ))}
         {card.sourceIssue && <SourceIssueLink issue={card.sourceIssue} place="card" />}
-        {card.pullRequest && <CardPullRequest pr={card.pullRequest} repoName={card.repoName} fetchedAt={card.pullRequestFetchedAt} now={now} merging={merging} />}
+        {card.pullRequest && <CardPullRequest pr={card.pullRequest} proposal={card.proposalPullRequest} repoName={card.repoName} fetchedAt={card.pullRequestFetchedAt} now={now} merging={merging} />}
         <SessionControls card={card} place="card" pullRequest={card.pullRequest} />
         {waiting && (
           <span class="waits-for" role="note" title={waiting.title} aria-label={waiting.title}>
