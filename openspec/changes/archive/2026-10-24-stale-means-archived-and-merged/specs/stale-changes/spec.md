@@ -233,7 +233,7 @@ The server SHALL start a carry-over session only when its own last scan reports 
 SHALL take the commit and branch from that scan, never from the request; a request for a change without one is refused
 with the reason. The dashboard itself runs no git command beyond those of any archive session's worktree.
 
-#### Scenario: Removing a settled worktree
+#### Scenario: Cleaning up a stale change's leftovers
 - **WHEN** the user presses Clean up leftovers… on a stale archived change and confirms in the dialog
 - **THEN** its stale leftovers are removed as that requirement describes, with a copy of their uncommitted files under
   the dashboard's home
