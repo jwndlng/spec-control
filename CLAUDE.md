@@ -88,9 +88,12 @@ bun test test/scanner.test.ts   # a single test file
    any linked worktree (unlocking only worktrees the dashboard created) that read-only checks proved clean and merged
    or pushed, `git worktree prune` of records whose directory is gone, and `git branch -D` of a local branch other than
    the default branch and the main checkout's branch whose work read-only checks proved is in the default branch and
-   that still points at the commit the user saw (`src/server/cleanup.ts`, the only place that deletes a branch; never a
-   remote branch or remote-tracking ref) — and, as the one forced removal, **deleting a branch with its worktree** from
-   the project details: for the single linked worktree the user confirmed after seeing what it holds (never the main
+   that still points at the commit the user saw, whether selected in repository cleanup or confirmed as a stale leftover
+   in a **stale change's cleanup** (`src/server/cleanup.ts`, the only place that deletes a branch; never a
+   remote branch or remote-tracking ref) — and, as the one forced removal, **deleting a branch with its worktree**: for
+   each linked worktree the user confirmed after seeing what it holds, either the single one of the project details'
+   deletion dialog or each one listed in a stale change's cleanup (`applyStaleCleanup`, only for a change archived on
+   the default branch and a worktree on one of its exactly named branches that is merged) (never the main
    checkout, the default branch, a worktree with a running session or one the user locked), and only once a re-read
    proved the worktree, branch, commit and uncommitted files are what the dialog showed, a copy of its uncommitted,
    non-ignored files under `~/.spec-control/branch-backups/`, then `git worktree remove --force` (unlocking only a
@@ -101,7 +104,10 @@ bun test test/scanner.test.ts   # a single test file
    showed and that no agent session for the change runs, then staging that removal with a single
    `git add --all -- openspec/changes/<name>/`, best-effort and never followed by a commit
    (`src/server/dismissChange.ts`, `POST /api/repos/<id>/changes/<name>/dismiss`, the only place that deletes a change
-   directory); and the **home migration** — once, when the user starts a binary that finds only the pre-rename home,
+   directory) — and the same deletion and `git add --all` for the main checkout's copy of a change archived on the
+   default branch that none of whose files is in `HEAD`, confirmed as a stale leftover in a stale change's cleanup,
+   after its files were re-checked by content hash and those that differ from the archive's copy were copied under
+   `~/.spec-control/branch-backups/` (`removeStaleChangeDirectory`, `POST /api/repos/<id>/changes/<name>/stale-cleanup`); and the **home migration** — once, when the user starts a binary that finds only the pre-rename home,
    `git worktree repair` of each session worktree the dashboard created, with its new path under
    `~/.spec-control/worktrees/`, which rewrites only that worktree's record in the repository and its `.git` file and is
    retried on later starts until it succeeds (`src/server/homeMigration.ts` through `repairMovedWorktree` in

@@ -10,8 +10,16 @@ const IMPLEMENT_TAIL = "when a task can only be verified by me, do the work and 
 /** Walks the user through the `- [~]` tasks; what the user does not confirm stays as it is. */
 const VALIDATE_TAIL = "take its `- [~]` tasks one at a time, tell me exactly what to check, and tick off only the ones I confirm, leaving the rest as `- [~]`.";
 
-/** Syncs the delta specs first instead of stopping at the archive workflow's "sync now?" question. */
-const ARCHIVE_TAIL = "sync the delta specs into openspec/specs first without asking me whether to sync, then archive; if they are already in sync, archive right away; tick off the tasks left for me to validate once I have confirmed them.";
+/**
+ * Syncs the delta specs first instead of stopping at the archive workflow's "sync now?" question, and commits the whole
+ * move: a half-committed archive leaves the old change directory behind in the worktree (stale-changes).
+ */
+const ARCHIVE_TAIL =
+  "sync the delta specs into openspec/specs first without asking me whether to sync, then archive; if they are already in sync, archive right away; tick off the tasks left for me to validate once I have confirmed them, and include in your commit every file the archive moved or removed.";
+
+/** The Archive tail before it asked for the whole move to be committed; a saved verbatim copy upgrades. */
+const PREVIOUS_ARCHIVE_TAIL =
+  "sync the delta specs into openspec/specs first without asking me whether to sync, then archive; if they are already in sync, archive right away; tick off the tasks left for me to validate once I have confirmed them.";
 
 /** How one agent invokes each OpenSpec workflow for `{change}`; the `- [~]` tails are appended to apply and archive. */
 function starterPrompts(invoke: { draft: string; apply: string; archive: string }): AgentProfile["prompts"] {
@@ -102,13 +110,23 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
       archive: [
         "/opsx:archive {change}",
         "/opsx:archive {change} — sync the delta specs into openspec/specs first without asking me whether to sync, then archive; if they are already in sync, archive right away.",
+        `/opsx:archive {change} — ${PREVIOUS_ARCHIVE_TAIL}`,
       ],
     },
     install: CLAUDE_INSTALL,
   },
-  { profile: CODEX_PROFILE, formerPrompts: {}, install: CODEX_INSTALL },
+  {
+    profile: CODEX_PROFILE,
+    formerPrompts: { archive: [`Use the openspec-archive-change skill to archive the OpenSpec change {change} — ${PREVIOUS_ARCHIVE_TAIL}`] },
+    install: CODEX_INSTALL,
+  },
   // `agy -i {prompt}` left a console with `agy -i`, an option without its value.
-  { profile: ANTIGRAVITY_PROFILE, formerPrompts: {}, formerCommands: [["agy", "-i", "{prompt}"]], install: ANTIGRAVITY_INSTALL },
+  {
+    profile: ANTIGRAVITY_PROFILE,
+    formerPrompts: { archive: [`/opsx-archive {change} — ${PREVIOUS_ARCHIVE_TAIL}`] },
+    formerCommands: [["agy", "-i", "{prompt}"]],
+    install: ANTIGRAVITY_INSTALL,
+  },
 ];
 
 /** How to install an agent: its preset's steps when its id is a preset's, else the generic advice for its command. */

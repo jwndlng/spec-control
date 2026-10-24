@@ -13,6 +13,7 @@ import { Scanner } from "./scanner.ts";
 import { confirmIntegration } from "./integration.ts";
 import { SessionManager } from "./sessions/manager.ts";
 import { pruneMergeScratch } from "./sessions/workStatus.ts";
+import { sessionHints } from "./staleChanges.ts";
 import { UpdateChecker } from "./updateCheck.ts";
 import { VERSION } from "./version.ts";
 
@@ -99,6 +100,7 @@ async function main(): Promise<void> {
           state.autoFetcher?.plan();
           void activity.append(diffSnapshots(previous, next, { now: new Date(), pollIntervalSeconds: state.config.pollIntervalSeconds }));
         },
+        sessionsFor: (repoId) => sessionHints(state.sessions?.list() ?? [], repoId),
       },
       (await readSnapshot()) ?? undefined,
     ),
