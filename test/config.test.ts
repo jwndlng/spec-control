@@ -144,8 +144,8 @@ test("former prompts upgrade per preset: another preset's former prompt and an u
 });
 
 const FORMER_AGY_COMMAND = ["agy", "-i", "{prompt}"];
-const withAgyCommand = (command: string[], id = ANTIGRAVITY_PROFILE.id) => {
-  const agent = { ...structuredClone(ANTIGRAVITY_PROFILE), id, command };
+const withAgyCommand = (command: string[], id = ANTIGRAVITY_PROFILE.id, launchArgs?: unknown) => {
+  const agent = { ...structuredClone(ANTIGRAVITY_PROFILE), id, command, ...(launchArgs === undefined ? {} : { launchArgs }) };
   return { ...defaultConfig(), agentSessions: { enabled: true, agents: [agent], defaultAgent: id } };
 };
 
@@ -540,4 +540,23 @@ test("keepAwake: only false is stored; absent and true write no key; anything el
   expect("keepAwake" in stored(true)).toBe(false);
   expect(stored(false).keepAwake).toBe(false);
   expect(() => validateConfig({ ...defaultConfig(), keepAwake: "off" })).toThrow(ConfigValidationError);
+});
+
+const launchArgsOf = (launchArgs: unknown) => validateConfig(withAgyCommand(ANTIGRAVITY_PROFILE.command, ANTIGRAVITY_PROFILE.id, launchArgs)).agentSessions.agents[0].launchArgs;
+
+test("launch arguments: options are kept, empty is none, placeholders, control characters and bypass flags are refused", () => {
+  expect(launchArgsOf(["--mode", "auto"])).toEqual(["--mode", "auto"]);
+  expect(launchArgsOf(["--model fast"])).toEqual(["--model fast"]); // one argument, never split
+  expect(launchArgsOf([])).toBeUndefined();
+  expect(launchArgsOf(undefined)).toBeUndefined();
+  for (const bad of [["--prompt={prompt}"], ["{change}"], ["--mode\nauto"], ["--dangerously-skip-permissions"], [""]]) {
+    expect(() => launchArgsOf(bad)).toThrow(/launchArgs/);
+  }
+});
+
+test("a former preset command upgrades and keeps its launch arguments; no preset carries any", () => {
+  const upgraded = validateConfig(withAgyCommand(FORMER_AGY_COMMAND, ANTIGRAVITY_PROFILE.id, ["--mode", "auto"])).agentSessions.agents[0];
+  expect(upgraded.command).toEqual(ANTIGRAVITY_PROFILE.command);
+  expect(upgraded.launchArgs).toEqual(["--mode", "auto"]);
+  for (const { profile } of AGENT_PRESETS) expect(profile.launchArgs).toBeUndefined();
 });

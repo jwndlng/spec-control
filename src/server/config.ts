@@ -32,6 +32,20 @@ const commandSchema = z
   .min(1, { message: "command must name an executable" })
   .refine((args) => args.length === 0 || !args[0].includes("{"), { message: "the executable cannot be a placeholder" });
 
+// Added to every start, the prompt-less console and the resume command included, so no placeholder of any kind: nothing
+// from a prompt reaches them. One argument per entry, never shell text, and no control character.
+const launchArgsSchema = z
+  .array(
+    z
+      .string()
+      .min(1)
+      .refine(noBypass, { message: BYPASS_MESSAGE })
+      .refine(placeholdersOnly([]), { message: "no placeholder is supported in launch arguments" })
+      .refine((v) => ![...v].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127), { message: "must not contain a control character" }),
+  )
+  .optional()
+  .transform((args) => (args?.length ? args : undefined));
+
 const promptSchema = z
   .string()
   .trim()
@@ -80,6 +94,7 @@ const agentProfileSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/, { message: "lower-case letters, digits and dashes" }),
   name: z.string().trim().min(1),
   command: commandSchema,
+  launchArgs: launchArgsSchema,
   prompts: z
     .object({
       draft: promptSchema.optional(),

@@ -12,7 +12,7 @@ import { isBranchName, isCleaningUp } from "../cleanup.ts";
 import { isDismissing } from "../dismissChange.ts";
 import { canonicalPath, worktreesDir } from "../paths.ts";
 import { CHANGE_NAME } from "../source.ts";
-import { agentEnv, agentFor, availability, carryOverPrompt, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, removeDuplicatePrompt, resolveConflictsPrompt, shipPrompt } from "./agents.ts";
+import { agentEnv, agentFor, availability, carryOverPrompt, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, removeDuplicatePrompt, resolveConflictsPrompt, resumeLaunch, shipPrompt } from "./agents.ts";
 import { consoleFolderProblem, prepareConsoleFolder } from "./consoleFolder.ts";
 import type { SessionActivity } from "../activity/events.ts";
 import { isBusy } from "../keepAwake.ts";
@@ -604,7 +604,8 @@ export class SessionManager {
       this.report(session, { kind: "session-shipped", submitted });
       return { ...session, submitted, autoMerge };
     }
-    const launch = agent.resumeCommand ? { argv: [...agent.resumeCommand], typed: prompt } : launchCommand(agent, prompt);
+    const resume = resumeLaunch(agent);
+    const launch = resume ? { argv: resume, typed: prompt } : launchCommand(agent, prompt);
     if (!Bun.which(launch.argv[0])) throw new SessionError(503, `${agent.name} was not found (${launch.argv[0]})`);
     if (autoMerge) session.autoMergeAskedAt = new Date().toISOString(); // saved by `restart`
     await this.restart(session, repo.path, launch.argv, agentEnv(agent, process.env), launch.typed);
@@ -642,7 +643,8 @@ export class SessionManager {
       this.report(session, { kind: "session-conflicts-resolve", submitted });
       return { ...session, submitted };
     }
-    const launch = agent.resumeCommand ? { argv: [...agent.resumeCommand], typed: prompt } : launchCommand(agent, prompt);
+    const resume = resumeLaunch(agent);
+    const launch = resume ? { argv: resume, typed: prompt } : launchCommand(agent, prompt);
     if (!Bun.which(launch.argv[0])) throw new SessionError(503, `${agent.name} was not found (${launch.argv[0]})`);
     await this.restart(session, repo.path, launch.argv, agentEnv(agent, process.env), launch.typed);
     this.report(session, { kind: "session-conflicts-resolve", submitted: true });
@@ -971,9 +973,10 @@ export class SessionManager {
         : isProjectConsole(session)
           ? { ...(await this.prepareProjectConsoleRestart(session)), repoPath: undefined }
           : await this.prepareRestart(session).then(({ agent, repo }) => ({ agent, repoPath: repo.path }));
-    if (!agent.resumeCommand) throw new SessionError(400, "this agent has no resume command configured");
-    if (!Bun.which(agent.resumeCommand[0])) throw new SessionError(503, `${agent.name} was not found (${agent.resumeCommand[0]})`);
-    await this.restart(session, repoPath, [...agent.resumeCommand], agentEnv(agent, process.env));
+    const resume = resumeLaunch(agent);
+    if (!resume) throw new SessionError(400, "this agent has no resume command configured");
+    if (!Bun.which(resume[0])) throw new SessionError(503, `${agent.name} was not found (${resume[0]})`);
+    await this.restart(session, repoPath, resume, agentEnv(agent, process.env));
     return session;
   }
 
