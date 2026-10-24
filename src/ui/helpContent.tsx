@@ -143,9 +143,19 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         </p>
         <ul>
           <li>
-            A card offers the next step for its column — <strong>Draft artifacts</strong>, <strong>Implement</strong>,{" "}
-            <strong>Validate</strong> or <strong>Archive</strong>. It starts your agent in a git worktree of its own, on its
-            own branch, under <code>~/.spec-control/worktrees/</code>; your main checkout is not touched.
+            A card offers one recommended action for its column — <strong>Draft artifacts</strong>, <strong>Implement</strong>,{" "}
+            <strong>Validate</strong> or <strong>Archive</strong> — and the arrow beside it opens a menu with every other
+            action the change allows, such as <strong>Draft artifacts</strong> for a design on a ready change. A starter
+            runs your agent in a git worktree of its own, on its own branch, under <code>~/.spec-control/worktrees/</code>;
+            your main checkout is not touched. Once implementation started, <strong>Draft artifacts</strong> is no longer
+            offered.
+          </li>
+          <li>
+            While the change has an open pull request, that pull request decides what is recommended:{" "}
+            <strong>Resolve conflicts</strong> when it conflicts, <strong>Merge</strong> when it is ready (which opens the
+            console of the session that shipped it, or the pull request on GitHub), <strong>Implement</strong> when its
+            checks fail — <strong>Fix checks</strong> on a finished change — and otherwise a note saying what it waits for.
+            The menu still offers everything.
           </li>
           <li>
             The agent's terminal is the <strong>Console</strong> tab of the change's detail view. What it changes is decided by
@@ -158,7 +168,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             itself commits, merges and pushes nothing.
           </li>
           <li>
-            <strong>FF</strong> (Fast-forward), beside <strong>Draft artifacts</strong> on a change that is not planned yet,
+            <strong>Fast-forward</strong>, in the menu beside <strong>Draft artifacts</strong> on a change that is not planned yet,
             asks the agent to write the artifacts, implement the change and open a pull request in one go, without
             stopping for your review — the pull request is the only review, and it is never merged for you. It asks you
             to confirm first; <strong>Don't show this warning again</strong> skips that, and{" "}

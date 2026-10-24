@@ -847,11 +847,14 @@ const UNPLANNED_STAGES: readonly Stage[] = ["unknown", "backlog", "drafts"];
 export function availableActions(change: Pick<ChangeSnapshot, "archived" | "artifacts" | "stage" | "subState" | "blocked">): SessionAction[] {
   if (change.archived) return [];
   const actions: SessionAction[] = [];
-  if (change.artifacts.length === 0 || change.artifacts.some((a) => a.status !== "done")) {
+  // Draft is for a change not planned yet; in `Ready` it may still write an artifact implementing does not need (a
+  // design). Once implementation started it is never offered, whatever artifacts are missing.
+  const unplanned = UNPLANNED_STAGES.includes(change.stage);
+  if (unplanned || (change.stage === "ready" && change.artifacts.some((a) => a.status !== "done"))) {
     actions.push("draft");
     // Fast-forward is for a change not planned yet — once Ready it is Implement and Ship. It goes on to implement, so a
     // change waiting for its dependencies may only be drafted.
-    if (!change.blocked && UNPLANNED_STAGES.includes(change.stage)) actions.push("fastForward");
+    if (!change.blocked && unplanned) actions.push("fastForward");
   }
   // A change waiting for its dependencies may still be drafted; only implementing it would break the order.
   if ((change.stage === "ready" || change.stage === "implementing") && !change.blocked) actions.push("implement");
@@ -859,6 +862,11 @@ export function availableActions(change: Pick<ChangeSnapshot, "archived" | "arti
   if (change.stage === "done" && change.subState === "validate") actions.push("validate");
   if (change.stage === "done") actions.push("archive"); // every task settled, not archived yet
   return actions;
+}
+
+/** Stages past drafting: Draft artifacts is refused there, with this reason (agent-sessions). */
+export function pastDraftingReason(change: Pick<ChangeSnapshot, "stage">): string | undefined {
+  return change.stage === "implementing" || change.stage === "done" ? "the change is past drafting: its implementation has started" : undefined;
 }
 
 /** Another known repository with the same `origin` remote: probably a second clone, but never merged or hidden. */

@@ -6,7 +6,7 @@ import { rmSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { blockedReason } from "../../shared/dependencies.ts";
-import { availableActions, changeSessions, isChangeless, isConsole, isIntegration, isProjectConsole, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type Session, type SessionAction, type SessionWorktree, type Snapshot, type WorkStatus, type MergeAsked, type PromptResult, type PullRequest, type RepoConfig, type ShipResult, type AutoMergePromptResult, type StartResult } from "../../shared/types.ts";
+import { availableActions, changeSessions, pastDraftingReason, isChangeless, isConsole, isIntegration, isProjectConsole, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type Session, type SessionAction, type SessionWorktree, type Snapshot, type WorkStatus, type MergeAsked, type PromptResult, type PullRequest, type RepoConfig, type ShipResult, type AutoMergePromptResult, type StartResult } from "../../shared/types.ts";
 import { sessionBranch } from "../../shared/sessionBranch.ts";
 import { isCleaningUp } from "../cleanup.ts";
 import { isDismissing } from "../dismissChange.ts";
@@ -190,7 +190,7 @@ export class SessionManager {
     const stranded = carryOver ? snapshot.strandedArchive : undefined;
     if (carryOver && !stranded) throw new SessionError(409, "the last scan found no archive of this change stranded on a branch");
     // Fast-forward implements too, so a blocked change is refused with the same named reason as Implement.
-    const heldBack = action === "implement" ? blockedReason(snapshot) : action === "fastForward" ? blockedReason(snapshot, "Fast-forward") : undefined;
+    const heldBack = action === "implement" ? blockedReason(snapshot) : action === "fastForward" ? blockedReason(snapshot, "Fast-forward") : action === "draft" && !stranded ? pastDraftingReason(snapshot) : undefined;
     if (heldBack) throw new SessionError(400, heldBack);
     // A stranded archive exists whatever the change's stage on the main checkout; that is the whole point of carrying it over.
     if (!stranded && !availableActions(snapshot).includes(action)) throw new SessionError(400, `"${action}" is not available for this change in its current stage`);
@@ -616,7 +616,7 @@ export class SessionManager {
       .repos.find((r) => r.id === session.repoId)
       ?.changes.find((c) => c.name === session.change && !c.archived);
     if (!change) throw new SessionError(404, "unknown change");
-    const heldBack = action === "implement" ? blockedReason(change) : action === "fastForward" ? blockedReason(change, "Fast-forward") : undefined;
+    const heldBack = action === "implement" ? blockedReason(change) : action === "fastForward" ? blockedReason(change, "Fast-forward") : action === "draft" ? pastDraftingReason(change) : undefined;
     if (heldBack) throw new SessionError(400, heldBack);
     if (!availableActions(change).includes(action)) throw new SessionError(400, `"${action}" is not available for this change in its current stage`);
     const agent = config.agentSessions.agents.find((a) => a.id === session.agentId);

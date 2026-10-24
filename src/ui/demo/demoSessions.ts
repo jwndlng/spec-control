@@ -59,6 +59,11 @@ const SEEDS: Seed[] = [
     startedAgo: 6 * HOUR,
     ended: { ago: 5 * HOUR, work: { state: "pushed", base: "origin/main", conflicts: { base: "origin/main", files: ["src/router/table.ts", "src/router/table.test.ts"] } } },
   },
+  // Shipped, and its pull request #479 is ready: the card recommends Merge, which opens this session's console.
+  { repo: "atlas-api", change: "paginate-list-endpoints", action: "implement", transcript: "implement", startedAgo: 1 * DAY + 3 * HOUR, ended: { ago: 1 * DAY, work: { state: "pushed", base: "origin/main" } } },
+  // Shipped, and #311's checks fail: the card recommends Implement so the agent fixes them. Beside them, #57's checks
+  // still run, so `biometric-login` waits, and #305 conflicts, so `dark-mode-tokens` recommends Resolve conflicts.
+  { repo: "harbor-web", change: "redesign-settings-page", action: "implement", transcript: "implement", startedAgo: 7 * HOUR, ended: { ago: 6 * HOUR, work: { state: "pushed", base: "origin/main" } } },
   { repo: "atlas-api", change: "deprecate-v1-auth", action: "archive", transcript: "archive", startedAgo: 1 * DAY, ended: { ago: 23 * HOUR, work: { state: "merged", base: "origin/main" } } },
   { repo: "lantern-infra", change: "cost-allocation-tags", action: "draft", transcript: "draft", startedAgo: 50 * MINUTE, ended: { ago: 45 * MINUTE, work: { state: "clean", base: "origin/main" } } },
   { repo: "ember-mobile", change: "offline-sync-queue", action: "implement", transcript: "implement", startedAgo: 20 * MINUTE, ended: { ago: 20 * MINUTE, work: { state: "missing" }, failed: "could not create the worktree: the branch is checked out elsewhere" } },

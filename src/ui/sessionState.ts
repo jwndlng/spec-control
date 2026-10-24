@@ -1,4 +1,5 @@
 // Pure helpers for the agent-session UI; free of DOM access at import time so they can be unit-tested.
+import { menuActions, type NextStep, recommendedAction } from "../shared/nextStep.ts";
 import { mergePending, pullRequestReadiness, readinessDetail } from "../shared/pullRequestReadiness.ts";
 import { availableActions, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type RepoPullRequests, type Session, type SessionAction, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
 
@@ -53,11 +54,34 @@ export function autoEndedText(ended: AutoEnded): string {
 export function cardSessionControls(
   config: Config | null,
   sessions: ChangeSession[],
-  card: Pick<ChangeSnapshot, "repoId" | "name" | "archived" | "artifacts" | "stage" | "subState" | "blocked">,
-): { shown: ChangeSession[]; starters: SessionAction[] } {
-  if (!sessionsEnabledFor(config, card.repoId)) return { shown: [], starters: [] };
+  card: Pick<ChangeSnapshot, "repoId" | "name" | "archived" | "artifacts" | "stage" | "subState" | "blocked"> & { pullRequest?: PullRequest },
+): { shown: ChangeSession[]; starters: SessionAction[]; main?: NextStep; menu: NextStep[] } {
+  if (!sessionsEnabledFor(config, card.repoId)) return { shown: [], starters: [], menu: [] };
   const shown = sessionsForChange(sessions, card.repoId, card.name);
-  return { shown, starters: shown.some((s) => s.state === "running") ? [] : startersFor(config, card) };
+  // A running session's badge stands in for the whole split button, pull-request steps included.
+  if (shown.some((s) => s.state === "running")) return { shown, starters: [], menu: [] };
+  const starters = startersFor(config, card);
+  return { shown, starters, ...starterSplit(card, starters, card.pullRequest) };
+}
+
+/**
+ * The split button for a set of starters (kanban-board: "A change's actions are one split button"): the recommended
+ * action and the menu of every other one. Display only — `starters` is already what the server would accept.
+ */
+export function starterSplit(card: Pick<ChangeSnapshot, "stage" | "subState" | "archived">, starters: readonly SessionAction[], pullRequest: PullRequest | undefined): { main?: NextStep; menu: NextStep[] } {
+  const main = recommendedAction(card, starters, pullRequest);
+  return { main, menu: menuActions(card, starters, pullRequest, main) };
+}
+
+/**
+ * Where Merge, Resolve conflicts and Fix checks lead: the change's most recent session whose branch heads the pull
+ * request. `undefined` when the dashboard has no such record — Merge is then a link to the pull request.
+ */
+export function pullRequestSession(sessions: ChangeSession[], card: Pick<ChangeSnapshot, "repoId" | "name">, pr: Pick<PullRequest, "head"> | undefined): ChangeSession | undefined {
+  if (!pr) return undefined;
+  return sessions
+    .filter((s) => s.repoId === card.repoId && s.change === card.name && !s.inPlace && s.branch === pr.head)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 }
 
 /**

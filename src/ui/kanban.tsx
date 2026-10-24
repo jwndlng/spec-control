@@ -219,7 +219,7 @@ export function ChangeCard({ card, now, from, working, running = false, merging,
         ))}
         {card.sourceIssue && <SourceIssueLink issue={card.sourceIssue} place="card" />}
         {card.pullRequest && <CardPullRequest pr={card.pullRequest} repoName={card.repoName} fetchedAt={card.pullRequestFetchedAt} now={now} merging={merging} />}
-        <SessionControls card={card} place="card" />
+        <SessionControls card={card} place="card" pullRequest={card.pullRequest} />
         {waiting && (
           <span class="waits-for" role="note" title={waiting.title} aria-label={waiting.title}>
             <span aria-hidden="true">⧗ </span>
