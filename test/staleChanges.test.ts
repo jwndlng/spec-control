@@ -411,7 +411,7 @@ test("a duplicate only the main checkout still has is no duplicate: pulling reso
   const repo = await duplicateRepo();
   // The default branch removed the directory; the main checkout has not pulled that yet.
   const other = join(await realpath(await tempDir("osd-clone-")), "clone");
-  git(repo, "clone", "-q", git(repo, "remote", "get-url", "origin"), other);
+  git(repo, "clone", "-q", "-b", "main", git(repo, "remote", "get-url", "origin"), other);
   git(other, "config", "user.email", "t@example.invalid");
   git(other, "config", "user.name", "t");
   git(other, "rm", "-q", "-r", `${OPENSPEC_PATHS.changesDir}/${CHANGE}`);
