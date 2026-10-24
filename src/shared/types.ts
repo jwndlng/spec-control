@@ -110,6 +110,12 @@ export interface ChangeSnapshot {
    * (stale-changes spec): marked on the board, offered for carry-over. Never an input to columns or counts.
    */
   strandedArchive?: StrandedArchive;
+  /**
+   * The change is archived on the default branch and something of it is left over (stale-changes: "A change that is
+   * archived and merged is stale"); it is stale when `leftovers` is not empty, while `kept` lists what is not. Derived on
+   * every scan, never stored; never an input to columns or counts.
+   */
+  stale?: StaleLeftovers;
   /** Non-fatal problems while reading this change. */
   warnings?: string[];
 }
@@ -130,6 +136,106 @@ export interface StrandedArchive {
   archive: string;
   /** The newest commit on that branch that touched the archive directory (full hash). */
   commit: string;
+}
+
+/** What an archived and merged change left behind, and what of it is kept and why. */
+export interface StaleLeftovers {
+  /** The archive directory on the default branch, e.g. `2026-10-22-rotate-keys`. */
+  archive: string;
+  /** Whether the main checkout holds that archive already; when not, Pull brings it. */
+  pulled: boolean;
+  /** Stale leftovers: merged, nobody working in them. */
+  leftovers: StaleLeftover[];
+  /** Leftovers that are not stale, each with its reason. */
+  kept: KeptLeftover[];
+}
+
+export type StaleLeftover = StaleWorktreeLeftover | StaleBranchLeftover | StaleMainLeftover;
+
+/** A linked worktree on one of the change's branches. */
+export interface StaleWorktreeLeftover {
+  kind: "worktree";
+  path: string;
+  /** Absent for a detached worktree. */
+  branch?: string;
+  /** Full commit of its `HEAD`. */
+  commit: string;
+  /** Uncommitted and untracked paths from the repository's top level; at most `UNCOMMITTED_LISTED` of them. */
+  uncommitted: string[];
+  uncommittedCount: number;
+  /** Listed uncommitted paths outside the change's own directories: removing it then needs the acknowledgement. */
+  outside: string[];
+  /** It lies under the dashboard's worktrees folder. */
+  managed: boolean;
+}
+
+/** A local branch of the change that no worktree has checked out. */
+export interface StaleBranchLeftover {
+  kind: "branch";
+  name: string;
+  /** Full commit. */
+  commit: string;
+}
+
+/** The main checkout's `openspec/changes/<name>/`, none of whose files is in the main checkout's commit. */
+export interface StaleMainLeftover {
+  kind: "main";
+  /** The directory, relative to the project folder, e.g. `openspec/changes/rotate-keys`. */
+  dir: string;
+  /** Its files, relative to `dir`, with git's content hash and whether the index has them. */
+  files: StaleMainFile[];
+}
+
+export interface StaleMainFile {
+  path: string;
+  hash: string;
+  staged: boolean;
+}
+
+export interface KeptLeftover {
+  kind: StaleLeftover["kind"];
+  /** The worktree's path, the branch's name, or the main checkout's directory. */
+  id: string;
+  reason: string;
+}
+
+/** `GET /api/repos/<id>/changes/<name>/stale-cleanup`: the change's leftovers, read afresh. */
+export interface StaleCleanupPreview {
+  repoId: string;
+  name: string;
+  /** Absent when the default branch does not hold the change's archive (it is not stale then). */
+  stale?: StaleLeftovers;
+  /** Where copies go, so the dialog can say it before anything is copied. */
+  backupRoot: string;
+}
+
+export interface StaleCleanupRequest {
+  worktrees: { path: string; branch: string | null; commit: string; uncommitted: string[] }[];
+  branches: { name: string; commit: string }[];
+  mainCheckout: { files: { path: string; hash: string }[] } | null;
+  acknowledged: boolean;
+}
+
+export interface StaleCleanupItem {
+  kind: StaleLeftover["kind"];
+  /** As requested: the worktree's path, the branch's name, or the main checkout's directory. */
+  id: string;
+  /** `removed`: the worktree or directory is gone (a worktree's branch may have been kept, see `reason`). */
+  outcome: "removed" | "deleted" | "kept";
+  reason?: string;
+  /** A deleted branch and the commit it pointed at, for `git branch <name> <commit>`. */
+  branch?: string;
+  commit?: string;
+  backupDir?: string;
+  backedUp?: number;
+}
+
+export interface StaleCleanupResult {
+  repoId: string;
+  name: string;
+  items: StaleCleanupItem[];
+  /** Set when nothing was attempted, e.g. the archive is gone from the default branch. */
+  refused?: string;
 }
 
 /** Working-tree state of one checkout. Counts only — never the names of changed files. */
@@ -588,16 +694,6 @@ export interface SessionWorktree {
   sessionId?: string;
   /** The commit it has checked out (read-only `rev-parse`); compared with a pull request's head commit for "push pending". */
   head?: string;
-  /** Everything it holds is already archived on the default branch (stale-changes spec); absent otherwise. */
-  settled?: SettledWorktree;
-}
-
-/** A session worktree of an archived change whose commits and uncommitted files the default branch already covers. */
-export interface SettledWorktree {
-  /** The archive directory on the default branch, e.g. `2026-10-22-update-routines`. */
-  archive: string;
-  /** Uncommitted or untracked files, all inside the change's own directories. */
-  uncommitted: number;
 }
 
 /** A session is a process in a terminal: it runs, or it has ended. `failed` means it could not be started. */

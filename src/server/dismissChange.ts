@@ -181,10 +181,45 @@ export async function dismissChange(repo: RepoConfig, scanned: RepoSnapshot, nam
     if (hasOpenSession()) throw new DismissError(409, `an agent session is running for "${name}"; end it first`);
     const { dir, preview } = await inspect(repo, scanned, name);
     if (preview.fingerprint !== fingerprint) throw new DismissError(409, `"${name}" changed since it was shown; look at it again before dismissing`);
-    await rm(dir, { recursive: true });
-    // The files are gone; whatever git does, the dismissal has succeeded.
-    const staged = scanned.isGit ? await gitWrite(repo.path, ["add", "--all", "--", `${changesDir(scanned)}/${name}/`]) : false;
-    return { name, staged };
+    return { name, staged: await deleteAndStage(repo, scanned, dir, name) };
+  } finally {
+    running.delete(k);
+  }
+}
+
+/** The dismissal's one write: the directory goes, then its removal is staged, best-effort. */
+async function deleteAndStage(repo: RepoConfig, scanned: RepoSnapshot, dir: string, name: string): Promise<boolean> {
+  await rm(dir, { recursive: true });
+  // The files are gone; whatever git does, the deletion has succeeded.
+  return scanned.isGit ? await gitWrite(repo.path, ["add", "--all", "--", `${changesDir(scanned)}/${name}/`]) : false;
+}
+
+/**
+ * The main checkout's copy of a change that is archived and merged, confirmed in a stale change's cleanup
+ * (stale-changes: "A stale change's leftovers are cleaned up on one confirmation"): deleted and its removal staged
+ * exactly as a dismissal does. `verify` re-checks, under the dismissal's lock, that the directory is what the user saw and
+ * backs up what differs from the archive; it returns why not to go ahead, and then nothing is deleted.
+ */
+export async function removeStaleChangeDirectory(
+  repo: RepoConfig,
+  scanned: RepoSnapshot,
+  name: string,
+  verify: (dir: string) => Promise<string | undefined>,
+): Promise<{ removed: false; reason: string } | { removed: true; staged: boolean }> {
+  if (!isDismissableName(name)) return { removed: false, reason: "invalid change name" };
+  const k = key(repo.id, name);
+  if (running.has(k)) return { removed: false, reason: `"${name}" is being dismissed` };
+  running.add(k);
+  try {
+    let dir: string;
+    try {
+      dir = await activeDir(repo, scanned, name);
+    } catch (err) {
+      return { removed: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+    const refused = await verify(dir);
+    if (refused) return { removed: false, reason: refused };
+    return { removed: true, staged: await deleteAndStage(repo, scanned, dir, name) };
   } finally {
     running.delete(k);
   }

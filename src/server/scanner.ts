@@ -1,3 +1,4 @@
+import { realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { resolveDependencies } from "../shared/dependencies.ts";
@@ -5,13 +6,15 @@ import { deriveStage, isPlanned } from "../shared/columns.ts";
 import { ISSUE_FILE, toSourceIssue } from "../shared/issues.ts";
 import { detectLabels } from "../shared/labels.ts";
 import { sessionBranch } from "../shared/sessionBranch.ts";
-import type { ChangeRecord, ChangeSnapshot, Config, DetectedLabel, RepoConfig, RepoSnapshot, SharedConfig, Snapshot, Worktree } from "../shared/types.ts";
+import type { ChangeRecord, ChangeSnapshot, Config, DetectedLabel, RepoConfig, RepoSnapshot, SharedConfig, Snapshot, StaleLeftovers, Worktree } from "../shared/types.ts";
 import { summarizeWorkInProgress } from "../shared/workInProgress.ts";
 import { emptySnapshot, writeSnapshot } from "./cache.ts";
 import type { FrameworkProject, SpecFramework } from "./frameworks/framework.ts";
 import { claimFramework, FRAMEWORKS, unclaimedMessage } from "./frameworks/registry.ts";
 import { type ChangeCopy, foldLeftovers, mergeChanges } from "./mergeChanges.ts";
+import { worktreesDir } from "./paths.ts";
 import { loadSharedConfig, repoSharedConfig } from "./sharedConfig.ts";
+import type { SessionHint } from "./staleChanges.ts";
 import { CHANGE_NAME, LocalRepoSource, type ChangeDirEntry, type DirtyFile, type RepoSource } from "./source.ts";
 
 export const DEFAULT_CONCURRENCY = 4;
@@ -258,7 +261,13 @@ async function scanChange(ctx: RepoContext, entry: ChangeDirEntry, withGit: bool
  * `shared` is the dashboard's shared OpenSpec config, when one exists; it only adds the read-only sync state.
  * `frameworks` is the registry to claim the folder from (a test seam; the registered modules by default).
  */
-export async function scanRepo(repo: RepoConfig, source: RepoSource = new LocalRepoSource(repo.path), shared?: SharedConfig, frameworks: readonly SpecFramework[] = FRAMEWORKS): Promise<RepoSnapshot> {
+export async function scanRepo(
+  repo: RepoConfig,
+  source: RepoSource = new LocalRepoSource(repo.path),
+  shared?: SharedConfig,
+  frameworks: readonly SpecFramework[] = FRAMEWORKS,
+  sessions: readonly SessionHint[] = [],
+): Promise<RepoSnapshot> {
   const base = { id: repo.id, name: repo.name, path: repo.path, scannedAt: new Date().toISOString() };
   const framework = await claimFramework(source, frameworks);
   if (!framework) {
@@ -311,10 +320,25 @@ export async function scanRepo(repo: RepoConfig, source: RepoSource = new LocalR
   const open = merged.filter((c) => !c.archived);
   const stranded =
     isGit && !noCommit && open.length > 0 && source.strandedArchives && framework.layout.archiveDir
-      ? await source.strandedArchives(framework.layout, open.map((c) => ({ name: c.name, created: c.created })), archivedOnMain, mainBranch).catch(() => undefined)
+      ? await source.strandedArchives(framework.layout, open.map((c) => ({ name: c.name, created: c.created, ...(c.recorded ? { recorded: c.recorded } : {}) })), archivedOnMain, mainBranch, sessions).catch(() => undefined)
       : undefined;
   const active = stranded?.size ? merged.map((c) => (!c.archived && stranded.has(c.name) ? { ...c, strandedArchive: stranded.get(c.name) } : c)) : merged;
-  const changes = resolveDependencies([...active, ...archived]);
+  // Archived on the default branch, merged, and something left over: marked, never moved (stale-changes spec).
+  const stale =
+    isGit && !noCommit && source.staleLeftovers && framework.layout.archiveDir
+      ? await source
+          .staleLeftovers({
+            layout: framework.layout,
+            defaultBranch: mainBranch,
+            worktrees: listed,
+            active: new Map(open.map((c) => [c.name, { name: c.name, created: c.created, ...(c.recorded ? { recorded: c.recorded } : {}) }])),
+            archivedOnMain,
+            sessions,
+            managedRoot: await realpath(join(worktreesDir(), repo.id)).catch(() => join(worktreesDir(), repo.id)),
+          })
+          .catch(() => undefined)
+      : undefined;
+  const changes = resolveDependencies(markStale([...active, ...archived], stale));
 
   return {
     ...base,
@@ -335,6 +359,23 @@ export async function scanRepo(repo: RepoConfig, source: RepoSource = new LocalR
     detectedLabels,
     changes,
   };
+}
+
+/**
+ * Puts each change's leftovers on the card it is shown as: the active change while the main checkout has not pulled the
+ * archive, else its newest archive. Kept ones too — a running session's worktree tells the end-session dialog the
+ * archive is on the default branch — but only a stale leftover marks the card (`staleReason`).
+ */
+function markStale(changes: ChangeSnapshot[], stale: Map<string, StaleLeftovers> | undefined): ChangeSnapshot[] {
+  if (!stale?.size) return changes;
+  const marked = new Set<string>();
+  return changes.map((c) => {
+    const found = stale.get(c.name);
+    if (!found || marked.has(c.name)) return c;
+    if (c.archived && changes.some((o) => o.name === c.name && !o.archived)) return c;
+    marked.add(c.name);
+    return { ...c, stale: found };
+  });
 }
 
 const LABEL_SKIP_DIRS = new Set(["node_modules", "vendor", "dist", "build", "target", "openspec"]);
@@ -434,6 +475,8 @@ export interface ScannerOptions {
   persist?: boolean;
   /** Called after every completed scan with the snapshot that was current before it and the new one. */
   onSnapshots?: (previous: Snapshot, next: Snapshot) => void;
+  /** The dashboard's change sessions of a repository: their branches name a change's branches, a running one keeps its worktree. */
+  sessionsFor?: (repoId: string) => SessionHint[];
 }
 
 /** Owns the current snapshot and the polling schedule (design.md D4). */
@@ -491,7 +534,7 @@ export class Scanner {
         const repo = repos[index];
         const source = this.options.sourceFor?.(repo) ?? new LocalRepoSource(repo.path);
         try {
-          results[index] = await withTimeout(scanRepo(repo, source, shared), timeoutMs, repo.name);
+          results[index] = await withTimeout(scanRepo(repo, source, shared, FRAMEWORKS, this.options.sessionsFor?.(repo.id) ?? []), timeoutMs, repo.name);
         } catch (err) {
           // Keep the last good changes so the board never blanks out on a transient failure.
           const prev = previous.get(repo.id);

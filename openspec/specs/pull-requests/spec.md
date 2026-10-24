@@ -266,7 +266,7 @@ The link SHALL be derived when it is displayed, from the snapshot and the cached
 
 #### Scenario: The link changes nothing else
 - **WHEN** a change gains a linked pull request whose checks are still running
-- **THEN** its column, sub-state, progress, the counts it contributes to and the starters it offers are unchanged, and the activity log records nothing
+- **THEN** its column, sub-state, progress, the counts it contributes to and its available actions are unchanged, the activity log records nothing, and only its split button's main part shows that the pull request is waiting
 
 #### Scenario: Cache deleted
 - **WHEN** the pull-request cache is deleted

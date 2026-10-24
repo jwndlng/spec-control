@@ -4,10 +4,8 @@ import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { CONFLICTABLE_WORK, type ChangeSession, type RepoConfig, type SessionAction, type SessionWorktree, type WorkConflicts, type WorkStatus } from "../../shared/types.ts";
 import { OPENSPEC_PATHS } from "../frameworks/registry.ts";
-import { subdirectory } from "../git.ts";
 import { mergeScratchDir, worktreesDir } from "../paths.ts";
 import { baseRef, contentIsInBase } from "./base.ts";
-import { settledArchive } from "../staleChanges.ts";
 
 const ENV = { GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" };
 /** Conflicting paths reported per worktree; the rest is summarised as `truncated`. */
@@ -175,9 +173,6 @@ export async function listWorktrees(repos: RepoConfig[], sessions: ChangeSession
     repos.map(async (repo) => {
       const dir = join(worktreesDir(), repo.id);
       const names = (await readdir(dir).catch(() => [] as string[])).filter((name) => WORKTREE_NAME.test(name));
-      // The project's folder inside its repository, asked once and only when a worktree needs it.
-      let shownPrefix: Promise<string> | undefined;
-      const prefix = () => (shownPrefix ??= subdirectory(repo.path).catch(() => ""));
       return Promise.all(
         names.map(async (name): Promise<SessionWorktree | undefined> => {
           const path = join(dir, name);
@@ -185,10 +180,7 @@ export async function listWorktrees(repos: RepoConfig[], sessions: ChangeSession
           const session = sessions.find((s) => s.worktreePath === path); // sessions arrive newest first
           const [{ work, branch, lastCommitAt }, head] = await Promise.all([readWorkStatus(repo.path, path), headCommit(path)]);
           const owner = session ? { change: session.change, action: session.action } : changeOfWorktree(name);
-          // Only a worktree nobody works in can be left over (stale-changes spec).
-          const running = sessions.some((s) => s.worktreePath === path && s.state === "running");
-          const settled = work.state === "missing" || running ? undefined : await settledArchive(repo.path, path, owner.change, OPENSPEC_PATHS, await prefix()).catch(() => undefined);
-          return { repoId: repo.id, name, path, ...owner, branch: branch ?? session?.branch, work, lastActivityAt: latest(lastCommitAt, session?.updatedAt), sessionId: session?.id, ...(head ? { head } : {}), ...(settled ? { settled } : {}) };
+          return { repoId: repo.id, name, path, ...owner, branch: branch ?? session?.branch, work, lastActivityAt: latest(lastCommitAt, session?.updatedAt), sessionId: session?.id, ...(head ? { head } : {}) };
         }),
       );
     }),

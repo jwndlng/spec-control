@@ -1,12 +1,13 @@
-import { ACTIVITY_KINDS, AUTO_FETCH_SECONDS, type ActivityKind } from "../shared/types.ts";
+import { realpath } from "node:fs/promises";
+import { ACTIVITY_KINDS, AUTO_FETCH_SECONDS, type ActivityKind, isChangeless, UNCOMMITTED_LISTED } from "../shared/types.ts";
 import { availableName } from "../shared/nameHints.ts";
 import { labelKey } from "../shared/labels.ts";
 import { withAutoFetch, withPrTitleConvention, withRepoAgent } from "../shared/repoSettings.ts";
 import { MAX_PAGE, type ActivityLog, type PageQuery } from "./activity/log.ts";
 import { isTimeZone, pageEvents } from "../shared/activity.ts";
-import type { AutoFetchSeconds, BranchDeleteRequest, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequest, PullRequestsResponse, PullResult, RepoPullRequests, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Session, UpdateStatus } from "../shared/types.ts";
+import type { AutoFetchSeconds, BranchDeleteRequest, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequest, PullRequestsResponse, PullResult, RepoPullRequests, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Session, StaleCleanupRequest, UpdateStatus } from "../shared/types.ts";
 import type { AutoFetcher } from "./autoFetch.ts";
-import { applyCleanup, CleanupBusyError, deleteBranch, isBranchName, previewBranchDelete, previewCleanup } from "./cleanup.ts";
+import { applyCleanup, applyStaleCleanup, CleanupBusyError, deleteBranch, isBranchName, previewBranchDelete, previewCleanup, previewStaleCleanup, StaleCleanupError, type StaleScope } from "./cleanup.ts";
 import { changeDirFor, listArtifactFiles, readArtifactFile } from "./artifacts.ts";
 import { consoleFolderProblem } from "./sessions/consoleFolder.ts";
 import { createWorkspaceFolder, type FolderPickerContext, FolderPickerBusyError, folderPickerContext, markSetupDone, pickFolder, setupState } from "./setup.ts";
@@ -29,6 +30,7 @@ import type { Scanner } from "./scanner.ts";
 import { applyTo, EMPTY_SHARED_CONFIG, loadSharedConfig, previewFor, SharedConfigValidationError, saveSharedConfig } from "./sharedConfig.ts";
 import { SessionError, type SessionManager } from "./sessions/manager.ts";
 import { LocalRepoSource } from "./source.ts";
+import { sessionHints } from "./staleChanges.ts";
 import { frameworkById } from "./frameworks/registry.ts";
 import type { KeepAwake } from "./keepAwake.ts";
 import type { UpdateChecker } from "./updateCheck.ts";
@@ -931,6 +933,92 @@ async function postBranchDelete(state: AppState, req: Request, repoId: string): 
   }
 }
 
+/** A repository and change a stale cleanup may run for: `cleanupTarget`'s rules, a valid name, the last scan's snapshot. */
+async function staleTarget(state: AppState, repoId: string, name: string): Promise<{ repo: RepoConfig; scope: StaleScope } | Response> {
+  const repo = cleanupTarget(state, repoId);
+  if (repo instanceof Response) return repo;
+  if (!isDismissableName(name)) return json({ error: "invalid change name" }, 400);
+  const scanned = state.scanner.snapshot.repos.find((r) => r.id === repoId);
+  if (!scanned?.ok) return json({ error: "repository has not been successfully scanned" }, 409);
+  const sessions = state.sessions?.list() ?? [];
+  return { repo, scope: { scanned, hints: sessionHints(sessions, repoId), runningPaths: (await state.sessions?.runningWorktreePaths()) ?? new Set() } };
+}
+
+/**
+ * Read-only: a stale change's leftovers, read afresh (stale-changes). `?ending=<session id>` judges that running
+ * session's worktree as it will be once the session has ended, for the end-session dialog.
+ */
+async function getStaleCleanup(state: AppState, url: URL, repoId: string, name: string): Promise<Response> {
+  const target = await staleTarget(state, repoId, name);
+  if (target instanceof Response) return target;
+  let ending: string | undefined;
+  const endingId = url.searchParams.get("ending");
+  if (endingId !== null) {
+    const session = state.sessions?.list().find((s) => s.id === endingId);
+    if (!session || isChangeless(session) || session.repoId !== repoId || session.change !== name || session.state !== "running" || session.inPlace) {
+      return json({ error: "not a running worktree session of this change" }, 400);
+    }
+    ending = await realpath(session.worktreePath).catch(() => session.worktreePath);
+  }
+  try {
+    return json(await previewStaleCleanup(target.repo, target.scope, name, ending));
+  } catch (err) {
+    if (err instanceof StaleCleanupError) return json({ error: err.message }, err.status);
+    throw err;
+  }
+}
+
+const COMMIT = /^[0-9a-f]{40,64}$/;
+
+/** Shape only: whether each item is a current stale leftover and still what the user saw is decided by the cleanup. */
+function staleCleanupRequest(body: Record<string, unknown>): StaleCleanupRequest | undefined {
+  const { worktrees, branches, mainCheckout, acknowledged } = body;
+  if (typeof acknowledged !== "boolean") return undefined;
+  if (!Array.isArray(worktrees) || worktrees.length > MAX_CLEANUP_ITEMS) return undefined;
+  for (const w of worktrees) {
+    if (typeof w?.path !== "string" || w.path === "" || w.path.length > MAX_PATH) return undefined;
+    if (w.branch !== null && !isBranchName(w.branch)) return undefined;
+    if (typeof w.commit !== "string" || !COMMIT.test(w.commit)) return undefined;
+    if (!Array.isArray(w.uncommitted) || w.uncommitted.length > UNCOMMITTED_LISTED || !w.uncommitted.every((p: unknown) => typeof p === "string")) return undefined;
+  }
+  if (!Array.isArray(branches) || branches.length > MAX_CLEANUP_ITEMS) return undefined;
+  if (!branches.every((b) => isBranchName(b?.name) && typeof b.commit === "string" && COMMIT.test(b.commit))) return undefined;
+  if (mainCheckout !== null) {
+    const files = (mainCheckout as { files?: unknown } | undefined)?.files;
+    if (!Array.isArray(files) || files.length > MAX_CLEANUP_ITEMS) return undefined;
+    if (!files.every((f) => typeof f?.path === "string" && f.path !== "" && f.path.length <= MAX_PATH && typeof f.hash === "string" && COMMIT.test(f.hash))) return undefined;
+  }
+  return {
+    worktrees: worktrees.map((w) => ({ path: w.path, branch: w.branch, commit: w.commit, uncommitted: w.uncommitted })),
+    branches: branches.map((b) => ({ name: b.name, commit: b.commit })),
+    mainCheckout: mainCheckout === null ? null : { files: (mainCheckout as { files: { path: string; hash: string }[] }).files.map((f) => ({ path: f.path, hash: f.hash })) },
+    acknowledged,
+  };
+}
+
+/** Cleans up the stale leftovers the user confirmed, each re-checked by the server; the third route that deletes a branch. */
+async function postStaleCleanup(state: AppState, req: Request, repoId: string, name: string): Promise<Response> {
+  const target = await staleTarget(state, repoId, name);
+  if (target instanceof Response) return target;
+  try {
+    const request = staleCleanupRequest(await readJson(req));
+    if (!request) {
+      return json({ error: "expected { worktrees: [{ path, branch, commit, uncommitted }], branches: [{ name, commit }], mainCheckout: { files: [{ path, hash }] } | null, acknowledged: boolean }" }, 400);
+    }
+    const result = await applyStaleCleanup(target.repo, target.scope, name, request);
+    if (result.items.some((i) => i.outcome !== "kept")) {
+      state.sessions?.forgetWorktrees();
+      state.scanner.trigger();
+    }
+    return json(result);
+  } catch (err) {
+    if (err instanceof CleanupBusyError) return json({ error: err.message }, 409);
+    if (err instanceof StaleCleanupError) return json({ error: err.message }, err.status);
+    if (err instanceof SessionError) return json({ error: err.message }, err.status);
+    throw err;
+  }
+}
+
 /**
  * Pull requests are read for every enabled repository — a folder without git or without a GitHub `origin` is reported
  * as unavailable rather than left out. `isGit` comes from the scan, never from letting a git command fail.
@@ -1265,6 +1353,9 @@ export function createFetchHandler({ state, indexHtml }: AppOptions): (req: Requ
       const branchDeleteMatch = /^\/api\/repos\/([^/]+)\/branches\/delete$/.exec(pathname);
       if (branchDeleteMatch && req.method === "GET") return getBranchDelete(state, url, decodeURIComponent(branchDeleteMatch[1]));
       if (branchDeleteMatch && req.method === "POST") return postBranchDelete(state, req, decodeURIComponent(branchDeleteMatch[1]));
+      const staleMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/stale-cleanup$/.exec(pathname);
+      if (staleMatch && req.method === "GET") return getStaleCleanup(state, url, decodeURIComponent(staleMatch[1]), decodeURIComponent(staleMatch[2]));
+      if (staleMatch && req.method === "POST") return postStaleCleanup(state, req, decodeURIComponent(staleMatch[1]), decodeURIComponent(staleMatch[2]));
       const dismissMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/dismiss$/.exec(pathname);
       if (dismissMatch && req.method === "GET") return getDismiss(state, decodeURIComponent(dismissMatch[1]), decodeURIComponent(dismissMatch[2]));
       if (dismissMatch && req.method === "POST") return postDismiss(state, req, decodeURIComponent(dismissMatch[1]), decodeURIComponent(dismissMatch[2]));
