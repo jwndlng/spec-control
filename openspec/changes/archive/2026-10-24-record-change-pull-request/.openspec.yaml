@@ -2,3 +2,4 @@ schema: spec-driven
 created: 2026-10-24
 spec-control:
   branch: feat/record-change-pull-request
+  archive-branch: chore/archive-record-change-pull-request
