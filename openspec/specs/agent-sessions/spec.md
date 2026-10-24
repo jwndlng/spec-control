@@ -74,7 +74,7 @@ The dashboard SHALL start agents from user-configurable profiles. A profile cons
 ### Requirement: Session starters run a fixed prompt for a validated change
 The dashboard SHALL offer the starters **Draft artifacts** (change in `Unknown`, `Backlog` or `Drafts`, or in `Ready` while an artifact the schema does not require for implementing is not done), **Implement** (change in `Ready` or `Implementing`), **Validate** (change in `Done` with the sub-state `validate`) and **Archive** (change in `Done`, in either sub-state), each only when the repository's agent has an opening prompt configured for it, and none for archived changes. **Implement** SHALL NOT be offered for a change in `Done`: nothing is left to implement there, and offering it is what sends an agent back into finished code. **Draft artifacts** SHALL NOT be offered for a change in `Implementing` or `Done`, whatever artifacts it lacks: an artifact the schema does not require is no reason to send an agent back to planning once implementation started, and a request for it SHALL be refused with the reason that the change is past drafting. Which of the available starters a card or the Console tab recommends is a matter of display (`kanban-board`: "A change's actions are one split button"); the available starters and every refusal SHALL be decided by stage, sub-state and dependencies alone, never by a linked pull request. **Implement** SHALL NOT be offered for a change that is **blocked** by its dependencies (change-dependencies), whatever its stage: it is offered again on the first scan after the change stops being blocked. Being blocked SHALL NOT withhold **Draft artifacts**, **Validate** or **Archive**, and SHALL NOT end, interrupt or send anything to a session that is already running. A request to start a starter that is not available for the change's current stage, sub-state and dependencies SHALL be refused; a request for **Implement** refused because the change is blocked SHALL name, as its reason, each dependency that is not `met` together with its state, or say that the change's `depends-on.yaml` could not be read. The opening prompt SHALL be produced from the profile's template, in which `{change}` is the only placeholder, replaced by the change name after it passed change-name validation. The agent MUST be started without a shell from an argument list; the prompt MUST reach it either as exactly one argument (where the command contains `{prompt}`) or by being submitted to its terminal after start-up under the rules for text sent on the user's behalf (where it does not). No text from the browser other than the validated change name may become part of the command line.
 
-Every preset's prompts SHALL carry the meaning of the `- [~]` task marker, which OpenSpec itself does not define: the **Implement** prompt SHALL instruct the agent to leave a task only a person can verify as `- [~]` rather than ticking it; the **Validate** prompt SHALL instruct the agent to take the change's `- [~]` tasks one at a time, say what to check, and tick off only those the user confirms, leaving the rest; and the **Archive** prompt SHALL instruct the agent to sync the change's delta specs into the main specs and then archive the change, without asking whether to sync, to archive right away when nothing is left to sync, and to tick off the tasks left for the user to validate once the user has confirmed them. Each preset's prompts SHALL invoke the OpenSpec workflow in the form that `openspec init --tools <tool>` installs for that agent — Claude Code's `/opsx:<workflow>` commands, Antigravity's `/opsx-<workflow>` workflows, and, for Codex, which gets skills and no commands, a plain-language instruction that names the OpenSpec skill and `{change}`. Each SHALL remain an ordinary prompt template the user can edit or remove, and each SHALL be a single line, so that it can be typed into a terminal.
+Every preset's prompts SHALL carry the meaning of the `- [~]` task marker, which OpenSpec itself does not define: the **Implement** prompt SHALL instruct the agent to leave a task only a person can verify as `- [~]` rather than ticking it; the **Validate** prompt SHALL instruct the agent to take the change's `- [~]` tasks one at a time, say what to check, and tick off only those the user confirms, leaving the rest; and the **Archive** prompt SHALL instruct the agent to sync the change's delta specs into the main specs and then archive the change, without asking whether to sync, to archive right away when nothing is left to sync, to tick off the tasks left for the user to validate once the user has confirmed them, and to include in its commit every file the archive moved or removed, so that no part of the move is left uncommitted in the worktree. Each preset's prompts SHALL invoke the OpenSpec workflow in the form that `openspec init --tools <tool>` installs for that agent — Claude Code's `/opsx:<workflow>` commands, Antigravity's `/opsx-<workflow>` workflows, and, for Codex, which gets skills and no commands, a plain-language instruction that names the OpenSpec skill and `{change}`. Each SHALL remain an ordinary prompt template the user can edit or remove, and each SHALL be a single line, so that it can be typed into a terminal.
 
 A saved configuration in which a profile whose id is a preset's id still carries one of that preset's former prompts for a starter verbatim SHALL be read as carrying that preset's current prompt for that starter; any other prompt, a removed one, and every prompt of a profile whose id is no preset's SHALL be left as saved. This SHALL apply per preset and per starter, so upgrading one prompt never rewrites another and one preset's former prompts never upgrade another preset's profile.
 
@@ -235,6 +235,11 @@ A starter that does not result in a session MUST NOT fail silently. When startin
 #### Scenario: Ready change with every artifact written
 - **WHEN** change `rotate-keys` is in `Ready` and every artifact is written
 - **THEN** its available starters are **Implement** only
+
+#### Scenario: The Archive prompt asks for the whole move to be committed
+- **WHEN** the Claude Code preset's Archive prompt is composed for `cache-api-calls`
+- **THEN** it also tells the agent to include in its commit every file the archive moved or removed, and a saved
+  configuration still carrying the previous preconfigured Archive prompt verbatim is read as carrying this one
 
 ### Requirement: Additional instructions extend an action's prompt without replacing it
 A profile SHALL be able to carry **additional instructions** for each of its prompts — the session starters, Ship and Integrate — kept separately from the prompt itself. Whenever the dashboard produces the prompt of an action, it SHALL append that action's additional instructions to the prompt it would otherwise have sent, and SHALL send nothing else: the prompt template stays as configured, and additional instructions for one action MUST NOT reach another. This applies wherever that prompt is used — starting a session, sending a starter's prompt into a running session, Ship on a running or an ended session, and Integrate.
@@ -887,7 +892,7 @@ remain a visible control the user can clear before confirming. When the worktree
 pre-selected and the reason SHALL be shown as before. Confirming with the offer cleared SHALL keep the worktree;
 cancelling SHALL end, remove and pull nothing. Every such dialog SHALL start from this default: a choice the user made
 in an earlier dialog SHALL NOT carry over. The removal SHALL still be decided by the server's own checks at the moment
-of confirmation, so a worktree that became unsafe to remove after the dialog opened is kept and the reason reported.
+of confirmation, so a worktree that became unsafe to remove after the dialog opened is kept and the reason reported. For a session of a change that is stale under the `stale-changes` capability, or would be once the session has ended, the stale cleanup of the requirement "Ending a session cleans up a stale change's leftovers" takes the place of this removal offer.
 
 #### Scenario: Pushed work, removal pre-selected
 - **WHEN** the user ends a session whose worktree is clean and whose commits are all on its upstream, while its work
@@ -904,7 +909,7 @@ of confirmation, so a worktree that became unsafe to remove after the dialog ope
 - **THEN** the session ends and the worktree is kept
 
 #### Scenario: Worktree that cannot be removed
-- **WHEN** the user ends a session whose worktree has an uncommitted file
+- **WHEN** the user ends a session of a change that is not archived and merged, whose worktree has an uncommitted file
 - **THEN** no removal is offered or selected, and the dialog says why the worktree is kept
 
 #### Scenario: Earlier choice not remembered
@@ -1456,3 +1461,56 @@ excluded from them; and for a repository whose sessions run in place.
 #### Scenario: The request cannot choose the branch
 - **WHEN** `POST /api/sessions` with `resolveConflicts: true` also carries a branch or a pull-request number
 - **THEN** those fields are ignored and the branch comes from the cached list
+
+### Requirement: Ending a session cleans up a stale change's leftovers
+When the user ends or cleans up a change session that has a worktree, and the change is archived on the default branch
+as locally known and the session's worktree would be a stale leftover of it once the session has ended (`stale-changes`
+capability: "A change that is archived and merged is stale"), the end-session dialog SHALL offer **Clean up leftovers**
+in place of the plain worktree removal. It SHALL list the session's worktree and every other stale leftover of the
+change, read afresh, with each worktree's uncommitted and untracked paths and the note that ignored files are deleted
+without a copy, and SHALL list the kept leftovers with their reasons.
+
+The offer SHALL be pre-selected when every listed uncommitted path lies inside `openspec/changes/<name>/` or the
+change's archive directory. When any lies outside them, the offer SHALL be shown with those paths named and SHALL NOT be
+pre-selected; selecting it is the user's acknowledgement that those files are deleted after a copy is kept. A choice
+made in an earlier dialog SHALL NOT carry over.
+
+Confirming with the offer selected SHALL, in this order:
+1. end the session;
+2. run the stale cleanup for the listed items, with the same server-side re-checks, backups and per-item outcomes as
+   **Clean up leftovers…** on the board;
+3. run the pull when the pull offer is selected.
+
+So one confirmation ends the session and cleans up. The dialog SHALL report each item's outcome and the backup folder
+under the rules for reporting a pull. Confirming with the offer cleared SHALL end the session and keep every leftover,
+which stay marked stale on the board. Cancelling SHALL end, remove and pull nothing.
+
+When the change is not stale at that moment — its archive is not on the default branch yet, for example because the
+archive's pull request is still open, or its branch holds work the default branch lacks — the dialog SHALL keep the
+plain removal offer and its rules. When that removal is not possible, the dialog SHALL say that the worktree is kept and
+will be marked stale, with **Clean up leftovers…** on the board, once the change is archived and merged on the default
+branch. An in-place session SHALL never get the offer.
+
+#### Scenario: Ending the archive session after the merge
+- **WHEN** the user ends the archive session of `rotate-keys`, whose archive is on `origin/main`, whose worktree on
+  `chore/archive-rotate-keys` is merged and shows `openspec/changes/rotate-keys/tasks.md` deleted but uncommitted, and
+  the merged implementation worktree on `feat/rotate-keys` is still there
+- **THEN** the dialog offers Clean up leftovers, already selected, listing both worktrees and that file, and one
+  confirmation ends the session, copies the file under `~/.spec-control/branch-backups/` and removes both worktrees
+  and their branches
+
+#### Scenario: A source file outside the change
+- **WHEN** the session's merged worktree also holds an uncommitted edit to `src/keys.ts`
+- **THEN** Clean up leftovers is offered but not selected, `src/keys.ts` is named, and confirming without selecting it
+  ends the session and keeps the worktree
+
+#### Scenario: Pull request still open
+- **WHEN** the user ends the archive session while its pull request is open and the archive is not on `origin/main`,
+  and the worktree has an uncommitted file
+- **THEN** no cleanup is offered, the worktree is kept, and the dialog says it will be marked stale once the archive
+  is merged into the default branch
+
+#### Scenario: A changed item after the dialog
+- **WHEN** another worktree listed in the offer receives a new commit before the user confirms
+- **THEN** the session ends, that worktree is kept and reported as changed since the user looked, and the session's own
+  worktree is still cleaned up
