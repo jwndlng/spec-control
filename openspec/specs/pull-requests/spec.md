@@ -186,7 +186,7 @@ In both steps, a merged or closed pull request that was merged or closed more th
 
 Where several cached pull requests match within the step that yields the link, exactly one SHALL be shown: an `open` one (a draft counts as open) in preference to any other, otherwise the one most recently merged, closed or opened, otherwise the one with the higher number. The choice SHALL be deterministic and SHALL be the same wherever the link is shown.
 
-The link SHALL be derived when it is displayed, from the snapshot and the cached lists. It MUST NOT be stored in a change's snapshot, written to any cache, or recorded in the activity log, and it MUST NOT affect a change's column, sub-state, progress, counts, filters or available actions. The only things the link and its readiness may change are what the change's card and detail header display — the pull-request badge and the card's working state (`kanban-board`: "A card keeps its working state until its pull request is ready") — and which repositories a board's pull-request watch refreshes. The dashboard MUST NOT write a change's record.
+The link SHALL be derived when it is displayed, from the snapshot and the cached lists. It MUST NOT be stored in a change's snapshot, written to any cache, or recorded in the activity log, and it MUST NOT affect a change's column, sub-state, progress, counts, filters or available actions. The only things the link and its readiness may change are what the change's card, detail header and Console tab display — the pull-request badge, the card's working state (`kanban-board`: "A card keeps its working state until its pull request is ready") and which action the split button recommends, plus the pull request's own action in its menu (`kanban-board`: "A change's actions are one split button") — and which repositories a board's pull-request watch refreshes. The server's available actions for a change, and every refusal of a session start, SHALL be decided without the link. The dashboard MUST NOT write a change's record.
 
 #### Scenario: Exact branch match
 - **WHEN** change `add-validate-phase` has `branchMatch: feat/add-validate-phase` and a cached open pull request `#125` has that head branch in the same repository
@@ -262,7 +262,7 @@ The link SHALL be derived when it is displayed, from the snapshot and the cached
 
 #### Scenario: The link changes nothing else
 - **WHEN** a change gains a linked pull request whose checks are still running
-- **THEN** its column, sub-state, progress, the counts it contributes to and the starters it offers are unchanged, and the activity log records nothing
+- **THEN** its column, sub-state, progress, the counts it contributes to and its available actions are unchanged, the activity log records nothing, and only its split button's main part shows that the pull request is waiting
 
 #### Scenario: Cache deleted
 - **WHEN** the pull-request cache is deleted

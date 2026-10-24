@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-10-24
+spec-control:
+  branch: feat/one-next-action-per-stage
+  archive-branch: chore/archive-one-next-action-per-stage

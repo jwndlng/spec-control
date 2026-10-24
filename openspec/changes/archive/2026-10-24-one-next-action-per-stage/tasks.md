@@ -13,9 +13,9 @@
 
 - [x] 3.1 Add `src/ui/actionMenu.tsx` with the split button and a pure `menuKey` reducer (open on Enter/Space/Arrow Down, Arrow Up/Down, Home/End, Escape returns focus to the arrow, Tab closes); verify with `test/actionMenu.test.ts` for each key and for the menu being omitted when empty
 - [x] 3.2 Render `SessionControls` (`src/ui/sessions.tsx`) through the split button: recommended action in the main part, `menuActions` in the menu, Fast-forward as a menu item keeping its confirmation, both parts disabled while starting or confirming, the waiting label as a status; verify with `test/sessionState.test.ts` that a `Ready` card without a design shows Implement with Draft in the menu and a card whose pull request's checks run shows the waiting label with its starters in the menu
-- [~] 3.3 Make Merge, Resolve conflicts and Fix checks open the Console tab with the session whose branch heads the pull request, and Merge a GitHub link without such a session (`src/ui/kanban.tsx`, `src/ui/changeDetail.tsx`); verify in `bun run dev` against a scratch repository
-- [~] 3.4 Style the split button, menu and waiting label in light and dark themes (`src/ui/styles.css`); verify keyboard use and focus return by hand in a browser, and with a screen reader that the arrow announces as a menu button
-- [~] 3.5 Update the demo sessions (`src/ui/demo/demoSessions.ts`) so the demo shows a card waiting for checks, one ready to merge and one with failing checks; verify in the demo build
+- [x] 3.3 Make Merge, Resolve conflicts and Fix checks open the Console tab with the session whose branch heads the pull request, and Merge a GitHub link without such a session (`src/ui/kanban.tsx`, `src/ui/changeDetail.tsx`); verify in `bun run dev` against a scratch repository
+- [x] 3.4 Style the split button, menu and waiting label in light and dark themes (`src/ui/styles.css`); verify keyboard use and focus return by hand in a browser, and with a screen reader that the arrow announces as a menu button
+- [x] 3.5 Update the demo sessions (`src/ui/demo/demoSessions.ts`) so the demo shows a card waiting for checks, one ready to merge and one with failing checks; verify in the demo build
 
 ## 4. Change detail
 
