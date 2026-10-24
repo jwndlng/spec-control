@@ -5,8 +5,8 @@ import type { Dirent } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import type { LabelEntry } from "../shared/labels.ts";
-import { CHANGE_NAME_PATTERN, type StaleLeftovers, type StrandedArchive, type Worktree } from "../shared/types.ts";
-import { type ActiveChange, findStrandedArchives, type SessionHint, type StaleInput, staleLeftovers } from "./staleChanges.ts";
+import { CHANGE_NAME_PATTERN, type DuplicateAfterArchive, type StaleLeftovers, type StrandedArchive, type Worktree } from "../shared/types.ts";
+import { type ActiveChange, findDuplicates, findStrandedArchives, type SessionHint, type StaleInput, staleLeftovers } from "./staleChanges.ts";
 import { checkoutStatus, currentBranch, defaultBranch, fetchInfo, hasCommitToBranchFrom, hasRemoteRefs, isGitRepo, lastCommitDate, localOnlyCommits, type ParsedStatus, statusPaths, subdirectory, worktrees } from "./git.ts";
 
 export const CHANGE_NAME = CHANGE_NAME_PATTERN;
@@ -100,6 +100,11 @@ export interface RepoSource {
    * stale"), by change name. Optional: a source without it reports none.
    */
   staleLeftovers?(input: Omit<StaleInput, "repoPath">): Promise<Map<string, StaleLeftovers>>;
+  /**
+   * Changes the default branch holds both as a change directory and as its archive (stale-changes: "A change committed
+   * next to its archive is reported as a duplicate"), by change name. Optional: a source without it reports none.
+   */
+  duplicates?(layout: ChangesLayout, archivedOnMain: ReadonlyMap<string, string>, worktrees: readonly Worktree[]): Promise<Map<string, DuplicateAfterArchive>>;
   /** Committer date of the last commit touching `absPath` inside the repo. */
   lastActivity(absPath: string): Promise<string | undefined>;
   /** Modified and untracked files under `relRoot` (a framework's root, e.g. `openspec`), per git. Empty for non-git repositories or on failure. */
@@ -255,6 +260,10 @@ export class LocalRepoSource implements RepoSource {
 
   staleLeftovers(input: Omit<StaleInput, "repoPath">): Promise<Map<string, StaleLeftovers>> {
     return staleLeftovers({ ...input, repoPath: this.path });
+  }
+
+  duplicates(layout: ChangesLayout, archivedOnMain: ReadonlyMap<string, string>, worktrees: readonly Worktree[]): Promise<Map<string, DuplicateAfterArchive>> {
+    return findDuplicates(this.path, layout, archivedOnMain, worktrees);
   }
 
   worktrees(): Promise<Worktree[]> {

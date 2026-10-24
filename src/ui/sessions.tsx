@@ -64,10 +64,11 @@ interface SessionUi {
    * for confirmation first unless the user switched that off; a cancelled one resolves with nothing and starts nothing.
    */
   /**
-   * `carryOver`: the archive session that carries a stranded archive over; never typed into a running session.
+   * `carryOver`: the archive session that carries a stranded archive over; `removeDuplicate`: the archive session that
+   * removes a duplicate after archive. Neither is ever typed into a running session.
    * `resolveConflicts`: Resolve conflicts, where the server decides the session and branch from its own lists.
    */
-  start(repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; resolveConflicts?: boolean }): Promise<string | undefined>;
+  start(repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; removeDuplicate?: boolean; resolveConflicts?: boolean }): Promise<string | undefined>;
   refresh(): Promise<void>;
 }
 
@@ -169,7 +170,7 @@ export function SessionProvider({
   );
 
   const start = useCallback(
-    async (repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; resolveConflicts?: boolean }) => {
+    async (repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; removeDuplicate?: boolean; resolveConflicts?: boolean }) => {
       let warningNotSaved: string | undefined;
       if (action === "fastForward" && config?.agentSessions.confirmFastForward !== false) {
         const choice = await askFastForward(repoId, change);
@@ -184,7 +185,7 @@ export function SessionProvider({
         }
       }
       try {
-        const into = options?.carryOver || options?.resolveConflicts ? undefined : nextStepFor(sessions, repoId, change, action).promptSessionId;
+        const into = options?.carryOver || options?.removeDuplicate || options?.resolveConflicts ? undefined : nextStepFor(sessions, repoId, change, action).promptSessionId;
         const session = into ? await api.promptSession(into, action) : await api.openSession(repoId, change, action, options);
         reportAutoMerge((current) => afterStart(current, session.id, session.autoMerge));
         if (into) {

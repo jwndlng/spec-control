@@ -116,6 +116,12 @@ export interface ChangeSnapshot {
    * every scan, never stored; never an input to columns or counts.
    */
   stale?: StaleLeftovers;
+  /**
+   * The default branch holds both this change's directory and its archive (stale-changes: "A change committed next to
+   * its archive is reported as a duplicate"). Derived on every scan from the default branch's tree, never stored; never
+   * an input to columns or counts.
+   */
+  duplicate?: DuplicateAfterArchive;
   /** Non-fatal problems while reading this change. */
   warnings?: string[];
 }
@@ -137,6 +143,22 @@ export interface StrandedArchive {
   /** The newest commit on that branch that touched the archive directory (full hash). */
   commit: string;
 }
+
+/** A change directory committed on the default branch next to its archive. */
+export interface DuplicateAfterArchive {
+  /** The newest archive directory of the name on the default branch, e.g. `2026-10-20-rotate-keys`. */
+  archive: string;
+  /** Paths, relative to the change directory, whose content differs between the two copies; at most `DUPLICATE_DIFFERING_LISTED`. */
+  differing: string[];
+  differingCount: number;
+  /** Whether the main checkout holds that archive already; when not, Pull brings the state the report describes. */
+  pulled: boolean;
+  /** Set when a local branch `chore/archive-<name>` exists or a worktree is on it: Remove duplicate is withheld then. */
+  archiveBranch?: string;
+}
+
+/** How many differing paths a duplicate report lists. */
+export const DUPLICATE_DIFFERING_LISTED = 50;
 
 /** What an archived and merged change left behind, and what of it is kept and why. */
 export interface StaleLeftovers {
@@ -629,6 +651,21 @@ export const DEFAULT_RESOLVE_CONFLICTS_PROMPT =
  */
 export const CARRY_OVER_ARCHIVE_PROMPT =
   "The OpenSpec change {change} was already archived in commit {commit} on the branch {branch}, but that commit never reached {base}. Do not archive the change again. Bring exactly that commit onto this worktree's branch with git cherry-pick {commit} — if this branch already contains it, there is nothing to pick — and resolve any conflict so that the change ends up archived exactly once. Do not push or open a pull request yet; I will ask you to ship it. Then tell me what you did.";
+
+/**
+ * The opening prompt of a remove-duplicate archive session (stale-changes: "A duplicate is marked on the board and offered
+ * Remove duplicate"). Fixed and agent-neutral like the carry-over prompt. `{change}`, `{changeDir}`, `{archiveDir}` and
+ * `{base}` come from the server's own scan; `{differing}` is one of the two sentences below.
+ */
+export const REMOVE_DUPLICATE_PROMPT =
+  "The OpenSpec change {change} is archived in {archiveDir}/ on {base}, but its directory {changeDir}/ is still committed there next to the archive: the archive commit never removed it. Do not archive the change again. {differing} Then delete {changeDir}/, commit, push this worktree's branch and open a pull request that changes only files under openspec/. Then tell me what you did.";
+
+/** `{differing}` when the copies differ; `{paths}` is the scan's list, comma-separated. */
+export const REMOVE_DUPLICATE_DIFFERING_SENTENCE =
+  "The two copies differ in: {paths}. For each of those files, show me what the copy in {changeDir}/ holds that the archive lacks, and carry into the archive only what I confirm.";
+
+/** `{differing}` when the copies are identical. */
+export const REMOVE_DUPLICATE_IDENTICAL_SENTENCE = "The two copies hold the same files with the same content, so nothing needs carrying over.";
 
 export const DEFAULT_MERGE_PROMPT =
   "Merge the pull request of this worktree's branch for {change} into its base, with the merge method this repository uses, but only if its head is still the commit named below — with the GitHub CLI: gh pr merge <number> --match-head-commit <commit>. Do not delete the branch. If the merge is refused or anything was pushed since, stop and tell me why.";

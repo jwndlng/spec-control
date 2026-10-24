@@ -77,19 +77,29 @@ export function pendingArchiveHint(change: { archived?: string | null; checkout?
 
 /**
  * An archive in the main checkout next to an active copy of the same change there — usually its uncommitted original,
- * left behind when the archive arrived by a merge. The scanner reports it as one archived change and lists the copy
- * among its other checkouts; this says so. The dashboard never removes it.
+ * left behind when the archive arrived by a merge, or, for a duplicate after archive, committed next to the archive on
+ * the default branch. The scanner reports it as one archived change and lists the copy among its other checkouts; this
+ * says so. The dashboard never removes it.
  */
-export function leftoverHint(change: { name: string; archived?: string | null; checkout?: { isMain: boolean }; otherCheckouts?: { isMain: boolean; column: string }[] }): { label: string; title: string } | undefined {
+export function leftoverHint(change: { name: string; archived?: string | null; checkout?: { isMain: boolean }; otherCheckouts?: { isMain: boolean; column: string }[]; duplicate?: object }): { label: string; title: string } | undefined {
   if (!change.archived || (change.checkout && !change.checkout.isMain)) return undefined;
   const left = change.otherCheckouts?.find((o) => o.isMain);
   if (!left) return undefined;
   const dir = `openspec/changes/${change.name}/`;
-  const title = [
-    `${dir} is still in the main checkout, where it would be in ${left.column}`,
-    "it usually holds files that were never committed and stayed behind when the archive arrived",
-    `remove ${dir} to clear this`,
-  ].join("\n");
+  // A duplicate after archive is committed: removing it in the main checkout would leave a deletion nobody commits.
+  const title = (
+    change.duplicate
+      ? [
+          `${dir} is still in the main checkout, where it would be in ${left.column}`,
+          "it is committed next to its archive on the default branch: the archive commit never removed it",
+          `its deletion has to be committed to the default branch — see the stale notice`,
+        ]
+      : [
+          `${dir} is still in the main checkout, where it would be in ${left.column}`,
+          "it usually holds files that were never committed and stayed behind when the archive arrived",
+          `remove ${dir} to clear this`,
+        ]
+  ).join("\n");
   return { label: `active copy left · ${left.column}`, title };
 }
 

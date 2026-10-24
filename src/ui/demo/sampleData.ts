@@ -77,6 +77,11 @@ interface SampleRepo {
    */
   archived: [string, number, number, string?][];
   /**
+   * An archived change whose directory the default branch still holds next to its archive — a duplicate after archive —
+   * with the paths the two copies differ in. The main checkout has pulled it, so its copy is folded into the archive.
+   */
+  duplicate?: { name: string; differing: string[] };
+  /**
    * A git repository under the roots that does not use OpenSpec yet. It is not tracked and not a candidate; Settings
    * offers to set it up, and what is described here is what it looks like once that is done.
    */
@@ -244,6 +249,8 @@ const REPOS: SampleRepo[] = [
       ["csv-export-button", 52, 5],
       ["session-timeout-warning", 66, 9],
     ],
+    // The archive commit added the archive and never removed the change's directory; it was ticked once more since.
+    duplicate: { name: "lazy-load-charts", differing: ["tasks.md"] },
   },
   {
     id: "c9317f64",
@@ -423,6 +430,13 @@ export function buildSample(now: number): Sample {
         archived: day(age),
         lastActivityAt: iso(age * DAY),
         ...(branch ? { checkout: { path: worktreePath(r, branch), branch, isMain: false } } : {}),
+        ...(r.duplicate?.name === name
+          ? {
+              checkout: { path: repoPath(r.name), branch: r.branch, isMain: true },
+              otherCheckouts: [{ path: repoPath(r.name), branch: r.branch, isMain: true, column: "Done" }],
+              duplicate: { archive: `${day(age)}-${name}`, differing: r.duplicate.differing, differingCount: r.duplicate.differing.length, pulled: true },
+            }
+          : {}),
         ...deriveStage(input),
       };
     });

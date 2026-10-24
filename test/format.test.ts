@@ -92,3 +92,12 @@ test("leftoverHint: only for an archive in the main checkout with an active copy
   expect(leftoverHint({ name: "audit-trail", archived: null, checkout: { isMain: true }, otherCheckouts: [{ isMain: false, column: "Drafts" }] })).toBeUndefined();
   expect(leftoverHint({ name: "audit-trail", archived: null, otherCheckouts: [main] })).toBeUndefined();
 });
+
+test("leftoverHint: a duplicate after archive is said to be committed, not uncommitted", () => {
+  const main = { path: "/w/acme/alpha-infra", branch: "main", isMain: true, column: "Done" };
+  const hint = leftoverHint({ name: "audit-trail", archived: "2026-09-20", otherCheckouts: [main], duplicate: {} });
+  expect(hint?.label).toBe("active copy left · Done");
+  expect(hint?.title).toContain("committed next to its archive on the default branch");
+  expect(hint?.title).not.toContain("never committed");
+  expect(hint?.title).not.toContain("to clear this");
+});

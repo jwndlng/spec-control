@@ -7,12 +7,17 @@
 // - an **archived and merged** change: the default branch holds its archive, and a worktree, a branch or the main
 //   checkout's copy of its directory is left over and merged (`staleLeftovers`).
 //
+// A third case reads only the default branch: a **duplicate after archive**, a change directory committed there next to
+// its own archive (`findDuplicates`).
+//
 // Nothing here writes anything; the cleanup that acts on it lives in `cleanup.ts`.
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { proposalBranch, sessionBranch } from "../shared/sessionBranch.ts";
 import {
   type ChangeRecord,
+  DUPLICATE_DIFFERING_LISTED,
+  type DuplicateAfterArchive,
   isChangeless,
   isProjectConsole,
   type KeptLeftover,
@@ -117,18 +122,18 @@ export function parseRecordedBranches(text: string): RecordedBranches | undefine
 }
 
 /**
- * The recorded branches of each archive directory on `ref`, read in one `cat-file --batch` (read-only). Paths are given
- * as `./…` so that git resolves them from the project's folder, as the layout's are.
+ * The text of each `path` on `ref` that exists there, read in one `cat-file --batch` (read-only). Paths are given as
+ * `./…` so that git resolves them from the project's folder, as the layout's are. Undefined when git fails.
  */
-async function recordedOnRef(cwd: string, ref: string, archiveDir: string, dirs: readonly string[]): Promise<Map<string, RecordedBranches>> {
-  const found = new Map<string, RecordedBranches>();
-  if (dirs.length === 0) return found;
-  const out = await git(cwd, ["cat-file", "--batch"], dirs.map((d) => `${ref}:./${archiveDir}/${d}/.openspec.yaml\n`).join(""));
-  if (out === undefined) return found;
+async function textsOnRef(cwd: string, ref: string, paths: readonly string[]): Promise<Map<string, string> | undefined> {
+  const found = new Map<string, string>();
+  if (paths.length === 0) return found;
+  const out = await git(cwd, ["cat-file", "--batch"], paths.map((p) => `${ref}:./${p}\n`).join(""));
+  if (out === undefined) return undefined;
   // `<oid> blob <size>\n<content>\n` per found object, `<name> missing\n` otherwise. Sizes are in bytes.
   const bytes = Buffer.from(out);
   let at = 0;
-  for (const dir of dirs) {
+  for (const path of paths) {
     const eol = bytes.indexOf(10, at);
     if (eol < 0) break;
     const header = bytes.subarray(at, eol).toString();
@@ -136,8 +141,19 @@ async function recordedOnRef(cwd: string, ref: string, archiveDir: string, dirs:
     const m = /^[0-9a-f]+ blob (\d+)$/.exec(header);
     if (!m) continue;
     const size = Number(m[1]);
-    const recorded = parseRecordedBranches(bytes.subarray(at, at + size).toString());
+    found.set(path, bytes.subarray(at, at + size).toString());
     at += size + 1;
+  }
+  return found;
+}
+
+/** The recorded branches of each archive directory on `ref`, read in one `cat-file --batch` (read-only). */
+async function recordedOnRef(cwd: string, ref: string, archiveDir: string, dirs: readonly string[]): Promise<Map<string, RecordedBranches>> {
+  const found = new Map<string, RecordedBranches>();
+  const texts = await textsOnRef(cwd, ref, dirs.map((d) => `${archiveDir}/${d}/.openspec.yaml`));
+  for (const dir of dirs) {
+    const text = texts?.get(`${archiveDir}/${dir}/.openspec.yaml`);
+    const recorded = text === undefined ? undefined : parseRecordedBranches(text);
     if (recorded) found.set(dir, recorded);
   }
   return found;
@@ -250,6 +266,80 @@ export async function findStrandedArchives(
   return found;
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Duplicate after archive (stale-changes: "A change committed next to its archive is reported as a duplicate"). The
+// archive commit added the archive but never removed the change directory, and both reached the default branch. Read
+// from the default branch's tree only: the main checkout may be behind or hold the user's edits, and the default branch
+// is where the missing deletion has to land.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The `created:` date of a change's `.openspec.yaml`, when it has one. */
+function createdDate(text: string): string | undefined {
+  return /^created:\s*["']?(\d{4}-\d{2}-\d{2})/m.exec(text)?.[1];
+}
+
+/** Directory names directly below `dir` on `ref`; undefined when git fails. */
+async function treesOnRef(cwd: string, ref: string, dir: string): Promise<string[] | undefined> {
+  const out = await git(cwd, ["ls-tree", "-z", ref, "--", `${dir}/`]);
+  if (out === undefined) return undefined;
+  // `<mode> <type> <oid>\t<path>` per entry.
+  return out
+    .split("\0")
+    .filter((entry) => / tree [0-9a-f]+\t/.test(entry))
+    .map((entry) => entry.slice(entry.indexOf("\t") + 1))
+    .map((path) => path.slice(path.lastIndexOf("/") + 1));
+}
+
+/**
+ * The changes the default branch holds both as `<changesDir>/<name>/` and as an archive not older than the change, by
+ * change name. `archivedOnMain` is the newest archive date per name in the main checkout, to tell whether Pull still
+ * brings it. Read-only git (`ls-tree`, `cat-file`, `diff`, `for-each-ref`, `worktree list`), no remote; a git failure for
+ * one change leaves it out.
+ */
+export async function findDuplicates(repoPath: string, layout: ChangesLayout, archivedOnMain: ReadonlyMap<string, string>, worktrees: readonly Worktree[] = []): Promise<Map<string, DuplicateAfterArchive>> {
+  const found = new Map<string, DuplicateAfterArchive>();
+  const archiveDir = layout.archiveDir;
+  if (!archiveDir) return found;
+  const base = await baseRef(repoPath);
+  if (!base) return found;
+  const [active, archives] = await Promise.all([treesOnRef(repoPath, base, layout.changesDir), archiveEntries(repoPath, base, archiveDir)]);
+  if (!active?.length || !archives?.length) return found;
+  const archiveName = archiveDir.slice(archiveDir.lastIndexOf("/") + 1);
+  const pairs = active
+    .filter((name) => !(archiveDir === `${layout.changesDir}/${archiveName}` && name === archiveName))
+    .map((name) => ({ name, archive: newestArchive(archives, name) }))
+    .filter((p): p is { name: string; archive: { dir: string; date: string } } => p.archive !== undefined);
+  if (pairs.length === 0) return found;
+
+  const markers = await textsOnRef(repoPath, base, pairs.map((p) => `${layout.changesDir}/${p.name}/.openspec.yaml`));
+  if (markers === undefined) return found;
+  const refsOut = await git(repoPath, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]);
+  const local = new Set((refsOut ?? "").split("\n").filter(Boolean));
+  const checkedOut = new Set(worktrees.map((w) => w.branch).filter(Boolean));
+
+  await Promise.all(
+    pairs.map(async ({ name, archive }) => {
+      const marker = markers.get(`${layout.changesDir}/${name}/.openspec.yaml`);
+      const created = marker === undefined ? undefined : createdDate(marker);
+      // Created after that archive: a new change reusing the name.
+      if (created && created > archive.date) return;
+      const diff = await git(repoPath, ["diff", "--no-ext-diff", "--no-renames", "--name-only", "-z", `${base}:./${archiveDir}/${archive.dir}`, `${base}:./${layout.changesDir}/${name}`]);
+      if (diff === undefined) return;
+      const paths = diff.split("\0").filter(Boolean).sort();
+      const onMain = archivedOnMain.get(name);
+      const archiveBranch = sessionBranch("archive", name);
+      found.set(name, {
+        archive: archive.dir,
+        differing: paths.slice(0, DUPLICATE_DIFFERING_LISTED),
+        differingCount: paths.length,
+        pulled: onMain !== undefined && onMain >= archive.date,
+        ...(local.has(archiveBranch) || checkedOut.has(archiveBranch) ? { archiveBranch } : {}),
+      });
+    }),
+  );
+  return found;
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Archived and merged (stale-changes: "A change that is archived and merged is stale"). Once the default branch holds a

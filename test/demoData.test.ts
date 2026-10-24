@@ -213,3 +213,13 @@ test("the sample activity has a busy day to collapse and a non-zero count for ev
     expect({ hours, busy: busiest > DAY_COLLAPSE_ABOVE }).toEqual({ hours, busy: true });
   }
 });
+
+test("the sample has one duplicate after archive, shown as its archived card with the main checkout's copy folded in", () => {
+  const duplicates = changes.filter((c) => c.duplicate);
+  expect(duplicates).toHaveLength(1);
+  const [d] = duplicates;
+  expect(d.column).toBe("Archived");
+  expect(d.duplicate?.archive).toBe(`${d.archived}-${d.name}`);
+  expect(d.otherCheckouts?.some((o) => o.isMain)).toBe(true);
+  expect(changes.filter((c) => c.name === d.name && c.repoId === d.repoId)).toHaveLength(1);
+});
