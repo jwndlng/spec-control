@@ -4,7 +4,7 @@ import { labelKey } from "../shared/labels.ts";
 import { withAutoFetch, withPrTitleConvention, withRepoAgent } from "../shared/repoSettings.ts";
 import { MAX_PAGE, type ActivityLog, type PageQuery } from "./activity/log.ts";
 import { isTimeZone, pageEvents } from "../shared/activity.ts";
-import type { AutoFetchSeconds, BranchDeleteRequest, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequest, PullRequestsResponse, PullResult, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Session, UpdateStatus } from "../shared/types.ts";
+import type { AutoFetchSeconds, BranchDeleteRequest, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequest, PullRequestsResponse, PullResult, RepoPullRequests, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Session, UpdateStatus } from "../shared/types.ts";
 import type { AutoFetcher } from "./autoFetch.ts";
 import { applyCleanup, CleanupBusyError, deleteBranch, isBranchName, previewBranchDelete, previewCleanup } from "./cleanup.ts";
 import { changeDirFor, listArtifactFiles, readArtifactFile } from "./artifacts.ts";
@@ -524,7 +524,11 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
           ...(state.keepAwake ? { keepAwake: state.keepAwake.status() } : {}),
         });
       }
-      if (req.method === "POST") return json(await sessions.open(await readJson(req)), 201);
+      if (req.method === "POST") {
+        const body = await readJson(req);
+        // Resolve conflicts reads the repository's cached pull-request list — never a query — and nothing else does.
+        return json(await sessions.open(body, body.resolveConflicts === true ? await cachedPullRequests(state, body.repoId) : undefined), 201);
+      }
     } else if (!sub) {
       if (req.method === "GET") return json(sessions.get(id));
       if (req.method === "DELETE") {
@@ -543,7 +547,7 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
     } else if (req.method === "POST") {
       if (sub === "resume") return json(await sessions.resume(id));
       if (sub === "ship") return json(await sessions.ship(id));
-      if (sub === "resolve-conflicts") return json(await sessions.resolveConflicts(id));
+      if (sub === "resolve-conflicts") return json(await sessions.resolveConflicts(id, await cachedPullRequests(state, sessions.get(id).repoId)));
       if (sub === "merge") return json(await sessions.merge(id, lastGoodPullRequests(state, sessions.get(id))));
       if (sub === "prompt") return json(await sessions.prompt(id, await readJson(req)));
       if (sub === "close") return json(await sessions.close(id, { removeWorktree: (await readJson(req)).removeWorktree === true }));
@@ -1002,6 +1006,17 @@ function handOverCompletedQuery(state: AppState, response: PullRequestsResponse)
 }
 
 /** What the Merge action reads its pull request from: the server's last good list, never anything in the request. */
+/**
+ * One repository's pull-request list as the cache has it, with when it was fetched, for Resolve conflicts. Starts no
+ * `gh` and contacts nothing: at most the read-only `origin` lookup the list view makes too. Undefined without a cache.
+ */
+async function cachedPullRequests(state: AppState, repoId: unknown): Promise<RepoPullRequests | undefined> {
+  const target = typeof repoId === "string" ? pullRequestTargets(state).find((t) => t.id === repoId) : undefined;
+  if (!target) return undefined;
+  const list = (await pullRequestStore(state).list([target])).repos[0];
+  return list?.fetchedAt ? list : undefined;
+}
+
 function lastGoodPullRequests(state: AppState, session: Session): readonly PullRequest[] {
   const target = session.repoId === undefined ? undefined : pullRequestTargets(state).find((t) => t.id === session.repoId);
   return (target && state.pullRequests?.lastGood(target)) ?? [];

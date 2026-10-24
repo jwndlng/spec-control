@@ -3,6 +3,7 @@ import { mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promi
 import { join } from "node:path";
 import { pullRequestsCachePath } from "../src/server/paths.ts";
 import { githubRepoFromRemote, parseMergeable, parsePullRequest, PullRequests, type RepoTarget, summarizeChecks } from "../src/server/pullRequests.ts";
+import type { PullRequest } from "../src/shared/types.ts";
 import { checkRun, ghPr, installFakeGh, statusContext, type GhHarness } from "./ghHelpers.ts";
 import { gitIn, tempDir, useTempHome } from "./helpers.ts";
 
@@ -570,5 +571,43 @@ test("a cache from an earlier version, or one carrying drift, has no head commit
     [10, undefined, undefined],
     [11, OID, true],
   ]);
+  await rm(pullRequestsCachePath(), { force: true });
+});
+
+// ---- whether the head is in a fork (resolve-pr-conflicts 1.1) ----
+
+test("isCrossRepository is read with the same pr list, kept only as a boolean, and an old cache leaves it unknown", async () => {
+  await gh.scenario({
+    login: "demo-user",
+    repos: {
+      "acme/alpha-infra": {
+        open: [ghPr({ number: 31, isCrossRepository: true }), ghPr({ number: 32, isCrossRepository: false }), ghPr({ number: 33 }), ghPr({ number: 34, isCrossRepository: "no" })],
+        closed: [],
+      },
+    },
+  });
+  await gh.forget();
+  const targets: RepoTarget[] = [{ id: "alpha", path: await repoAt("alpha-fork", ALPHA), isGit: true }];
+  const answer = await newStore().refresh(targets, { force: true });
+  const byNumber = (prs: readonly PullRequest[]) => [...prs].sort((a, b) => a.number - b.number);
+  expect(byNumber(answer.repos[0].pullRequests).map((pr) => [pr.number, pr.isCrossRepository])).toEqual([
+    [31, true],
+    [32, false],
+    [33, undefined],
+    [34, undefined],
+  ]);
+  const calls = await gh.calls();
+  for (const call of calls.filter((c) => c.argv[0] === "pr")) expect(fieldsOf(call)).toContain("isCrossRepository");
+  for (const call of calls) expect(call.argv.slice(0, 2).join(" ")).toMatch(/^(pr list|api user)$/);
+
+  // A cache written before the field was read, or carrying drift, does not say the head is in the same repository.
+  const stored = JSON.parse(await readFile(pullRequestsCachePath(), "utf8"));
+  const cached: PullRequest[] = stored.repos["acme/alpha-infra"].pullRequests;
+  delete (cached.find((pr) => pr.number === 31) as Partial<PullRequest>).isCrossRepository;
+  (cached.find((pr) => pr.number === 32) as unknown as Record<string, unknown>).isCrossRepository = "false";
+  await writeFile(pullRequestsCachePath(), JSON.stringify(stored));
+  const reloaded = newStore();
+  await reloaded.load();
+  expect(byNumber((await reloaded.list(targets)).repos[0].pullRequests).map((pr) => pr.isCrossRepository)).toEqual([undefined, undefined, undefined, undefined]);
   await rm(pullRequestsCachePath(), { force: true });
 });

@@ -168,6 +168,13 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             itself commits, merges and pushes nothing.
           </li>
           <li>
+            <strong>Resolve conflicts</strong> is offered when the session's worktree no longer merges as of your last fetch,
+            or when GitHub reports the change's open pull request as conflicting as of the last pull-request refresh — the
+            change detail says which, and <strong>push pending</strong> when the worktree has commits GitHub has not seen.
+            If the worktree is gone, it starts a session on the pull request's own branch, so the fix lands in that pull
+            request. Pull requests from forks are not supported, and the dashboard fetches nothing for it.
+          </li>
+          <li>
             <strong>Fast-forward</strong>, in the menu beside <strong>Draft artifacts</strong> on a change that is not planned yet,
             asks the agent to write the artifacts, implement the change and open a pull request in one go, without
             stopping for your review — the pull request is the only review, and it is never merged for you. It asks you

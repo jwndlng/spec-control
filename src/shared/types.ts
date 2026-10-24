@@ -520,6 +520,12 @@ export function mergeTargetSentence(pr: number, head: string): string {
   return `The pull request is #${pr} and its head commit is ${head}.`;
 }
 
+/** What follows the Resolve conflicts prompt, after its additional instructions, when the change has an open pull
+ *  request (resolve-pr-conflicts D3): its number and both branches, from the server's own list. One line, not editable. */
+export function resolveConflictsTargetSentence(pr: number, head: string, base: string): string {
+  return `Its pull request is #${pr} from ${head} into ${base}. If this branch is behind origin/${head}, bring it level first, then resolve against ${base} and push to ${head}.`;
+}
+
 /** Between the Draft and the Implement prompt of a Fast-forward prompt: one line, agent-neutral, not editable. */
 export const FAST_FORWARD_CONTINUE_SENTENCE =
   "This change is fast-forwarded: once every artifact is written, do not stop for my review — the pull request will be its only review — and go straight on to implementing it:";
@@ -580,6 +586,8 @@ export interface SessionWorktree {
   lastActivityAt?: string;
   /** Most recent session in this worktree, if its record still exists. */
   sessionId?: string;
+  /** The commit it has checked out (read-only `rev-parse`); compared with a pull request's head commit for "push pending". */
+  head?: string;
   /** Everything it holds is already archived on the default branch (stale-changes spec); absent otherwise. */
   settled?: SettledWorktree;
 }
@@ -661,6 +669,11 @@ export interface ChangeSession extends SessionBase {
    * can be merged again (agent-merges-docs-prs D4). It never changes `autoMergeAskedAt`.
    */
   mergeAsked?: MergeAsked;
+  /**
+   * The pull request this session was started on by Resolve conflicts, on that pull request's head branch: a worktree
+   * re-created for it starts from `origin/<branch>` rather than from the base (resolve-pr-conflicts D2).
+   */
+  pullRequest?: number;
 }
 
 /** A Merge prompt sent to a session (agent-merges-docs-prs D4). */
@@ -1384,6 +1397,11 @@ export interface PullRequest {
    * reads as not docs-only.
    */
   docsOnly?: boolean;
+  /**
+   * Its head branch lives in another repository than the one queried (a fork). Read only to refuse Resolve conflicts
+   * on it; absent in caches that predate it, which reads as not known to be in the same repository.
+   */
+  isCrossRepository?: boolean;
 }
 
 /** What one tracked repository's pull-request list looks like right now. `pullRequests` is the last good list, also when `failed`. */

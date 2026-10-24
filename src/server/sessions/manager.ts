@@ -6,9 +6,9 @@ import { rmSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { blockedReason } from "../../shared/dependencies.ts";
-import { availableActions, changeSessions, pastDraftingReason, isChangeless, isConsole, isIntegration, isProjectConsole, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type Session, type SessionAction, type SessionWorktree, type Snapshot, type WorkStatus, type MergeAsked, type PromptResult, type PullRequest, type RepoConfig, type ShipResult, type AutoMergePromptResult, type StartResult } from "../../shared/types.ts";
+import { availableActions, changeSessions, pastDraftingReason, isChangeless, isConsole, isIntegration, isProjectConsole, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type ChangeSnapshot, type RepoPullRequests, type RepoSnapshot, type Session, type SessionAction, type SessionWorktree, type Snapshot, type WorkStatus, type MergeAsked, type PromptResult, type PullRequest, type RepoConfig, type ShipResult, type AutoMergePromptResult, type StartResult } from "../../shared/types.ts";
 import { sessionBranch } from "../../shared/sessionBranch.ts";
-import { isCleaningUp } from "../cleanup.ts";
+import { isBranchName, isCleaningUp } from "../cleanup.ts";
 import { isDismissing } from "../dismissChange.ts";
 import { canonicalPath, worktreesDir } from "../paths.ts";
 import { CHANGE_NAME } from "../source.ts";
@@ -21,10 +21,12 @@ import { SessionStore } from "./store.ts";
 import { submitText, validSubmission, type SubmitOptions } from "./submit.ts";
 import { spawnTerminal, type TerminalProcess } from "./terminal.ts";
 import { baseRef, headCommit, listWorktrees, readWorkStatus, shipsOnlyOpenSpec, WORKTREE_NAME } from "./workStatus.ts";
-import { defaultBranch } from "../git.ts";
+import { currentBranch, defaultBranch } from "../git.ts";
 import { frameworkById } from "../frameworks/registry.ts";
+import { conflictSignal } from "../../shared/conflictSignal.ts";
+import { linkedPullRequest } from "../../shared/pullRequestLink.ts";
 import { mergeReady, pullRequestReadiness, readinessDetail } from "../../shared/pullRequestReadiness.ts";
-import { checkWorktreeRemovable, copyChangeIfMissing, ensureWorktree, linkedWorktreeOf, NoCommitError, removeWorktree, type Removable } from "./worktree.ts";
+import { checkWorktreeRemovable, copyChangeIfMissing, ensureWorktree, linkedWorktreeOf, NoCommitError, removeWorktree, UnknownBranchError, type Removable } from "./worktree.ts";
 
 export const SCROLLBACK_BYTES = 1024 * 1024;
 const TYPE_PROMPT_DELAY_MS = 1500;
@@ -165,10 +167,15 @@ export class SessionManager {
     return session;
   }
 
-  async open(input: { repoId?: unknown; change?: unknown; action?: unknown; carryOver?: unknown }): Promise<StartResult> {
+  /**
+   * `pullRequests` is the repository's cached pull-request list as the server holds it; only Resolve conflicts
+   * (`resolveConflicts: true`) reads it, and nothing in the request can name a branch or a pull request instead.
+   */
+  async open(input: { repoId?: unknown; change?: unknown; action?: unknown; carryOver?: unknown; resolveConflicts?: unknown }, pullRequests?: RepoPullRequests): Promise<StartResult> {
     const config = this.deps.getConfig();
     if (!config.agentSessions.enabled) throw new SessionError(403, "agent sessions are disabled");
     if (typeof input.change !== "string" || !CHANGE_NAME.test(input.change)) throw new SessionError(400, "invalid change name");
+    if (input.resolveConflicts === true) return this.openToResolve(input.repoId, input.change, pullRequests);
     if (!SESSION_ACTIONS.includes(input.action as SessionAction)) throw new SessionError(400, "unknown action");
     const change = input.change;
     const action = input.action as SessionAction;
@@ -513,10 +520,10 @@ export class SessionManager {
       const branch = session.branch as string;
       try {
         // An adopted worktree is not ours to re-create: if its owner removed it, the session has nowhere to continue.
-        if (!session.adopted) await ensureWorktree(repoPath, session.worktreePath, branch);
+        if (!session.adopted) await ensureWorktree(repoPath, session.worktreePath, branch, { fromRemote: session.pullRequest !== undefined });
         else if ((await linkedWorktreeOf(repoPath, branch)) !== session.worktreePath) throw new Error(`the adopted worktree ${session.worktreePath} no longer exists`);
       } catch (err) {
-        throw new SessionError(err instanceof NoCommitError ? 409 : 500, err instanceof Error ? err.message : String(err));
+        throw new SessionError(err instanceof NoCommitError || err instanceof UnknownBranchError ? 409 : 500, err instanceof Error ? err.message : String(err));
       }
     }
     session.state = "running";
@@ -568,15 +575,20 @@ export class SessionManager {
    * The dashboard resolves nothing itself — it merges, rebases, checks out, commits and pushes nothing. It hands over
    * a prompt; the agent works under its own permission prompts.
    */
-  async resolveConflicts(id: string): Promise<PromptResult> {
+  async resolveConflicts(id: string, pullRequests?: RepoPullRequests): Promise<PromptResult> {
     const session = this.get(id);
     if (isChangeless(session)) throw new SessionError(409, notAChange(session));
     if (session.inPlace) throw new SessionError(400, "this session runs in a folder that is not a git repository — there is no branch to merge");
     const { agent, repo } = await this.prepareRestart(session);
     // Re-read rather than trust the snapshot: the base or the branch may have moved since the user saw the badge.
-    const { work } = await readWorkStatus(repo.path, session.worktreePath);
-    if (!work.conflicts) throw new SessionError(409, `this branch has no conflicts to resolve (${work.state})`);
-    const prompt = resolveConflictsPrompt(agent, session.change);
+    const { work, branch } = await readWorkStatus(repo.path, session.worktreePath);
+    const pr = this.openPullRequestOf(session.repoId, session.change, pullRequests);
+    // The pull request's own branch or nothing: an agent on another branch would push its fix where no pull request is.
+    const onBranch = branch ?? session.branch;
+    if (pr && onBranch !== pr.head) throw new SessionError(409, `this session works on ${onBranch ?? "no branch"}, but pull request #${pr.number} is on ${pr.head}`);
+    const signal = conflictSignal([{ branch: onBranch, work, head: await headCommit(session.worktreePath) }], pr, pullRequests?.fetchedAt);
+    if (!signal) throw new SessionError(409, `this branch has no conflicts to resolve (${work.state}${pr ? `, and GitHub reports #${pr.number} as ${pr.mergeable ?? "unknown"}` : ""})`);
+    const prompt = resolveConflictsPrompt(agent, session.change, pr);
     this.forgetWorktrees();
     const proc = this.live.get(id)?.proc;
     if (session.state === "running" && proc) {
@@ -589,6 +601,139 @@ export class SessionManager {
     await this.restart(session, repo.path, launch.argv, agentEnv(agent, process.env), launch.typed);
     this.report(session, { kind: "session-conflicts-resolve", submitted: true });
     return { ...session, submitted: true };
+  }
+
+  /** The change's linked pull request when it is open, by the shared link rule, from the server's own list only. */
+  private openPullRequestOf(repoId: string, change: string, pullRequests: RepoPullRequests | undefined): PullRequest | undefined {
+    const snapshot = this.deps
+      .getSnapshot()
+      .repos.find((r) => r.id === repoId)
+      ?.changes.find((c) => c.name === change && !c.archived);
+    if (!snapshot || !pullRequests || pullRequests.repoId !== repoId) return undefined;
+    const pr = linkedPullRequest(snapshot, [pullRequests]);
+    return pr?.state === "open" ? pr : undefined;
+  }
+
+  /**
+   * Resolve conflicts for a change, decided before anything is created (resolve-pr-conflicts D2): into the change's
+   * running session or its session worktree when that is on the pull request's head branch, else in a new worktree on
+   * that head branch. The branch, number and base come from the cached list through the shared link rule; nothing in the
+   * request can choose them. The dashboard fetches nothing and runs no `gh` for it.
+   */
+  private async openToResolve(repoId: unknown, change: string, pullRequests: RepoPullRequests | undefined): Promise<StartResult> {
+    const config = this.deps.getConfig();
+    const repo = config.repos.find((r) => r.id === repoId);
+    if (!repo) throw new SessionError(404, "unknown repository");
+    if (!repo.enabled) throw new SessionError(409, "the repository is not tracked");
+    if (!repoAgentEnabled(repo)) throw new SessionError(403, "agent sessions are switched off for this repository");
+    const scanned = this.deps.getSnapshot().repos.find((r) => r.id === repo.id);
+    if (!scanned?.ok) throw new SessionError(409, "the repository's last scan failed");
+    if (isCleaningUp(repo.id)) throw new SessionError(409, "a cleanup of this repository is running");
+    if (isDismissing(repo.id, change)) throw new SessionError(409, "this change is being dismissed");
+    const snapshot = scanned.changes.find((c) => c.name === change && !c.archived);
+    if (!snapshot) throw new SessionError(404, "unknown change");
+    if (scanned.isGit === false || scanned.noCommit === true) throw new SessionError(409, "this repository's sessions run in its folder, with no branch to resolve conflicts on");
+
+    const pr = this.openPullRequestOf(repo.id, change, pullRequests);
+    const sessions = changeSessions(this.list()).filter((s) => s.repoId === repo.id && s.change === change && !s.inPlace);
+    const running = sessions.find((s) => OPEN_SESSION_STATES.includes(s.state));
+    const trees = await this.changeTrees(repo, change, sessions);
+    const signal = conflictSignal(trees, pr, pullRequests?.fetchedAt);
+    if (!signal) throw new SessionError(409, `there are no conflicts to resolve for this change${pr ? ` (GitHub reports #${pr.number} as ${pr.mergeable ?? "unknown"})` : ""}`);
+
+    // One session per change: a running one is where the prompt goes, if it is on the right branch.
+    if (running) {
+      const tree = trees.find((t) => t.path === running.worktreePath);
+      const branch = tree?.branch ?? running.branch;
+      if (pr && branch !== pr.head) throw new SessionError(409, `a session for this change is running on ${branch ?? "no branch"}, not on ${pr.head}, the branch of pull request #${pr.number}`);
+      return { ...(await this.resolveConflicts(running.id, pullRequests)), autoMerge: false };
+    }
+    // An existing worktree on the right branch: the latest session in it is started again there, as Ship would.
+    const recorded = signal.worktree && sessions.find((s) => s.worktreePath === signal.worktree?.path);
+    if (recorded) return { ...(await this.resolveConflicts(recorded.id, pullRequests)), autoMerge: false };
+    if (!pr || !signal.github) throw new SessionError(409, "there are no conflicts to resolve for this change");
+    return this.startOnHeadBranch(repo, scanned, snapshot, pr, signal.worktree?.path);
+  }
+
+  /** The change's session worktrees as they are now — both names, plus any adopted one a session records — read-only. */
+  private async changeTrees(repo: RepoConfig, change: string, sessions: readonly ChangeSession[]) {
+    const paths = new Set([join(worktreesDir(), repo.id, worktreeName("implement", change)), join(worktreesDir(), repo.id, worktreeName("archive", change)), ...sessions.map((s) => s.worktreePath)]);
+    const read = await Promise.all(
+      [...paths].map(async (path) => {
+        const { work, branch } = await readWorkStatus(repo.path, path);
+        return work.state === "missing" ? undefined : { path, branch, work, head: await headCommit(path) };
+      }),
+    );
+    return read.filter((t) => t !== undefined);
+  }
+
+  /** A new session for the change on its open pull request's head branch: a worktree created or adopted, nothing else. */
+  private async startOnHeadBranch(repo: RepoConfig, scanned: RepoSnapshot, snapshot: ChangeSnapshot, pr: PullRequest, existing: string | undefined): Promise<StartResult> {
+    const change = snapshot.name;
+    const head = pr.head;
+    // A missing answer refuses like a fork: refusing is safe until the next refresh says otherwise (design D4).
+    if (pr.isCrossRepository !== false) throw new SessionError(409, `pull request #${pr.number} cannot be resolved here: its branch is in a fork`);
+    if (!isBranchName(head)) throw new SessionError(409, `pull request #${pr.number} names a head branch the dashboard does not check out`);
+    const defaults = scanned.defaultBranch ?? (await defaultBranch(repo.path));
+    if (head === defaults) throw new SessionError(409, `pull request #${pr.number} is from ${head}, the default branch`);
+    if (head === (await currentBranch(repo.path))) throw new SessionError(409, `${head} is checked out in the main checkout, which the dashboard never switches; resolve it there`);
+    // A worktree already on the head branch whose session record is gone is used as it is, under its own name.
+    const action: SessionAction = existing ? (existing === join(worktreesDir(), repo.id, worktreeName("archive", change)) ? "archive" : "implement") : head === sessionBranch("archive", change) ? "archive" : "implement";
+    const path = existing ?? join(worktreesDir(), repo.id, worktreeName(action, change));
+    // The worktree for that action exists but is on another branch: the user removes it or works there.
+    if (!existing && (await stat(path).catch(() => undefined))) {
+      const { branch } = await readWorkStatus(repo.path, path);
+      throw new SessionError(409, `the worktree ${path} is on ${branch ?? "no branch"}, not on ${head}; remove it or resolve the conflicts there`);
+    }
+
+    const config = this.deps.getConfig();
+    const agent = agentFor(config, repo);
+    if (!agent) throw new SessionError(503, "no agent is configured");
+    const prompt = resolveConflictsPrompt(agent, change, pr);
+    if (!Bun.which(agent.command[0])) throw new SessionError(503, `${agent.name} was not found (${agent.command[0]}); install it or change its command in Settings`);
+
+    const now = new Date().toISOString();
+    const session: ChangeSession = {
+      id: randomUUID(),
+      repoId: repo.id,
+      change,
+      action,
+      agentId: agent.id,
+      agentName: agent.name,
+      state: "running",
+      worktreePath: path,
+      branch: head,
+      pullRequest: pr.number,
+      createdAt: now,
+      updatedAt: now,
+      resumable: agent.resumeCommand !== undefined,
+    };
+    try {
+      // Checked out in a worktree made outside the dashboard, with no session in it: the session works there.
+      const elsewhere = await linkedWorktreeOf(repo.path, head);
+      if (elsewhere && elsewhere !== path) {
+        if (this.runningInFolder(elsewhere).length > 0) throw new SessionError(409, `another session is running in ${elsewhere}, where ${head} is checked out`);
+        session.worktreePath = elsewhere;
+        session.adopted = true;
+      } else {
+        await ensureWorktree(repo.path, path, head, { fromRemote: true });
+      }
+      await copyChangeIfMissing(snapshot.checkout?.path ?? repo.path, session.worktreePath, change);
+    } catch (err) {
+      if (err instanceof SessionError) throw err;
+      throw new SessionError(err instanceof NoCommitError || err instanceof UnknownBranchError ? 409 : 500, err instanceof Error ? err.message : String(err));
+    }
+    this.sessions.set(session.id, session);
+    await this.store.saveMeta(session);
+    const launch = launchCommand(agent, prompt);
+    this.start(session, launch.argv, agentEnv(agent, process.env), launch.typed);
+    if (session.state === "running") {
+      this.report(session, { kind: "session-started", action, agentName: session.agentName });
+      this.report(session, { kind: "session-conflicts-resolve", submitted: true });
+    }
+    this.forgetWorktrees();
+    for (const removed of await this.store.prune(this.list())) this.sessions.delete(removed);
+    return { ...session, autoMerge: false };
   }
 
   /**
