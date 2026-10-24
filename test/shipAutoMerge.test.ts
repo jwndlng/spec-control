@@ -11,7 +11,7 @@ import { ensureWorktree } from "../src/server/sessions/worktree.ts";
 import { afterStart, autoMergeNotice, reportShip, type AutoMergeReport } from "../src/ui/sessionState.ts";
 import { useTempHome } from "./helpers.ts";
 import { installFakeGh } from "./ghHelpers.ts";
-import { git, harness, tempGitRepo, waitFor, watch, type Harness } from "./sessionHelpers.ts";
+import { git, harness, recordFor, tempGitRepo, waitFor, watch, type Harness } from "./sessionHelpers.ts";
 
 setDefaultTimeout(30_000);
 
@@ -134,7 +134,8 @@ async function shipping(autoMergeDocs: boolean | undefined, files: string[], opt
     await waitFor(() => h.manager.get(s.id).state === "exited", "exit");
   }
   const agent = h.config.agentSessions.agents[0];
-  return { h, s, seen, plain: shipPrompt(agent, "upgrade-runtime"), withAutoMerge: shipPrompt(agent, "upgrade-runtime", { autoMerge: true }) };
+  const record = recordFor("upgrade-runtime");
+  return { h, s, seen, plain: shipPrompt(agent, "upgrade-runtime", { record }), withAutoMerge: shipPrompt(agent, "upgrade-runtime", { autoMerge: true, record }) };
 }
 
 test("Ship asks for auto-merge in an opted-in project when only OpenSpec documents are shipped", async () => {
@@ -209,7 +210,7 @@ async function archiving(autoMergeDocs: boolean | undefined, opts: { git?: boole
   h.config.repos[0].agent = { enabled: true, ...(autoMergeDocs === undefined ? {} : { autoMergeDocs }) };
   managers.push(h.manager);
   const agent = h.config.agentSessions.agents[0];
-  const archive = (change: string, autoMerge: boolean) => openingPrompt(agent, "archive", change, { autoMerge }) as string;
+  const archive = (change: string, autoMerge: boolean) => openingPrompt(agent, "archive", change, { autoMerge, record: recordFor(change, true) }) as string;
   return { h, archive };
 }
 
@@ -225,7 +226,7 @@ test("Archive in a fresh worktree of an opted-in project ends with the archive a
   const s = await h.manager.open({ repoId: h.repoId, change: "confirm-retention", action: "archive" });
   expect(s.autoMerge).toBe(true);
   expect(askedAt(h, s.id)).toBeDefined();
-  expect(archive("confirm-retention", true)).toEndWith(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION);
+  expect(archive("confirm-retention", true)).toEndWith(`${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION} ${recordFor("confirm-retention", true)}`);
   await openedWith(h, s.id, archive("confirm-retention", true));
   // Read-only: the only new ref is the archive branch the worktree was created on.
   const added = git(h.repoPath, "for-each-ref").split("\n").filter((line) => !refs.includes(line));

@@ -152,9 +152,10 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             its own permission prompts.
           </li>
           <li>
-            <strong>Ship</strong> asks the agent to commit, push and open a pull request; <strong>Resolve conflicts</strong>{" "}
-            asks it to bring a branch that no longer merges up to date. The dashboard itself commits, merges and pushes
-            nothing.
+            <strong>Ship</strong> asks the agent to commit, push and open a pull request, and to record the branch it pushes
+            in the change's <code>.openspec.yaml</code>, under <code>spec-control:</code>, in the same commit;{" "}
+            <strong>Resolve conflicts</strong> asks it to bring a branch that no longer merges up to date. The dashboard
+            itself commits, merges and pushes nothing.
           </li>
           <li>
             <strong>FF</strong> (Fast-forward), beside <strong>Draft artifacts</strong> on a change that is not planned yet,
@@ -248,7 +249,10 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         <code>gh</code>), signed in with <code>gh auth login</code>, only when you open a view that shows them or press
         Refresh — and while an open board shows a pull request that is not ready yet: then that board asks again for those
         projects on its own, every minute while checks run, every five minutes while it waits on a draft, a conflict or a
-        failing check, and not at all while the tab is hidden. <strong>Import from issues</strong> reads a project's open
+        failing check, and not at all while the tab is hidden. A card shows its change's pull request by head branch: the
+        branch the agent recorded for the change when it shipped, else exactly <code>feat/&lt;change&gt;</code>,{" "}
+        <code>chore/archive-&lt;change&gt;</code> or the branch of the worktree the change is in — never a branch that
+        merely contains the change's name. <strong>Import from issues</strong> reads a project's open
         issues the same way, only when you open it or press its Refresh. Nothing is ever changed on GitHub. Without{" "}
         <code>gh</code> the view says so and everything else works.
       </p>

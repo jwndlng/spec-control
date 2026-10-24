@@ -11,6 +11,12 @@ export interface ChangeCopy {
 
 const STAGE_RANK: Record<Stage, number> = { unknown: 0, backlog: 1, drafts: 2, ready: 3, implementing: 4, done: 5, archived: 6 };
 
+/** The record of a merged change: the leading copy's, else the main checkout's copy's — it is on a branch until it merges. */
+function mergedRecord(lead: ChangeCopy, copies: readonly ChangeCopy[]): Pick<ChangeSnapshot, "recorded"> {
+  const recorded = lead.change.recorded ?? copies.find((c) => c.checkout.isMain)?.change.recorded;
+  return recorded ? { recorded } : {};
+}
+
 const instant = (iso: string | undefined) => (iso && !Number.isNaN(Date.parse(iso)) ? Date.parse(iso) : 0);
 
 function sameProgress(a: ChangeCopy, b: ChangeCopy): boolean {
@@ -91,7 +97,7 @@ export function mergeChanges(copies: ChangeCopy[], archivedOnMain: Map<string, s
   }
   const archivedInWorktrees = [...pendingByName.values()].map((lead): ChangeSnapshot => {
     const others = [...(superseded.get(lead.change.name) ?? [])].sort(compareCopies);
-    return { ...lead.change, checkout: lead.checkout, otherCheckouts: others.length ? others.map((o) => ({ ...o.checkout, column: o.change.column })) : undefined };
+    return { ...lead.change, ...mergedRecord(lead, others), checkout: lead.checkout, otherCheckouts: others.length ? others.map((o) => ({ ...o.checkout, column: o.change.column })) : undefined };
   });
   const active = [...byName.values()].map((group) => {
     const sorted = [...group].sort(compareCopies);
@@ -102,6 +108,7 @@ export function mergeChanges(copies: ChangeCopy[], archivedOnMain: Map<string, s
     const others = rest.filter((c) => c.checkout.isMain || !main || !sameProgress(c, main));
     return {
       ...lead.change,
+      ...mergedRecord(lead, group),
       // A change found in a linked worktree is on that worktree's branch; no guessing from names needed.
       branchMatch: lead.checkout.isMain ? lead.change.branchMatch : lead.checkout.branch,
       checkout: lead.checkout,

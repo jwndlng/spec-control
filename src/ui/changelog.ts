@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-24-recorded-pull-request",
+    date: "2026-10-24",
+    title: "Cards follow the branch the agent recorded",
+    summary:
+      "When it ships, the agent now records the branch it pushed in the change's `.openspec.yaml`, so a card shows that branch's pull request even when it is not named `feat/<change>` — and a card no longer borrows the pull request of a change with a similar name.",
+  },
+  {
     id: "2026-10-22-stale-changes",
     date: "2026-10-22",
     title: "Stale changes are marked, with a way out",

@@ -237,7 +237,7 @@ export function pendingMergesOf(sessions: readonly Session[]): PendingMerges {
  * page, else from when the watched lists were last fetched, else from now.
  */
 export function watchPlan(
-  cards: readonly Pick<ChangeSnapshot, "repoId" | "name" | "branchMatch" | "created">[],
+  cards: readonly Pick<ChangeSnapshot, "repoId" | "name" | "branchMatch" | "created" | "recorded">[],
   lists: readonly RepoPullRequests[] | undefined,
   now: number,
   lastSettledAt: number | undefined,

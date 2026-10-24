@@ -56,9 +56,15 @@ export interface ChangeSnapshot {
   lastActivityAt?: string;
   /**
    * The branch of the linked worktree the change's data comes from; for a change that lives in the main checkout, the
-   * first branch or worktree branch whose name contains the change name.
+   * main checkout's branch or else the first linked worktree's branch that is exactly one of the change's candidates
+   * (its recorded branches, `feat/<name>`, `chore/archive-<name>`). Never a branch that merely contains the name.
    */
   branchMatch?: string;
+  /**
+   * The branches the change's pull requests were opened from, as the agent recorded them in the change's own files
+   * (OpenSpec: the `spec-control:` map of `.openspec.yaml`). An input to the pull-request link and `branchMatch` only.
+   */
+  recorded?: ChangeRecord;
   /**
    * The checkout this change's data comes from: the leading copy among all checkouts holding the change. Absent in
    * snapshots cached by older versions and for non-git repositories.
@@ -106,6 +112,14 @@ export interface ChangeSnapshot {
   strandedArchive?: StrandedArchive;
   /** Non-fatal problems while reading this change. */
   warnings?: string[];
+}
+
+/** A change's record of its pull requests' head branches (change-scanner: "The scan reports a change's recorded branches"). */
+export interface ChangeRecord {
+  /** Head branch of the implementation pull request. */
+  branch?: string;
+  /** Head branch of the pull request that archives the change. */
+  archiveBranch?: string;
 }
 
 /** An archive commit that never reached the default branch. */
