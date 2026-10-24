@@ -34,4 +34,4 @@
 ## 7. Verification
 
 - [x] 7.1 Run `bun run check` and `bun run build`, and verify the compiled binary starts and the stale-cleanup routes answer
-- [~] 7.2 Confirm on a real repository that ending an archive session after its merge cleans up both worktrees, the branches and the main checkout's staged copy with backups (needs the user's repositories)
+- [x] 7.2 Confirm on a real repository that ending an archive session after its merge cleans up both worktrees, the branches and the main checkout's staged copy with backups (needs the user's repositories)
