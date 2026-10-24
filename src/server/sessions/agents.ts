@@ -37,26 +37,39 @@ function compose(agent: AgentProfile, key: PromptKey, prompt: string): string {
   return suffix ? `${prompt} ${suffix}` : prompt;
 }
 
+/** Options of the prompts that may lead an agent to open a pull request. */
+interface PullRequestPromptOptions {
+  autoMerge?: boolean;
+  convention?: PrTitleConvention;
+  /**
+   * The framework's record instruction for this session — the archive branch's for an archive session, else the
+   * implementation branch's (agent-sessions: "An agent asked to open a pull request is asked to record its branch").
+   * Chosen by the server from the session; absent when the framework supplies none, and then the text is unchanged.
+   */
+  record?: string;
+}
+
 /**
  * The opening prompt for a starter, or undefined when this agent has none (the starter is then not offered). With
  * `autoMerge` (the project opted in and the worktree holds only OpenSpec documents) an Archive prompt ends with the fixed
- * archive auto-merge instruction, after the suffix like Ship's; every other starter ignores it (archive-auto-merge-docs).
- * `convention` is the project's pull request title convention, which only Fast-forward's Ship part uses.
+ * archive auto-merge instruction, after the suffix like Ship's, and then the `record` instruction; every other starter
+ * ignores both (archive-auto-merge-docs). `convention` is the project's pull request title convention, which only
+ * Fast-forward's Ship part uses — together with `record`, once, in that Ship part.
  */
-export function openingPrompt(
-  agent: AgentProfile,
-  action: SessionAction,
-  change: string,
-  { autoMerge = false, convention }: { autoMerge?: boolean; convention?: PrTitleConvention } = {},
-): string | undefined {
-  if (action === "fastForward") return fastForwardPrompt(agent, change, { convention });
+export function openingPrompt(agent: AgentProfile, action: SessionAction, change: string, { autoMerge = false, convention, record }: PullRequestPromptOptions = {}): string | undefined {
+  if (action === "fastForward") return fastForwardPrompt(agent, change, { convention, record });
   const template = agent.prompts[action];
   // Checked before the suffix: additional instructions are an addition, never a prompt of their own, so they never make
   // a starter available (agent-sessions spec).
   if (!template) return undefined;
   if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
   const prompt = compose(agent, action, template).replaceAll("{change}", change);
-  return autoMerge && action === "archive" ? `${prompt} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION}` : prompt;
+  return autoMerge && action === "archive" ? withRecord(`${prompt} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION}`, record) : prompt;
+}
+
+/** `text` followed by the record instruction, when there is one. */
+function withRecord(text: string, record: string | undefined): string {
+  return record ? `${text} ${record}` : text;
 }
 
 /** A branch as `for-each-ref` shortens it, local or remote-tracking; nothing option-like or with `..` reaches a prompt. */
@@ -64,15 +77,15 @@ const BRANCH_TEXT = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 
 /**
  * The carry-over archive prompt (stale-changes spec): the fixed text with the change, the stranded commit, its branch
- * and the default branch filled in, then the docs auto-merge archive instruction when `autoMerge` — exactly as for any
- * archive session. Every value is re-checked here, so nothing malformed is ever typed into an agent.
+ * and the default branch filled in, then the docs auto-merge archive instruction and the `record` instruction when
+ * `autoMerge` — exactly as for any archive session. Every value is re-checked here, so nothing malformed is ever typed into an agent.
  */
-export function carryOverPrompt(change: string, stranded: StrandedArchive, base: string | undefined, { autoMerge = false }: { autoMerge?: boolean } = {}): string {
+export function carryOverPrompt(change: string, stranded: StrandedArchive, base: string | undefined, { autoMerge = false, record }: { autoMerge?: boolean; record?: string } = {}): string {
   if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
   if (!/^[0-9a-f]{40}$/.test(stranded.commit)) throw new Error("invalid commit");
   for (const branch of [stranded.branch, base]) if (branch !== undefined && (!BRANCH_TEXT.test(branch) || branch.includes(".."))) throw new Error("invalid branch name");
   const prompt = CARRY_OVER_ARCHIVE_PROMPT.replaceAll("{change}", change).replaceAll("{commit}", stranded.commit).replaceAll("{branch}", stranded.branch).replaceAll("{base}", base ?? "the default branch");
-  return autoMerge ? `${prompt} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION}` : prompt;
+  return autoMerge ? withRecord(`${prompt} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION}`, record) : prompt;
 }
 
 /**
@@ -80,24 +93,24 @@ export function carryOverPrompt(change: string, stranded: StrandedArchive, base:
  * instructions, then Ship's exactly as Ship would send it, joined by two fixed sentences. Never with an auto-merge
  * instruction — the pull request it asks for is the change's only review. Undefined without both Draft and Implement.
  */
-export function fastForwardPrompt(agent: AgentProfile, change: string, { convention }: { convention?: PrTitleConvention } = {}): string | undefined {
+export function fastForwardPrompt(agent: AgentProfile, change: string, { convention, record }: Omit<PullRequestPromptOptions, "autoMerge"> = {}): string | undefined {
   if (!fastForwardAvailable(agent)) return undefined;
   const draft = openingPrompt(agent, "draft", change) as string;
   const implement = openingPrompt(agent, "implement", change) as string;
-  return `${draft} ${FAST_FORWARD_CONTINUE_SENTENCE} ${implement} ${FAST_FORWARD_SHIP_SENTENCE} ${shipPrompt(agent, change, { convention })}`;
+  return `${draft} ${FAST_FORWARD_CONTINUE_SENTENCE} ${implement} ${FAST_FORWARD_SHIP_SENTENCE} ${shipPrompt(agent, change, { convention, record })}`;
 }
 
 /**
  * Every agent can ship: a profile without its own Ship prompt gets the agent-neutral default — suffix and all. The
- * project's pull request title `convention` goes between the prompt and the suffix, so the user's own text follows it.
- * With `autoMerge` (the project opted in and the session ships only OpenSpec documents) the fixed auto-merge instruction
+ * project's pull request title `convention` and then the `record` instruction go between the prompt and the suffix, so
+ * the user's own text follows them and the record is asked for whatever the profile's own Ship prompt says. With `autoMerge` (the project opted in and the session ships only OpenSpec documents) the fixed auto-merge instruction
  * comes last, after the suffix, so nothing in the profile can follow and undo it.
  */
-export function shipPrompt(agent: AgentProfile, change: string, { autoMerge = false, convention }: { autoMerge?: boolean; convention?: PrTitleConvention } = {}): string {
+export function shipPrompt(agent: AgentProfile, change: string, { autoMerge = false, convention, record }: PullRequestPromptOptions = {}): string {
   if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
   const base = agent.prompts.ship ?? DEFAULT_SHIP_PROMPT;
   const titled = convention === "conventional-commits" ? `${base} ${CONVENTIONAL_COMMITS_SHIP_SENTENCE}` : base;
-  const prompt = compose(agent, "ship", titled).replaceAll("{change}", change);
+  const prompt = compose(agent, "ship", withRecord(titled, record)).replaceAll("{change}", change);
   return autoMerge ? `${prompt} ${AUTO_MERGE_DOCS_INSTRUCTION}` : prompt;
 }
 

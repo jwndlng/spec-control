@@ -170,3 +170,57 @@ test("across candidates: an open archive pull request wins, and once both are me
   const lateImplementation = { ...implementation, mergedAt: "2026-10-03T09:00:00Z" };
   expect(linkedPullRequest(named("add-validate-phase"), [list("alpha", [archiveMerged, lateImplementation])])?.number).toBe(125);
 });
+
+// A change that records the branches its pull requests were opened from (pull-requests: the "Recorded branch" step).
+const rotate = (recorded?: { branch?: string; archiveBranch?: string }, patch: { branchMatch?: string; created?: string } = {}) => ({ repoId: "alpha", name: "rotate-keys", recorded, ...patch });
+
+test("an off-convention branch that is recorded links its pull request", () => {
+  const lists = [list("alpha", [pr({ number: 88, head: "fix/rotate-keys" })])];
+  expect(linkedPullRequest(rotate({ branch: "fix/rotate-keys" }), lists)?.number).toBe(88);
+  // Unrecorded, the same branch is no candidate.
+  expect(linkedPullRequest(rotate(), lists)).toBeUndefined();
+});
+
+test("a recorded branch wins over a guessed one, even a merged pull request over an open one", () => {
+  const lists = [list("alpha", [pr({ number: 142, head: "fix/rotate-keys", state: "merged", mergedAt: at(5) }), pr({ number: 150, head: "feat/rotate-keys" })])];
+  expect(linkedPullRequest(rotate({ branch: "fix/rotate-keys" }), lists)?.number).toBe(142);
+});
+
+test("recorded implementation and archive branches: the open archive pull request is shown", () => {
+  const lists = [list("alpha", [pr({ number: 142, head: "feat/rotate-keys", state: "merged", mergedAt: "2026-10-01T10:00:00Z" }), pr({ number: 151, head: "chore/archive-rotate-keys" })])];
+  expect(linkedPullRequest(rotate({ branch: "feat/rotate-keys", archiveBranch: "chore/archive-rotate-keys" }), lists)?.number).toBe(151);
+  const bothMerged = [list("alpha", [pr({ number: 142, head: "feat/rotate-keys", state: "merged", mergedAt: "2026-10-01T10:00:00Z" }), pr({ number: 151, head: "chore/archive-rotate-keys", state: "merged", mergedAt: "2026-10-02T10:00:00Z" })])];
+  expect(linkedPullRequest(rotate({ branch: "feat/rotate-keys", archiveBranch: "chore/archive-rotate-keys" }), bothMerged)?.number).toBe(151);
+});
+
+test("a recorded branch without a cached pull request falls through to the candidates", () => {
+  const lists = [list("alpha", [pr({ number: 150, head: "feat/rotate-keys" })])];
+  expect(linkedPullRequest(rotate({ branch: "fix/rotate-keys" }), lists)?.number).toBe(150);
+});
+
+test("a reused recorded branch is not inherited, and nothing else is guessed instead", () => {
+  const lists = [list("alpha", [pr({ number: 77, head: "fix/rotate-keys", state: "merged", mergedAt: "2026-09-10T10:00:00Z" })])];
+  expect(linkedPullRequest(rotate({ branch: "fix/rotate-keys" }, { created: "2026-09-20" }), lists)).toBeUndefined();
+});
+
+test("an existing change without a record keeps the exact candidates", () => {
+  const lists = [list("alpha", [pr({ number: 150, head: "feat/rotate-keys" })])];
+  expect(linkedPullRequest(rotate(undefined, { created: "2026-09-20" }), lists)?.number).toBe(150);
+});
+
+test("a recorded branch of another repository's pull request is not linked", () => {
+  const lists = [list("beta", [pr({ number: 88, head: "fix/rotate-keys" })])];
+  expect(linkedPullRequest(rotate({ branch: "fix/rotate-keys" }), lists)).toBeUndefined();
+});
+
+test("candidate branches start with the recorded ones; a malformed record from an older cache is ignored", () => {
+  expect(candidateBranches({ name: "rotate-keys", branchMatch: "wip/keys", recorded: { branch: "fix/rotate-keys", archiveBranch: "chore/archive-rotate-keys" } })).toEqual([
+    "fix/rotate-keys",
+    "chore/archive-rotate-keys",
+    "wip/keys",
+    "feat/rotate-keys",
+  ]);
+  const odd = { name: "rotate-keys", recorded: { branch: 42 } } as unknown as Parameters<typeof candidateBranches>[0];
+  expect(candidateBranches(odd)).toEqual(["feat/rotate-keys", "chore/archive-rotate-keys"]);
+  expect(linkedPullRequest({ ...rotate(), recorded: "fix/rotate-keys" } as unknown as Parameters<typeof linkedPullRequest>[0], [list("alpha", [pr({ number: 150, head: "feat/rotate-keys" })])])?.number).toBe(150);
+});

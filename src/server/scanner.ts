@@ -4,7 +4,8 @@ import { resolveDependencies } from "../shared/dependencies.ts";
 import { deriveStage, isPlanned } from "../shared/columns.ts";
 import { ISSUE_FILE, toSourceIssue } from "../shared/issues.ts";
 import { detectLabels } from "../shared/labels.ts";
-import type { ChangeSnapshot, Config, DetectedLabel, RepoConfig, RepoSnapshot, SharedConfig, Snapshot, Worktree } from "../shared/types.ts";
+import { sessionBranch } from "../shared/sessionBranch.ts";
+import type { ChangeRecord, ChangeSnapshot, Config, DetectedLabel, RepoConfig, RepoSnapshot, SharedConfig, Snapshot, Worktree } from "../shared/types.ts";
 import { summarizeWorkInProgress } from "../shared/workInProgress.ts";
 import { emptySnapshot, writeSnapshot } from "./cache.ts";
 import type { FrameworkProject, SpecFramework } from "./frameworks/framework.ts";
@@ -64,9 +65,15 @@ export function parseIssueFile(text: string): ChangeSnapshot["sourceIssue"] {
   }
 }
 
-function findBranchMatch(name: string, branch: string | undefined, worktrees: Worktree[]): string | undefined {
-  if (branch?.includes(name)) return branch;
-  return worktrees.find((w) => w.branch?.includes(name))?.branch;
+/**
+ * The branch of a change that lives in the main checkout: the main checkout's own branch when it is exactly one of the
+ * change's branch candidates, else the first linked worktree's branch that is. Never containment: `feat/add-validate-phase`
+ * is another change's branch, not `add-validate`'s (change-scanner: "Branch and worktree matching").
+ */
+function findBranchMatch(name: string, recorded: ChangeRecord | undefined, branch: string | undefined, worktrees: Worktree[]): string | undefined {
+  const candidates = new Set([recorded?.branch, recorded?.archiveBranch, sessionBranch("implement", name), sessionBranch("archive", name)].filter((b): b is string => b !== undefined));
+  if (branch !== undefined && candidates.has(branch)) return branch;
+  return worktrees.find((w) => !w.isMain && w.branch !== undefined && candidates.has(w.branch))?.branch;
 }
 
 /**
@@ -151,7 +158,7 @@ interface RepoContext {
 }
 
 async function scanChange(ctx: RepoContext, entry: ChangeDirEntry, withGit: boolean): Promise<ChangeSnapshot> {
-  const { schema, artifacts, tasksPath, created, warnings } = await ctx.framework.readChange(ctx.source, ctx.project, entry);
+  const { schema, artifacts, tasksPath, created, recorded, warnings } = await ctx.framework.readChange(ctx.source, ctx.project, entry);
 
   const tasksMd = tasksPath ? await ctx.source.readText(tasksPath) : undefined;
   const tasks = tasksMd === undefined ? null : ctx.framework.parseTasks(tasksMd);
@@ -232,8 +239,10 @@ async function scanChange(ctx: RepoContext, entry: ChangeDirEntry, withGit: bool
     archived: entry.archived,
     lastActivityAt,
     specsSynced,
-    // In the main checkout the branch is a guess from names; a linked worktree's copy is on that worktree's branch.
-    branchMatch: entry.archived ? undefined : ctx.isMain ? findBranchMatch(entry.name, ctx.branch, ctx.worktrees) : ctx.branch,
+    // In the main checkout the branch is an exact match against the change's candidates; a linked worktree's copy is
+    // on that worktree's branch.
+    branchMatch: entry.archived ? undefined : ctx.isMain ? findBranchMatch(entry.name, recorded, ctx.branch, ctx.worktrees) : ctx.branch,
+    ...(recorded ? { recorded } : {}),
     stage,
     column,
     subState,

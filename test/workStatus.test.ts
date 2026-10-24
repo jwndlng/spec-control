@@ -10,7 +10,7 @@ import { changeOfWorktree, readWorkStatus } from "../src/server/sessions/workSta
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
 import { CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, type Session, type SessionWorktree } from "../src/shared/types.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
-import { FAKE_AGENT, fakeProfile, git, harness, tempGitRepo, waitFor, watch, type Harness } from "./sessionHelpers.ts";
+import { FAKE_AGENT, fakeProfile, git, harness, recordFor, tempGitRepo, waitFor, watch, type Harness } from "./sessionHelpers.ts";
 
 setDefaultTimeout(30_000);
 
@@ -169,8 +169,9 @@ test("ship submits the default prompt plus the profile's additional Ship instruc
   const extra = "Add the checklist from CONTRIBUTING.md to the PR body.";
   const h = await harness({ agent: { promptSuffixes: { ship: `  ${extra}\n  Then tell me the URL.  ` } } });
   managers.push(h.manager);
-  const composed = `${DEFAULT_SHIP_PROMPT} ${extra} Then tell me the URL.`;
-  expect(shipPrompt(h.config.agentSessions.agents[0], "upgrade-runtime")).toBe(composed);
+  const record = recordFor("upgrade-runtime");
+  const composed = `${DEFAULT_SHIP_PROMPT} ${record} ${extra} Then tell me the URL.`;
+  expect(shipPrompt(h.config.agentSessions.agents[0], "upgrade-runtime", { record })).toBe(composed);
 
   const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
   const seen = await watch(h.manager, s.id);
@@ -219,7 +220,8 @@ test("ship into a running agent that shows a menu is typed, not confirmed, and s
 test("ship without a resume command starts the agent with the default prompt; nothing to ship is refused", async () => {
   const h = await harness({ agent: { resumeCommand: undefined } });
   managers.push(h.manager);
-  expect(shipPrompt(h.config.agentSessions.agents[0], "upgrade-runtime")).toBe(DEFAULT_SHIP_PROMPT);
+  const shipped = `${DEFAULT_SHIP_PROMPT} ${recordFor("upgrade-runtime")}`;
+  expect(shipPrompt(h.config.agentSessions.agents[0], "upgrade-runtime", { record: recordFor("upgrade-runtime") })).toBe(shipped);
   const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
   h.manager.write(s.id, "exit\r");
   await waitFor(() => h.manager.get(s.id).state === "exited", "exit");
@@ -228,7 +230,7 @@ test("ship without a resume command starts the agent with the default prompt; no
   await writeFile(join(s.worktreePath, "work.txt"), "x");
   await h.manager.ship(s.id);
   const seen = await watch(h.manager, s.id);
-  await waitFor(() => seen.text().includes(JSON.stringify([DEFAULT_SHIP_PROMPT])), "the default prompt as the opening argument");
+  await waitFor(() => seen.text().includes(JSON.stringify([shipped])), "the default prompt as the opening argument");
 });
 
 test("API: worktrees ride along with the sessions; removal validates its input, spares running sessions and accepts merged work without a record", async () => {
