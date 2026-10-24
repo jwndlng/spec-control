@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-24-one-next-action-per-stage",
+    date: "2026-10-24",
+    title: "One recommended action per card",
+    summary:
+      "Each card now offers one recommended action, with every other one in the menu behind its arrow — **Fast-forward** moved there — and **Draft artifacts** is no longer offered once implementation started. A card with an open pull request recommends **Merge**, **Resolve conflicts** or **Implement** for failing checks, or says what it waits for.",
+  },
+  {
     id: "2026-10-22-stale-changes",
     date: "2026-10-22",
     title: "Stale changes are marked, with a way out",

@@ -423,7 +423,7 @@ export function AgentSettings({ draft, update }: Props) {
           Warn before fast-forwarding
         </label>
         <p class="hint">
-          <strong>FF</strong> on a card has the agent write a change's artifacts, implement it and open a pull request without stopping for your review — the pull request is
+          <strong>Fast-forward</strong>, in a card's menu, has the agent write a change's artifacts, implement it and open a pull request without stopping for your review — the pull request is
           the only review. With this on, it asks first.
         </p>
 

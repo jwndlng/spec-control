@@ -178,6 +178,19 @@ test("refusals", async () => {
   expect(existsSync(join(worktreesDir(), h.repoId))).toBe(false); // a refused request creates no worktree
 });
 
+test("Draft is refused once implementation started, naming the change as past drafting", async () => {
+  const h = track(await harness({ agent: { prompts: { draft: "draft {change}", implement: "implement {change}", archive: "archive {change}" } } }));
+  const changes = h.snapshot.repos[0].changes.filter((c) => !c.archived);
+  for (const stage of ["implementing", "done"] as const) {
+    const change = changes.find((c) => c.stage === stage)!;
+    // An optional artifact left unwritten is no reason to send an agent back to planning.
+    change.artifacts = [...change.artifacts, { id: "design", status: "ready", required: false }];
+    await expect(h.manager.open({ repoId: h.repoId, change: change.name, action: "draft" })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("past drafting") });
+  }
+  expect(h.manager.list()).toEqual([]);
+  expect(existsSync(join(worktreesDir(), h.repoId))).toBe(false); // a refused request creates no worktree
+});
+
 test("a change awaiting validation starts a Validate session and refuses Implement", async () => {
   const h = track(await harness({ agent: { prompts: { implement: "implement {change}", validate: "validate {change}", archive: "archive {change}" } } }));
   const s = await h.manager.open({ repoId: h.repoId, change: "confirm-retention", action: "validate" });
