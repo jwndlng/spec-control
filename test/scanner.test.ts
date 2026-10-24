@@ -662,3 +662,81 @@ test("issue.yaml: read for active and archived changes, malformed or linked file
   expect(get("retry-webhooks").artifacts).toEqual(get("plain").artifacts);
   expect(await treeFingerprint(root)).toEqual(before);
 });
+
+/** A repository whose changes carry records, with worktrees on a sibling change's branch and on a recorded branch. */
+async function recordRepo(): Promise<{ root: string; repo: string; worktree: (branch: string) => Promise<string> }> {
+  const root = await tempDir();
+  const repo = join(root, "alpha-infra");
+  const marker = (extra = "") => `schema: spec-driven\ncreated: 2026-10-20\n${extra}`;
+  const files: Record<string, string> = {
+    "openspec/config.yaml": "schema: spec-driven\n",
+    "openspec/changes/add-validate/.openspec.yaml": marker(),
+    "openspec/changes/add-validate/proposal.md": "# Proposal\n",
+    "openspec/changes/rotate-keys/.openspec.yaml": marker("spec-control:\n  branch: fix/rotate-keys\n"),
+    "openspec/changes/rotate-keys/proposal.md": "# Proposal\n",
+    "openspec/changes/archive/2026-10-20-trim-logs/.openspec.yaml": marker("spec-control:\n  branch: feat/trim-logs\n  archive-branch: chore/archive-trim-logs\n"),
+    "openspec/changes/archive/2026-10-20-trim-logs/proposal.md": "# Proposal\n",
+  };
+  for (const [path, text] of Object.entries(files)) await Bun.write(join(repo, path), text);
+  await gitIn(repo, "init", "-q");
+  await gitIn(repo, "add", "-A");
+  await gitIn(repo, "commit", "-qm", "init");
+  const worktree = async (branch: string) => {
+    const path = join(root, branch.replaceAll("/", "-"));
+    await gitIn(repo, "worktree", "add", "-q", "-b", branch, path);
+    return path;
+  };
+  return { root, repo, worktree };
+}
+
+test("records: active and archived changes report what their .openspec.yaml records", async () => {
+  const { root, repo } = await recordRepo();
+  try {
+    const snap = await scanRepo(newRepoConfig(repo, true));
+    const byName = new Map(snap.changes.map((c) => [c.name, c]));
+    expect(byName.get("rotate-keys")?.recorded).toEqual({ branch: "fix/rotate-keys" });
+    expect(byName.get("trim-logs")?.recorded).toEqual({ branch: "feat/trim-logs", archiveBranch: "chore/archive-trim-logs" });
+    expect(byName.get("add-validate")?.recorded).toBeUndefined();
+    expect(byName.get("rotate-keys")?.warnings).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("branch matching: exact candidates only — no sibling branch, no containing name; recorded and session branches match", async () => {
+  const { root, repo, worktree } = await recordRepo();
+  try {
+    await worktree("feat/add-validate-phase");
+    await worktree("fix/rotate-keys");
+    const snap = await scanRepo(newRepoConfig(repo, true));
+    const byName = new Map(snap.changes.map((c) => [c.name, c]));
+    // Both changes lead from the main checkout: every worktree only carries main's copy along.
+    expect(byName.get("add-validate")?.checkout?.isMain).toBe(true);
+    expect(byName.get("add-validate")?.branchMatch).toBeUndefined();
+    expect(byName.get("rotate-keys")?.branchMatch).toBe("fix/rotate-keys");
+    expect(byName.get("trim-logs")?.branchMatch).toBeUndefined();
+
+    await gitIn(repo, "checkout", "-q", "-b", "wip/add-validate-tweaks");
+    const tweaks = await scanRepo(newRepoConfig(repo, true));
+    expect(tweaks.changes.find((c) => c.name === "add-validate")?.branchMatch).toBeUndefined();
+
+    await gitIn(repo, "checkout", "-q", "-b", "feat/add-validate");
+    const session = await scanRepo(newRepoConfig(repo, true));
+    expect(session.changes.find((c) => c.name === "add-validate")?.branchMatch).toBe("feat/add-validate");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("branch matching: a change that leads from a linked worktree keeps that worktree's branch, whatever its name", async () => {
+  const { root, repo, worktree } = await recordRepo();
+  try {
+    const path = await worktree("wip/compliance");
+    await Bun.write(join(path, "openspec/changes/audit-trail/.openspec.yaml"), "schema: spec-driven\ncreated: 2026-10-21\n");
+    await Bun.write(join(path, "openspec/changes/audit-trail/proposal.md"), "# Proposal\n");
+    const snap = await scanRepo(newRepoConfig(repo, true));
+    expect(snap.changes.find((c) => c.name === "audit-trail")?.branchMatch).toBe("wip/compliance");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

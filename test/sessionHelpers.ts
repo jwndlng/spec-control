@@ -1,12 +1,16 @@
 import { cp, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { defaultAgentSessions, defaultConfig, newRepoConfig } from "../src/server/config.ts";
+import { openSpec } from "../src/server/frameworks/openspec/index.ts";
 import { scanRepo } from "../src/server/scanner.ts";
 import { SessionManager, type ManagerDeps } from "../src/server/sessions/manager.ts";
 import type { AgentProfile, Config, Snapshot } from "../src/shared/types.ts";
 import { FIXTURES, tempDir } from "./helpers.ts";
 
 export const FAKE_AGENT = join(FIXTURES, "fake-agent.ts");
+
+/** The record instruction the server adds for a change of the fixture's OpenSpec repository (agent-sessions). */
+export const recordFor = (change: string, archive = false): string => openSpec.recordInstruction({ change, archive });
 
 export const fakeProfile = (patch: Partial<AgentProfile> = {}): AgentProfile => ({
   id: "fake",

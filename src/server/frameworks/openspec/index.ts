@@ -4,7 +4,7 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { FRAMEWORK_INFO } from "../../../shared/types.ts";
-import type { ChangeDirEntry, RepoSource } from "../../source.ts";
+import { CHANGE_NAME, type ChangeDirEntry, type RepoSource } from "../../source.ts";
 import { type ChangeScaffold, type FrameworkChange, type FrameworkChangeOutputs, type FrameworkLayout, type FrameworkProject, SpecFramework, type SpecSyncResult } from "../framework.ts";
 import { DEFAULT_SCHEMA, readChangeArtifacts } from "./adapter.ts";
 import { parseMarker } from "./marker.ts";
@@ -51,27 +51,40 @@ export class OpenSpecFramework extends SpecFramework {
   async readChangeOutputs(source: RepoSource, project: FrameworkProject, entry: ChangeDirEntry): Promise<FrameworkChangeOutputs> {
     const marker = parseMarker(await source.readText(join(entry.dir, CHANGE_MARKER)));
     const created = marker.created;
+    const recorded = marker.recorded ? { recorded: marker.recorded } : {};
     try {
       const info = readChangeArtifacts(source.path, entry.name, {
         changeDir: entry.dir,
         schemaName: marker.schema ?? project.schema,
         skipSpecs: marker.skipSpecs,
       });
-      return { schema: info.schema, artifacts: info.artifacts, tasksPath: info.tasksPath, created, outputs: info.outputs, warnings: [] };
+      return { schema: info.schema, artifacts: info.artifacts, tasksPath: info.tasksPath, created, ...recorded, outputs: info.outputs, warnings: [...marker.warnings] };
     } catch (err) {
       // An unknown schema, typically: there is no artifact list to offer.
       return {
         schema: marker.schema ?? project.schema ?? "unknown",
         artifacts: [],
         created,
+        ...recorded,
         outputs: {},
-        warnings: [`could not read artifacts: ${err instanceof Error ? err.message : String(err)}`],
+        warnings: [...marker.warnings, `could not read artifacts: ${err instanceof Error ? err.message : String(err)}`],
       };
     }
   }
 
   override specsSynced(source: RepoSource, entry: ChangeDirEntry): Promise<SpecSyncResult> {
     return changeSpecsSynced(source, entry.dir);
+  }
+
+  /**
+   * The record instruction (spec-frameworks: "OpenSpec changes record their pull request's branch in `.openspec.yaml`"):
+   * the agent, not the dashboard, writes the head branch into the change's marker, in the commit with its work. One
+   * line, because it may be typed into a terminal.
+   */
+  override recordInstruction({ change, archive }: { change: string; archive: boolean }): string {
+    if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
+    const key = archive ? "archive-branch" : "branch";
+    return `Before you commit, set ${key}: <the branch you push> under the top-level key spec-control: in openspec/changes/${change}/${CHANGE_MARKER} (or openspec/changes/archive/<date>-${change}/${CHANGE_MARKER} if this branch archived it), indented two spaces, unless it already says so. Change nothing else in the file. Commit it with your work before you push; add no pull request number and no later commit.`;
   }
 
   /** `.openspec.yaml` naming the project's schema and today's date, as `openspec new change` writes it. */

@@ -150,3 +150,23 @@ test("mergeChanges: the card carries the leading copy's Done sub-state", () => {
   const [led] = mergeChanges([validating, confirmed], new Map());
   expect([led.checkout, led.subState]).toEqual([MAIN, "complete"]);
 });
+
+test("mergeChanges: the record is the leading copy's, else the main checkout's copy's, and changes no column", () => {
+  const lead = copy(wt("audit-trail"), "implementing", "Implementing", { tasks: { done: 2, total: 5 }, recorded: { branch: "fix/audit-trail" } });
+  const [fromLead] = mergeChanges([copy(MAIN, "ready", "Ready"), lead], new Map());
+  expect(fromLead.recorded).toEqual({ branch: "fix/audit-trail" });
+
+  const [fromMain] = mergeChanges([copy(MAIN, "ready", "Ready", { recorded: { branch: "fix/audit-trail" } }), { ...lead, change: { ...lead.change, recorded: undefined } }], new Map());
+  expect(fromMain.recorded).toEqual({ branch: "fix/audit-trail" });
+  expect(fromMain.checkout?.path).toBe(lead.checkout.path);
+
+  // The leading copy's own record wins over the main checkout's.
+  const [both] = mergeChanges([copy(MAIN, "ready", "Ready", { recorded: { branch: "feat/audit-trail" } }), lead], new Map());
+  expect(both.recorded).toEqual({ branch: "fix/audit-trail" });
+
+  // Gaining a record changes nothing else about the card.
+  const [without] = mergeChanges([copy(MAIN, "ready", "Ready"), { ...lead, change: { ...lead.change, recorded: undefined } }], new Map());
+  const { recorded: _, ...rest } = fromLead;
+  expect(rest).toEqual(without);
+  expect(mergeChanges([copy(MAIN, "ready", "Ready")], new Map())[0].recorded).toBeUndefined();
+});
