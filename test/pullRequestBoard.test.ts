@@ -4,6 +4,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ChangeSnapshot, PullRequest, PullRequestsResponse, RepoPullRequests, RepoSnapshot } from "../src/shared/types.ts";
 import { boardCards, type Card, ChangeCard } from "../src/ui/kanban.tsx";
+import { type DetailPr, DetailPullRequest, detailPullRequest } from "../src/ui/pullRequests.tsx";
+import { waitingLabel } from "../src/shared/nextStep.ts";
 import { armWatch, createPrRefresher, FRESHNESS_MS, watchPlan } from "../src/ui/pullRequestsState.ts";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import type { ChangeSession } from "../src/shared/types.ts";
@@ -394,4 +396,45 @@ test("nothing fetched, or gh unavailable: no card is tinted by a pull request", 
   }
   const unavailable = { repos: [list("alpha", ago(MIN), [pr({ number: 125, checks: "pending" })], { status: "unavailable", setup: "gh-signed-out" })] };
   expect(cardWorkingState(sessionsOn, [], workingCard(unavailable), NOW)).toEqual({ tinted: false, sweeping: false });
+});
+
+// ---- the proposal pull request (ship-proposals-as-docs-prs) ----
+
+test("a proposal pull request is labelled as such on the card and in the detail header, nothing else differs", () => {
+  const ready = change({ name: "rotate-keys", branchMatch: undefined, stage: "ready", column: "Ready" });
+  const proposal = pr({ number: 90, head: "docs/rotate-keys", checks: "pending" });
+  const card = cardOf(ready, { repos: [list("alpha", ago(MIN), [proposal])] });
+  expect(card.proposalPullRequest).toBe(true);
+  const link = prLink(card);
+  expect(textOf(link).replace(/\s+/g, " ")).toStartWith("Proposal #90");
+  expect(textOf(link)).toContain("checks running");
+  expect(link?.props["aria-label"]).toStartWith("Proposal pull request #90 of alpha-infra, open, not ready: checks running");
+  expect(card.column).toBe("Ready");
+  const header = DetailPullRequest({ info: detailPullRequest(ready, { repos: [list("alpha", ago(MIN), [proposal])] }) as DetailPr });
+  expect(textOf(header)).toContain("Proposal pull request");
+  expect(textOf(header)).toContain("#90");
+  // The implementation's pull request is not labelled.
+  const implementation = cardOf(ready, { repos: [list("alpha", ago(MIN), [{ ...proposal, state: "merged", mergedAt: ago(MIN) }, pr({ number: 94, head: "feat/rotate-keys" })])] });
+  expect(implementation.proposalPullRequest).toBeUndefined();
+  expect(textOf(prLink(implementation)).replace(/\s+/g, " ")).toStartWith("PR #94");
+  const implHeader = detailPullRequest(ready, { repos: [list("alpha", ago(MIN), [pr({ number: 94, head: "feat/rotate-keys" })])] }) as DetailPr & { proposal?: boolean };
+  expect(implHeader.proposal).toBeUndefined();
+  expect(textOf(DetailPullRequest({ info: implHeader }))).not.toContain("Proposal");
+});
+
+test("while only the proposal session runs, the card still offers Implement", () => {
+  const ready = boardCards([{ ...repo([change({ repoId: sessionRepo.id, name: "rotate-keys", branchMatch: undefined, stage: "ready", column: "Ready" })]), id: sessionRepo.id }], new Map([[sessionRepo.id, 120]]))[0];
+  const running = { ...ended, change: "rotate-keys", action: "draft" as const, state: "running" as const, exitCode: undefined };
+  const proposal = { ...running, id: "p", branch: "docs/rotate-keys" };
+  const implement = { ...running, id: "i", action: "implement" as const, branch: "feat/rotate-keys" };
+  expect(cardSessionControls(sessionsOn, [proposal], ready)).toMatchObject({ shown: [proposal], starters: ["implement"], main: { kind: "start", action: "implement" } });
+  expect(cardSessionControls(sessionsOn, [{ ...proposal, branch: "feat/rotate-keys" }], ready).starters).toEqual([]);
+  expect(cardSessionControls(sessionsOn, [implement, proposal], ready).starters).toEqual([]);
+  // The proposal pull request's checks run: the recommended step waits, and says whose checks.
+  const waiting = cardSessionControls(sessionsOn, [proposal], { ...ready, pullRequest: pr({ number: 90, head: "docs/rotate-keys", checks: "pending" }) });
+  expect(waiting.main).toEqual({ kind: "waiting", reason: "checks running" });
+  expect(waiting.menu).toEqual([{ kind: "start", action: "implement" }]);
+  expect(waitingLabel("checks running", true)).toBe("Waiting: proposal checks running");
+  expect(waitingLabel("checks running")).toBe("Waiting: checks running");
+  expect(waitingLabel("draft", true)).toBe("Waiting: draft proposal pull request");
 });

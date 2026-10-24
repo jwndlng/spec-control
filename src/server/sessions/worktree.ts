@@ -95,6 +95,24 @@ export class NoCommitError extends Error {
  * The linked worktree that has `branch` checked out, if any. git allows a branch in one worktree only, so a session
  * for that branch cannot get a worktree of its own and works there instead. Never the main checkout.
  */
+/** The default branch as the repository knows it locally: `origin/HEAD`, else `HEAD`. Read-only, never a remote. */
+async function defaultRef(repoPath: string): Promise<string> {
+  const remoteHead = await git(repoPath, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+  return remoteHead.ok && remoteHead.out ? remoteHead.out : "HEAD";
+}
+
+/**
+ * Where an implementation branch that does not exist yet starts (ship-proposals-as-docs-prs D4), read-only: the local
+ * `proposal` branch (`docs/<change>`) when it exists and the default branch's tree does not hold the change yet — its
+ * proposal pull request is still open, or was never opened — so the implementation builds on the proposal; otherwise
+ * `undefined`, the default branch as always. A failing `ls-tree` keeps the default branch too.
+ */
+export async function implementStartPoint(repoPath: string, change: string, proposal: string): Promise<string | undefined> {
+  if (!(await git(repoPath, ["show-ref", "--verify", "--quiet", `refs/heads/${proposal}`])).ok) return undefined;
+  const held = await git(repoPath, ["ls-tree", "-d", "--name-only", await defaultRef(repoPath), "--", join(OPENSPEC_PATHS.changesDir, change)]);
+  return held.ok && held.out === "" ? proposal : undefined;
+}
+
 export async function linkedWorktreeOf(repoPath: string, branch: string): Promise<string | undefined> {
   const listed = await git(repoPath, ["worktree", "list", "--porcelain"]);
   if (!listed.ok) return undefined;
@@ -115,8 +133,9 @@ export class UnknownBranchError extends Error {
  * `fromRemote`: the branch is a pull request's head branch, so a missing local branch is created from
  * `origin/<branch>` with it as upstream — never from the base — and refused with `UnknownBranchError` when that does
  * not exist either. An existing local branch is checked out as it is, whether or not it is level with the remote.
+ * `startPoint`: where a missing branch is created instead of the default branch (`implementStartPoint`).
  */
-export async function ensureWorktree(repoPath: string, worktreePath: string, branch: string, options: { fromRemote?: boolean } = {}): Promise<{ created: boolean; base?: string }> {
+export async function ensureWorktree(repoPath: string, worktreePath: string, branch: string, options: { fromRemote?: boolean; startPoint?: string } = {}): Promise<{ created: boolean; base?: string }> {
   if (await isDirectory(worktreePath)) {
     const inside = await git(worktreePath, ["rev-parse", "--is-inside-work-tree"]);
     if (inside.ok && inside.out === "true") return { created: false };
@@ -134,8 +153,7 @@ export async function ensureWorktree(repoPath: string, worktreePath: string, bra
     if (!added.ok) throw new Error(`could not create the worktree: ${added.err.split("\n").pop()}`);
     return { created: true, base: remote };
   }
-  const remoteHead = hasBranch ? undefined : await git(repoPath, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
-  const base = remoteHead?.ok && remoteHead.out ? remoteHead.out : "HEAD";
+  const base = hasBranch ? "HEAD" : (options.startPoint ?? (await defaultRef(repoPath)));
   if (!hasBranch && base === "HEAD" && !(await git(repoPath, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])).ok) throw new NoCommitError();
   await mkdir(dirname(worktreePath), { recursive: true });
   await git(repoPath, ["worktree", "prune"]); // forget worktrees whose directory was deleted by hand

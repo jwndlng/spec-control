@@ -7,7 +7,7 @@ import { realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { blockedReason } from "../../shared/dependencies.ts";
 import { availableActions, changeSessions, pastDraftingReason, isChangeless, isConsole, isIntegration, isProjectConsole, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type ChangeSnapshot, type RepoPullRequests, type RepoSnapshot, type Session, type SessionAction, type SessionWorktree, type Snapshot, type WorkStatus, type MergeAsked, type PromptResult, type PullRequest, type RepoConfig, type ShipResult, type AutoMergePromptResult, type StartResult } from "../../shared/types.ts";
-import { sessionBranch } from "../../shared/sessionBranch.ts";
+import { isProposalSession, proposalBranch, receivingSession, sessionBranch } from "../../shared/sessionBranch.ts";
 import { isBranchName, isCleaningUp } from "../cleanup.ts";
 import { isDismissing } from "../dismissChange.ts";
 import { canonicalPath, worktreesDir } from "../paths.ts";
@@ -26,7 +26,7 @@ import { frameworkById } from "../frameworks/registry.ts";
 import { conflictSignal } from "../../shared/conflictSignal.ts";
 import { linkedPullRequest } from "../../shared/pullRequestLink.ts";
 import { mergeReady, pullRequestReadiness, readinessDetail } from "../../shared/pullRequestReadiness.ts";
-import { checkWorktreeRemovable, copyChangeIfMissing, ensureWorktree, linkedWorktreeOf, NoCommitError, removeWorktree, UnknownBranchError, type Removable } from "./worktree.ts";
+import { checkWorktreeRemovable, copyChangeIfMissing, ensureWorktree, implementStartPoint, linkedWorktreeOf, NoCommitError, removeWorktree, UnknownBranchError, type Removable } from "./worktree.ts";
 
 export const SCROLLBACK_BYTES = 1024 * 1024;
 const TYPE_PROMPT_DELAY_MS = 1500;
@@ -47,9 +47,14 @@ export class SessionError extends Error {
   }
 }
 
-/** Archiving gets a worktree of its own: the implementation worktree of the same change may still exist, on an old base. */
-export function worktreeName(action: SessionAction, change: string): string {
-  return action === "archive" ? `archive-${change}` : change;
+/**
+ * Archiving gets a worktree of its own: the implementation worktree of the same change may still exist, on an old base.
+ * So does a Draft session that ships its proposal (`proposal`), so that Implement, which reuses a worktree by name, never
+ * lands on the proposal's branch.
+ */
+export function worktreeName(action: SessionAction, change: string, { proposal = false }: { proposal?: boolean } = {}): string {
+  if (action === "archive") return `archive-${change}`;
+  return action === "draft" && proposal ? `docs-${change}` : change;
 }
 
 export { sessionBranch };
@@ -216,8 +221,13 @@ export class SessionManager {
     // twice. `list()` is newest first, so a process that still holds two running sessions from before this rule
     // returns the one the user started last. In-place sessions need this as much as worktrees do: their working
     // directory is the repository folder itself, which no per-worktree rule would have kept a second agent out of.
-    const existing = this.list().find((s) => s.repoId === repo.id && s.change === change && OPEN_SESSION_STATES.includes(s.state));
-    if (existing && duplicate) throw new SessionError(409, "a session for this change is running; end it first");
+    // The one exception is a session drafting the proposal on its own branch: it takes only Draft, so implementing gets
+    // a session of its own next to it rather than continuing on the proposal's branch (ship-proposals-as-docs-prs).
+    const existing = receivingSession(changeSessions(this.list()), repo.id, change, action);
+    // Removing a duplicate starts fresh from the default branch: any open session for the change is refused instead.
+    if (duplicate && this.list().some((s) => s.repoId === repo.id && s.change === change && OPEN_SESSION_STATES.includes(s.state))) {
+      throw new SessionError(409, "a session for this change is running; end it first");
+    }
     if (existing) return { ...existing, autoMerge: false };
     // A tracked folder without git is a supported repository, it just cannot be isolated: the agent runs in the folder
     // itself. So does a git repository with no commit yet, which has nothing to branch a worktree from. Decided from the
@@ -244,6 +254,8 @@ export class SessionManager {
     if (!prompt) throw new SessionError(400, `${agent.name} has no "${action}" prompt configured`);
     if (!Bun.which(agent.command[0])) throw new SessionError(503, `${agent.name} was not found (${agent.command[0]}); install it or change its command in Settings`);
 
+    // Decided once, now: switching docs auto-merge later never moves a session to another branch (D1).
+    const proposal = action === "draft" && !inPlace && repo.agent?.autoMergeDocs === true;
     const now = new Date().toISOString();
     const session: ChangeSession = {
       id: randomUUID(),
@@ -253,8 +265,8 @@ export class SessionManager {
       agentId: agent.id,
       agentName: agent.name,
       state: "running",
-      worktreePath: inPlace ? repo.path : join(worktreesDir(), repo.id, worktreeName(action, change)),
-      ...(inPlace ? { inPlace: true } : { branch: sessionBranch(action, change) }),
+      worktreePath: inPlace ? repo.path : join(worktreesDir(), repo.id, worktreeName(action, change, { proposal })),
+      ...(inPlace ? { inPlace: true } : { branch: sessionBranch(action, change, { proposal }) }),
       createdAt: now,
       updatedAt: now,
       resumable: agent.resumeCommand !== undefined,
@@ -269,7 +281,9 @@ export class SessionManager {
           session.worktreePath = elsewhere;
           session.adopted = true;
         } else {
-          await ensureWorktree(repo.path, session.worktreePath, branch);
+          // Implementation builds on a proposal that has not merged yet, never on its branch (D4).
+          const startPoint = action === "implement" || action === "validate" ? await implementStartPoint(repo.path, change, proposalBranch(change)) : undefined;
+          await ensureWorktree(repo.path, session.worktreePath, branch, { startPoint });
         }
         // The change may live only in some other worktree (on another branch), not in the main checkout. A duplicate is
         // on the default branch the worktree was made from; nothing is copied into it.
@@ -279,9 +293,9 @@ export class SessionManager {
       }
     }
     // Decided once the worktree exists, so a leftover archive branch with code in it is seen (archive-auto-merge-docs D4).
-    const autoMerge = await this.archiveAutoMerge(repo, session, action);
+    const autoMerge = await this.docsAutoMerge(repo, session, action);
     if (autoMerge) {
-      prompt = fixedPrompt({ autoMerge, record }) ?? (openingPrompt(agent, action, change, { autoMerge, record }) as string);
+      prompt = fixedPrompt({ autoMerge, record }) ?? (openingPrompt(agent, action, change, { autoMerge, proposal: autoMerge, convention: repo.prTitleConvention, record }) as string);
       session.autoMergeAskedAt = new Date().toISOString();
     }
     this.sessions.set(session.id, session);
@@ -316,12 +330,14 @@ export class SessionManager {
   }
 
   /**
-   * Whether an Archive prompt for this session gets the archive auto-merge instruction: the project opted in, the
-   * session has a worktree, and read-only git proves it holds nothing outside `openspec/` — nothing at all included,
-   * since an archive worktree starts empty. Any other action, an in-place session or any doubt is `false`, with no git.
+   * Whether an Archive prompt for this session gets the archive auto-merge instruction, or a Draft prompt the proposal
+   * instruction — the latter only in a session on the proposal branch (ship-proposals-as-docs-prs D2): the project opted
+   * in, the session has a worktree, and read-only git proves it holds nothing outside `openspec/` — nothing at all
+   * included, since such a worktree starts empty. Any other action, an in-place session or any doubt is `false`.
    */
-  private async archiveAutoMerge(repo: RepoConfig, session: ChangeSession, action: SessionAction): Promise<boolean> {
-    if (action !== "archive" || session.inPlace || repo.agent?.autoMergeDocs !== true) return false;
+  private async docsAutoMerge(repo: RepoConfig, session: ChangeSession, action: SessionAction): Promise<boolean> {
+    if (action === "draft" ? !isProposalSession(session) : action !== "archive") return false;
+    if (session.inPlace || repo.agent?.autoMergeDocs !== true) return false;
     return shipsOnlyOpenSpec(session.worktreePath, await baseRef(repo.path), { allowEmpty: true });
   }
 
@@ -666,7 +682,9 @@ export class SessionManager {
 
     const pr = this.openPullRequestOf(repo.id, change, pullRequests);
     const sessions = changeSessions(this.list()).filter((s) => s.repoId === repo.id && s.change === change && !s.inPlace);
-    const running = sessions.find((s) => OPEN_SESSION_STATES.includes(s.state));
+    // A proposal session may run beside the implementation's: the one on the pull request's branch comes first.
+    const open = sessions.filter((s) => OPEN_SESSION_STATES.includes(s.state));
+    const running = open.find((s) => pr !== undefined && s.branch === pr.head) ?? open[0];
     const trees = await this.changeTrees(repo, change, sessions);
     const signal = conflictSignal(trees, pr, pullRequests?.fetchedAt);
     if (!signal) throw new SessionError(409, `there are no conflicts to resolve for this change${pr ? ` (GitHub reports #${pr.number} as ${pr.mergeable ?? "unknown"})` : ""}`);
@@ -796,11 +814,13 @@ export class SessionManager {
     if (!availableActions(change).includes(action)) throw new SessionError(400, `"${action}" is not available for this change in its current stage`);
     const agent = config.agentSessions.agents.find((a) => a.id === session.agentId);
     if (!agent || !openingPrompt(agent, action, session.change)) throw new SessionError(400, `${session.agentName} has no "${action}" prompt configured`);
+    // The proposal's session drafts and nothing else: implementing there would put code into the proposal pull request.
+    if (action !== "draft" && isProposalSession(session)) throw new SessionError(409, `this session drafts the proposal on ${session.branch}; start "${action}" as a session of its own`);
     // Archive sent here runs where this session runs — often an Implement worktree with code in it, which the check sees.
     const repo = config.repos.find((r) => r.id === session.repoId);
-    const autoMerge = repo !== undefined && (await this.archiveAutoMerge(repo, session, action));
+    const autoMerge = repo !== undefined && (await this.docsAutoMerge(repo, session, action));
     const record = this.recordInstruction(session.repoId, session.change, action);
-    const text = openingPrompt(agent, action, session.change, { autoMerge, convention: repo?.prTitleConvention, record }) as string;
+    const text = openingPrompt(agent, action, session.change, { autoMerge, proposal: autoMerge, convention: repo?.prTitleConvention, record }) as string;
     // The recorded action is what the user asked for, whether or not the agent's terminal echoed the prompt in time.
     session.action = action;
     if (autoMerge) session.autoMergeAskedAt = new Date().toISOString();

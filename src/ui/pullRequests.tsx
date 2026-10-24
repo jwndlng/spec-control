@@ -7,7 +7,7 @@
 // to github.com are ordinary links the user follows.
 import { type ComponentChildren, createContext } from "preact";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { linkedPullRequest } from "../shared/pullRequestLink.ts";
+import { isProposalPullRequest, linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { type Readiness, pullRequestReadiness, readinessDetail, readinessRole, readinessWord } from "../shared/pullRequestReadiness.ts";
 import type { ChangeSnapshot, PullRequest, PullRequestsResponse, Snapshot } from "../shared/types.ts";
 import { api } from "./api.ts";
@@ -210,7 +210,7 @@ function readinessChip(readiness: Readiness, fetchedAt: string | undefined, now?
  * the one reason it is not, in its role's colour — a draft's state already says that. A link the user follows — the
  * page itself never requests github.com.
  */
-export function CardPullRequest({ pr, repoName, fetchedAt, now, merging }: { pr: PullRequest; repoName: string; fetchedAt?: string; now?: number; merging?: string }) {
+export function CardPullRequest({ pr, proposal = false, repoName, fetchedAt, now, merging }: { pr: PullRequest; proposal?: boolean; repoName: string; fetchedAt?: string; now?: number; merging?: string }) {
   const word = prStateWord(pr);
   const settled = pr.state !== "open";
   const readiness = pullRequestReadiness(pr);
@@ -223,9 +223,9 @@ export function CardPullRequest({ pr, repoName, fetchedAt, now, merging }: { pr:
       target="_blank"
       rel="noopener noreferrer"
       title={`${pr.title} — ${stateChip(pr).title.toLowerCase()}${waits}; open on GitHub`}
-      aria-label={`Pull request #${pr.number} of ${repoName}, ${word}${chip ? `, ${chip.word === "ready" ? "ready" : `not ready: ${chip.word}`}` : ""}, opens on GitHub`}
+      aria-label={`${proposal ? "Proposal pull request" : "Pull request"} #${pr.number} of ${repoName}, ${word}${chip ? `, ${chip.word === "ready" ? "ready" : `not ready: ${chip.word}`}` : ""}, opens on GitHub`}
     >
-      PR #{pr.number}
+      {proposal ? "Proposal" : "PR"} #{pr.number}
       <span class="card-pr-state">
         <span aria-hidden="true">{STATE_SYMBOL[word]}</span> {word}
       </span>
@@ -244,7 +244,7 @@ export function CardPullRequest({ pr, repoName, fetchedAt, now, merging }: { pr:
 }
 
 /** What the detail header knows about a change's pull request: the linked one (and when its list was fetched), or why there can be none. */
-export type DetailPr = { pr: PullRequest; fetchedAt?: string; unavailable?: undefined } | { pr?: undefined; unavailable: string };
+export type DetailPr = { pr: PullRequest; fetchedAt?: string; proposal?: boolean; unavailable?: undefined } | { pr?: undefined; unavailable: string };
 
 /** When the change's repository's list was last fetched, for saying how fresh a readiness is. */
 export function listFetchedAt(response: PullRequestsResponse | undefined, repoId: string): string | undefined {
@@ -254,7 +254,7 @@ export function listFetchedAt(response: PullRequestsResponse | undefined, repoId
 /** The linked pull request; else, when the repository's pull requests cannot be read, the reason — said once. */
 export function detailPullRequest(change: Pick<ChangeSnapshot, "repoId" | "name" | "branchMatch" | "created" | "recorded">, response: PullRequestsResponse | undefined): DetailPr | undefined {
   const pr = linkedPullRequest(change, response?.repos);
-  if (pr) return { pr, fetchedAt: listFetchedAt(response, change.repoId) };
+  if (pr) return { pr, fetchedAt: listFetchedAt(response, change.repoId), ...(isProposalPullRequest(change, pr) ? { proposal: true } : {}) };
   const list = response?.repos.find((r) => r.repoId === change.repoId);
   if (!response || !list || list.status !== "unavailable") return undefined;
   return { unavailable: ghSetup(response)?.what ?? list.reason ?? "this repository's pull requests cannot be read" };
@@ -284,7 +284,15 @@ export function DetailPullRequest({ info }: { info: DetailPr }) {
   return (
     <span class="detail-pr">
       <span class="pr-number mono">
-        <span class="visually-hidden">Pull request </span>#{pr.number}
+        {info.proposal ? (
+          <>
+            <span class="visually-hidden">Proposal pull request </span>
+            <span aria-hidden="true">Proposal </span>
+          </>
+        ) : (
+          <span class="visually-hidden">Pull request </span>
+        )}
+        #{pr.number}
       </span>
       <a class="pr-title" href={pr.url} target="_blank" rel="noopener noreferrer" title={`${pr.title} — open on GitHub`}>
         {pr.title}

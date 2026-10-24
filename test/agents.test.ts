@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { defaultAgentSessions, defaultConfig, newRepoConfig, validateConfig } from "../src/server/config.ts";
-import { agentEnv, agentFor, carryOverPrompt, fastForwardPrompt, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, shipPrompt } from "../src/server/sessions/agents.ts";
+import { agentEnv, agentFor, carryOverPrompt, fastForwardPrompt, integratePrompt, proposalInstruction, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, shipPrompt } from "../src/server/sessions/agents.ts";
 import { Scrollback, sessionBranch, worktreeName } from "../src/server/sessions/manager.ts";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE, CODEX_PROFILE, DEFAULT_SHORTCUTS, FORMER_PROMPTS } from "../src/shared/agentDefaults.ts";
-import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, availableActions, pastDraftingReason, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, mergeTargetSentence, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
+import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, availableActions, pastDraftingReason, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, mergeTargetSentence, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
 import { agentForRepo, cardIsLive, cardSessionControls, NEEDS_YOU_AFTER_MS, parseArgLines, sessionBadge, sessionForChange, sessionsEnabledFor, silenceDuration, slugId, startersFor } from "../src/ui/sessionState.ts";
 import { openSpec } from "../src/server/frameworks/openspec/index.ts";
 import { fakeProfile } from "./sessionHelpers.ts";
@@ -254,6 +254,30 @@ test("Archive: the archive auto-merge instruction comes last when asked for, and
   expect(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION).toContain("Do not open a pull request just because of this");
   expect(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION).toContain("if you open one");
   expectsNoAutoMerge(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION);
+});
+
+test("Draft: the proposal instruction comes last when asked for, with the title the convention decides", () => {
+  const extra = "Keep the design short.";
+  const profile = fakeProfile({ promptSuffixes: { draft: extra } });
+  const conventional = openingPrompt(profile, "draft", "rotate-keys", { proposal: true, convention: "conventional-commits" });
+  expect(conventional).toBe(`draft rotate-keys ${extra} ${proposalInstruction("rotate-keys", "conventional-commits")}`);
+  expect(conventional).toContain("titled docs(openspec): add rotate-keys,");
+  const plain = openingPrompt(profile, "draft", "rotate-keys", { proposal: true }) as string;
+  expect(plain).toContain("titled Add OpenSpec proposal rotate-keys,");
+  expect(plain).not.toContain("docs(openspec)");
+  // Not asked for, or any other starter: never carried; Archive's `autoMerge` never turns it on.
+  expect(openingPrompt(profile, "draft", "rotate-keys")).toBe(`draft rotate-keys ${extra}`);
+  expect(openingPrompt(profile, "draft", "rotate-keys", { autoMerge: true })).toBe(`draft rotate-keys ${extra}`);
+  for (const action of ["implement", "validate", "archive"] as const) expect(openingPrompt(profile, action, "rotate-keys", { proposal: true })).toBe(openingPrompt(profile, action, "rotate-keys"));
+  expect(fastForwardPrompt(profile, "rotate-keys")).not.toContain(proposalInstruction("rotate-keys", undefined));
+  // One line, agent-neutral, only `{title}`; it asks for the pull request but no merge, no auto-merge, no implementation.
+  expect(AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION.replace("{title}", "")).not.toMatch(/[\r\n{}]/);
+  expect(AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION).not.toMatch(/\bgh\b|claude|codex/i);
+  expect(AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION).toContain("open a pull request against the default branch");
+  expect(AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION).toContain("containing only files under openspec/");
+  expect(AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION).toContain("do not start implementing the change");
+  expectsNoAutoMerge(AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION);
+  expect(() => proposalInstruction("../x", undefined)).toThrow();
 });
 
 const HEAD = "c0ffee0000000000000000000000000000000001";
@@ -519,6 +543,15 @@ test("small helpers", () => {
   expect(worktreeName("implement", "c")).toBe("c");
   expect(sessionBranch("archive", "c")).toBe("chore/archive-c");
   expect(sessionBranch("draft", "c")).toBe("feat/c");
+  // A Draft session that ships its proposal gets a branch and a worktree of its own; no other action ever does.
+  expect(sessionBranch("draft", "c", { proposal: true })).toBe("docs/c");
+  expect(worktreeName("draft", "c", { proposal: true })).toBe("docs-c");
+  expect(worktreeName("draft", "c")).toBe("c");
+  for (const action of ["fastForward", "implement", "validate"] as const) {
+    expect(sessionBranch(action, "c", { proposal: true })).toBe("feat/c");
+    expect(worktreeName(action, "c", { proposal: true })).toBe("c");
+  }
+  expect(sessionBranch("archive", "c", { proposal: true })).toBe("chore/archive-c");
   expect(parseArgLines(" claude \n\n {prompt} \n")).toEqual(["claude", "{prompt}"]);
   expect(slugId("My Agent!", ["my-agent"])).toBe("my-agent-2");
   const sb = new Scrollback(10);

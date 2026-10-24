@@ -593,11 +593,13 @@ export type PromptKey = StarterPromptKey | "ship" | "integrate" | "resolveConfli
  *  menu), so Enter was not pressed and nothing was confirmed. */
 export type PromptResult = Session & { submitted: boolean };
 /** What Ship and a starter's prompt sent into a running session answer: the same, plus whether the prompt carried an
- *  auto-merge instruction — `AUTO_MERGE_DOCS_INSTRUCTION` for Ship, `AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION` for Archive. */
+ *  auto-merge instruction — `AUTO_MERGE_DOCS_INSTRUCTION` for Ship, `AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION` for Archive,
+ *  `AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION` for Draft. */
 export type AutoMergePromptResult = PromptResult & { autoMerge: boolean };
 export type ShipResult = AutoMergePromptResult;
 /** What starting a session answers: the session, and whether its opening prompt carried
- *  `AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION`. Always `false` for a session that was already open and was returned. */
+ *  `AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION` or `AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION`. Always `false` for a session that
+ *  was already open and was returned. */
 export type StartResult = Session & { autoMerge: boolean };
 
 export const DEFAULT_SHIP_PROMPT =
@@ -621,6 +623,17 @@ export const AUTO_MERGE_DOCS_INSTRUCTION =
  *  agent opens one anyway, and says not to open one for its sake. One line, agent-neutral, not editable. */
 export const AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION =
   "This project lets a pull request that changes only files under openspec/ merge without review once its checks pass; Spec Control will ask you to merge it when it is ready. Do not open a pull request just because of this. But if you open one for this work, do not merge it and do not enable auto-merge on it, and tell me whether every file it changes is under openspec/.";
+
+/** Appended to the Draft prompt, after the profile's additional instructions, only for a Draft session on its own
+ *  `docs/<change>` branch in a project that allows docs-only pull requests to merge, while its worktree holds nothing
+ *  outside `openspec/` (ship-proposals-as-docs-prs D2). `{title}` is one of the two titles below with the validated
+ *  change name filled in; nothing else is substituted. One line, agent-neutral, not editable. Like the others it asks
+ *  for no merge and no auto-merge: the dashboard decides when the pull request is ready. */
+export const AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION =
+  "This project lets a pull request that changes only files under openspec/ merge without review once its checks pass; Spec Control will ask you to merge it when it is ready. So once every artifact of this change is written, commit them on this branch, push it and open a pull request against the default branch titled {title}, containing only files under openspec/; do not merge it and do not enable auto-merge on it. Then stop and tell me the pull request URL: do not start implementing the change.";
+/** The proposal pull request's title with Conventional Commits pull request titles declared, and without. */
+export const PROPOSAL_TITLE_CONVENTIONAL = "docs(openspec): add {change}";
+export const PROPOSAL_TITLE_PLAIN = "Add OpenSpec proposal {change}";
 
 /** Agent-neutral like Ship's, and deliberately silent about method: rebase or merge is the repository's convention,
  *  which the agent knows and the dashboard does not. */

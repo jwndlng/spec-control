@@ -13,7 +13,7 @@
 // Nothing here writes anything; the cleanup that acts on it lives in `cleanup.ts`.
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
-import { sessionBranch } from "../shared/sessionBranch.ts";
+import { proposalBranch, sessionBranch } from "../shared/sessionBranch.ts";
 import {
   type ChangeRecord,
   DUPLICATE_DIFFERING_LISTED,
@@ -78,7 +78,8 @@ export type RecordedBranches = ChangeRecord;
 
 /**
  * The change's branches, exactly (stale-changes: "A change's branches are named exactly"): the recorded ones, the
- * dashboard's own session branches, and the branch of every session record for the change. De-duplicated; a name git
+ * dashboard's own session branches (the proposal's `docs/<name>` among them), and the branch of every session record
+ * for the change. De-duplicated; a name git
  * would not accept is dropped. Never a containment match.
  */
 export function changeBranches(change: string, recorded: RecordedBranches | undefined, sessions: readonly SessionHint[]): string[] {
@@ -87,6 +88,7 @@ export function changeBranches(change: string, recorded: RecordedBranches | unde
     recorded?.archiveBranch,
     sessionBranch("implement", change),
     sessionBranch("archive", change),
+    proposalBranch(change),
     ...sessions.filter((s) => s.change === change).map((s) => s.branch),
   ];
   return [...new Set(names.filter((n): n is string => isBranchName(n)))];
