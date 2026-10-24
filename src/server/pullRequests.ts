@@ -29,7 +29,7 @@ const CONCURRENCY = 3;
 const CACHE_VERSION = 1;
 
 /** Only the documented `--json` fields; anything else is parsed defensively or ignored. */
-const FIELDS = "number,title,url,author,headRefName,baseRefName,isDraft,state,createdAt,mergedAt,closedAt,reviewDecision,reviewRequests,statusCheckRollup,mergeable,headRefOid";
+const FIELDS = "number,title,url,author,headRefName,baseRefName,isDraft,state,createdAt,mergedAt,closedAt,reviewDecision,reviewRequests,statusCheckRollup,mergeable,headRefOid,isCrossRepository";
 /**
  * Asked for in addition only on the open call, and only for a GitHub repository an enabled project with docs auto-merge
  * maps to (agent-merges-docs-prs D2): enough to answer "docs-only", and dropped right after parsing.
@@ -91,6 +91,11 @@ export function parseDocsOnly(entry: Record<string, unknown>): boolean | undefin
   });
 }
 
+/** GitHub's `isCrossRepository`: only a boolean is an answer; anything else leaves it unknown, which refuses like a fork. */
+export function parseCrossRepository(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
 /** GitHub's `mergeable`; anything missing or unrecognised is `unknown`, so drift never looks mergeable. */
 export function parseMergeable(value: unknown): NonNullable<PullRequest["mergeable"]> {
   return MERGEABLE[str(value).toUpperCase()] ?? "unknown";
@@ -139,6 +144,7 @@ export function parsePullRequest(raw: unknown, viewer?: string): PullRequest | u
   const closedAt = str(entry.closedAt) || undefined;
   const headOid = parseHeadOid(entry.headRefOid);
   const docsOnly = parseDocsOnly(entry);
+  const isCrossRepository = parseCrossRepository(entry.isCrossRepository);
   // The paths are read here and nowhere else: only the answer is kept, cached and sent to the browser.
   return {
     number,
@@ -158,6 +164,7 @@ export function parsePullRequest(raw: unknown, viewer?: string): PullRequest | u
     mergeable: parseMergeable(entry.mergeable),
     ...(headOid ? { headOid } : {}),
     ...(docsOnly !== undefined ? { docsOnly } : {}),
+    ...(isCrossRepository !== undefined ? { isCrossRepository } : {}),
   };
 }
 
@@ -166,9 +173,10 @@ export function parsePullRequest(raw: unknown, viewer?: string): PullRequest | u
  * it is one, docs-only only when it says exactly that — so an old or edited cache can never trigger a merge.
  */
 function fromCache(pr: PullRequest): PullRequest {
-  const { headOid, docsOnly, ...rest } = pr;
+  const { headOid, docsOnly, isCrossRepository, ...rest } = pr;
   const head = parseHeadOid(headOid);
-  return { ...rest, mergeable: parseMergeable(pr.mergeable), ...(head ? { headOid: head } : {}), ...(typeof docsOnly === "boolean" ? { docsOnly } : {}) };
+  const cross = parseCrossRepository(isCrossRepository);
+  return { ...rest, mergeable: parseMergeable(pr.mergeable), ...(head ? { headOid: head } : {}), ...(typeof docsOnly === "boolean" ? { docsOnly } : {}), ...(cross !== undefined ? { isCrossRepository: cross } : {}) };
 }
 
 /** When a pull request left the open list; undefined while it is open. */

@@ -1,5 +1,8 @@
 // Pure helpers for the agent-session UI; free of DOM access at import time so they can be unit-tested.
 import { menuActions, type NextStep, recommendedAction } from "../shared/nextStep.ts";
+import { conflictSignal, type ConflictSignal } from "../shared/conflictSignal.ts";
+import { linkedPullRequest } from "../shared/pullRequestLink.ts";
+import { relTime } from "./format.ts";
 import { mergePending, pullRequestReadiness, readinessDetail } from "../shared/pullRequestReadiness.ts";
 import { availableActions, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type RepoPullRequests, type Session, type SessionAction, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
 
@@ -357,12 +360,66 @@ export function conflictBadge(worktree: SessionWorktree | undefined): SessionBad
 }
 
 /**
- * Whether Resolve conflicts is offered. The same predicate the server refuses by, expressed where the control lives —
- * an in-place session has no branch, and a worktree with no conflict signal has nothing to resolve.
+ * Whether a session's panel offers Resolve conflicts: the same rule the server refuses by (`conflictSignal`), for this
+ * session's worktree and the change's linked pull request — an in-place session has no branch, a session on another
+ * branch than the open pull request's head is not where its conflict is, and without either signal there is nothing.
  */
-export function resolvable(session: Session | undefined, worktree: SessionWorktree | undefined): boolean {
-  if (!session || isChangeless(session) || session.inPlace) return false;
-  return worktree?.work.conflicts !== undefined;
+export function resolvable(session: Session | undefined, worktree: SessionWorktree | undefined, pr?: PullRequest, fetchedAt?: string): boolean {
+  if (!session || isChangeless(session) || session.inPlace || !worktree) return false;
+  return conflictSignal([worktree], pr, fetchedAt) !== undefined && (pr?.state !== "open" || worktree.branch === pr.head);
+}
+
+/** Resolve conflicts for a change, as its detail header offers it (resolve-pr-conflicts D1, D5). */
+export interface ConflictAction {
+  signal: ConflictSignal<SessionWorktree>;
+  /** The session the prompt goes to, running or ended; absent when a session is started on the head branch. */
+  sessionId?: string;
+  /** One line per signal: its source, its base and how fresh it is. */
+  lines: string[];
+}
+
+/**
+ * The change detail's Resolve conflicts: offered when either signal holds and the server would act on it — not for a
+ * running session on another branch than the pull request's head, not where the worktree a new session would use is
+ * on another branch, and not for an in-place session. Read from what the page holds; it starts nothing.
+ */
+export function conflictAction(
+  change: Pick<ChangeSnapshot, "repoId" | "name" | "branchMatch" | "created" | "recorded">,
+  worktrees: readonly SessionWorktree[],
+  sessions: readonly Session[],
+  response: { repos: readonly RepoPullRequests[] } | undefined,
+  now = Date.now(),
+): ConflictAction | undefined {
+  const trees = worktrees.filter((w) => w.repoId === change.repoId && w.change === change.name);
+  const list = response?.repos.find((r) => r.repoId === change.repoId);
+  const pr = linkedPullRequest(change, response?.repos);
+  const signal = conflictSignal(trees, pr, list?.fetchedAt);
+  if (!signal) return undefined;
+  const mine = changeSessions([...sessions]).filter((s) => s.repoId === change.repoId && s.change === change.name);
+  if (mine.some((s) => s.inPlace)) return undefined;
+  const running = mine.find((s) => OPEN_SESSION_STATES.includes(s.state));
+  const head = signal.pullRequest?.head;
+  if (running && head !== undefined && (worktrees.find((w) => w.path === running.worktreePath)?.branch ?? running.branch) !== head) return undefined;
+  const sessionId = running?.id ?? signal.worktree?.sessionId;
+  if (!sessionId) {
+    if (!signal.github || head === undefined) return undefined;
+    // A new session would use this worktree name; one already there on another branch is the user's to deal with.
+    const name = head === `chore/archive-${change.name}` ? `archive-${change.name}` : change.name;
+    if (!signal.worktree && trees.some((t) => t.name === name)) return undefined;
+  }
+  return { signal, ...(sessionId ? { sessionId } : {}), lines: conflictLines(signal, now) };
+}
+
+/** What each signal says (design D5): the local one as of the last fetch, GitHub's as of the last refresh. */
+export function conflictLines(signal: Pick<ConflictSignal<unknown>, "local" | "github">, now = Date.now()): string[] {
+  const lines: string[] = [];
+  if (signal.local) lines.push(`Conflicts with ${signal.local.base} — as of your last fetch. Pull to refresh the base.`);
+  if (signal.github) {
+    const when = signal.github.at ? `${relTime(signal.github.at, now)} ago` : "the last pull-request refresh";
+    const pending = signal.github.pushPending ? " — push pending: this worktree has commits GitHub has not seen" : "";
+    lines.push(`GitHub reports conflicts with ${signal.github.base} — as of ${when}${pending}.`);
+  }
+  return lines;
 }
 
 /** The worktree a card stands for: the change's own one; its archive worktree only matters once that holds work. */

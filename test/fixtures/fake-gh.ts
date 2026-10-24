@@ -10,7 +10,7 @@
 //     "stderr": "…",                              // stderr for "fail"
 //     "exitCode": 1,
 //     "repos": { "acme/alpha-infra": { "open": [ … ], "closed": [ … ] } },   // entries may carry "mergeable",
-//                                                                         // "headRefOid", "files" and "changedFiles"
+//                                                                         // "headRefOid", "isCrossRepository", "files" and "changedFiles"
 //     "issues": { "acme/alpha-infra": [ … ] },      // open issues, newest first, as `issue list` prints them
 //     "owners": { "jdoe": [ … ] },                  // `repo list <owner>` entries, as `gh` prints them
 //     "perRepo": { "acme": { "mode": "fail" } },    // also keyed by owner for `repo list`
