@@ -1,5 +1,5 @@
-// Stale changes (openspec/specs/stale-changes): stranded archives found by the scan, settled worktrees found by the
-// worktree listing. Real temp git repositories, no network.
+// Stale changes (openspec/specs/stale-changes): stranded archives and archived-and-merged leftovers, both found by the
+// scan from a change's exact branches. Real temp git repositories, no network.
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -7,10 +7,9 @@ import { newRepoConfig } from "../src/server/config.ts";
 import { OPENSPEC_PATHS } from "../src/server/frameworks/registry.ts";
 import { worktreesDir } from "../src/server/paths.ts";
 import { scanRepo } from "../src/server/scanner.ts";
-import { listWorktrees } from "../src/server/sessions/workStatus.ts";
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
-import { archiveDate, findStrandedArchives, settledArchive } from "../src/server/staleChanges.ts";
-import type { ChangeSession } from "../src/shared/types.ts";
+import { archiveDate, changeBranches, findStrandedArchives, parseRecordedBranches, type SessionHint, staleLeftovers } from "../src/server/staleChanges.ts";
+import { parseWorktrees } from "../src/server/git.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
 import { git, tempGitRepo } from "./sessionHelpers.ts";
 
@@ -112,8 +111,58 @@ test("branches that do not name the change and the default branch are never read
   expect((await find(repo)).size).toBe(0);
 });
 
-/** A session worktree of the change, made while main still had it active; then main archives it. */
-async function settledSetup(): Promise<{ repo: string; repoId: string; wt: string }> {
+test("a change's branches are named exactly: recorded, the session branches and the session records' branches", () => {
+  expect(changeBranches("rotate-keys", { branch: "fix/rotate-keys", archiveBranch: "chore/archive-rotate-keys" }, [])).toEqual([
+    "fix/rotate-keys",
+    "chore/archive-rotate-keys",
+    "feat/rotate-keys",
+  ]);
+  const sessions: SessionHint[] = [
+    { change: "rotate-keys", branch: "feat/rotate-keys-2", worktreePath: "/w/x", running: false },
+    { change: "other", branch: "feat/other", worktreePath: "/w/y", running: false },
+  ];
+  expect(changeBranches("rotate-keys", undefined, sessions)).toEqual(["feat/rotate-keys", "chore/archive-rotate-keys", "feat/rotate-keys-2"]);
+  // A recorded name git would not accept is ignored.
+  expect(changeBranches("auth", { branch: "-x", archiveBranch: "a..b" }, [])).toEqual(["feat/auth", "chore/archive-auth"]);
+  // Containment is not a match.
+  expect(changeBranches("auth", undefined, [])).not.toContain("feat/auth-v2");
+});
+
+test("the recorded branches are read from the spec-control block of .openspec.yaml only", () => {
+  const text = "schema: spec-driven\ncreated: 2026-06-10\nspec-control:\n  branch: fix/rotate-keys # the agent's\n  archive-branch: 'chore/archive-rotate-keys'\n  pr: 12\nother:\n  branch: nope\n";
+  expect(parseRecordedBranches(text)).toEqual({ branch: "fix/rotate-keys", archiveBranch: "chore/archive-rotate-keys" });
+  expect(parseRecordedBranches("schema: spec-driven\n")).toBeUndefined();
+  expect(parseRecordedBranches("spec-control:\n  branch: ../etc\n")).toBeUndefined();
+});
+
+test("a branch that only contains the name strands nothing", async () => {
+  const repo = await tempGitRepo();
+  git(repo, "checkout", "-q", "-b", "feat/structured-logs-v2");
+  await archive(repo);
+  git(repo, "checkout", "-q", "main");
+  expect((await find(repo)).size).toBe(0);
+});
+
+test("a session record's own branch strands the archive", async () => {
+  const repo = await tempGitRepo();
+  git(repo, "checkout", "-q", "-b", "fix/logs");
+  const commit = await archive(repo);
+  git(repo, "checkout", "-q", "main");
+  expect((await find(repo)).size).toBe(0);
+  const sessions: SessionHint[] = [{ change: CHANGE, branch: "fix/logs", worktreePath: "/w/gone", running: false }];
+  const found = await findStrandedArchives(repo, OPENSPEC_PATHS, [{ name: CHANGE, created: "2026-06-10" }], new Map(), "main", sessions);
+  expect(found.get(CHANGE)).toEqual({ branch: "fix/logs", archive: ARCHIVE, commit });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Archived and merged
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * A repository with a remote whose `main` archived the change, with a session worktree on `feat/structured-logs` made
+ * while the change was still active; the main checkout has pulled the archive.
+ */
+async function archivedSetup(): Promise<{ repo: string; repoId: string; wt: string }> {
   const repo = await tempGitRepo();
   await withOrigin(repo);
   const config = newRepoConfig(repo, true);
@@ -122,65 +171,183 @@ async function settledSetup(): Promise<{ repo: string; repoId: string; wt: strin
   await ensureWorktree(repo, wt, `feat/${CHANGE}`);
   await archive(repo);
   git(repo, "push", "-q", "origin", "main");
-  return { repo, repoId: config.id, wt };
+  return { repo, repoId: config.id, wt: await realpath(wt) };
 }
 
-test("a worktree whose only uncommitted edit is inside the archived change is settled", async () => {
-  const { repo, wt } = await settledSetup();
+async function leftovers(repo: string, opts: { sessions?: SessionHint[]; active?: Map<string, { name: string; created?: string }>; onMain?: Map<string, string>; ending?: string } = {}) {
+  const worktrees = parseWorktrees(`${git(repo, "worktree", "list", "--porcelain")}\n`);
+  const found = await staleLeftovers({
+    repoPath: repo,
+    layout: OPENSPEC_PATHS,
+    defaultBranch: "main",
+    worktrees,
+    active: opts.active ?? new Map(),
+    archivedOnMain: opts.onMain ?? new Map([[CHANGE, "2026-07-01"]]),
+    sessions: opts.sessions ?? [],
+    managedRoot: await realpath(worktreesDir()),
+    ending: opts.ending,
+  });
+  return found.get(CHANGE);
+}
+
+test("a merged worktree with an uncommitted source edit after the merge is a stale leftover", async () => {
+  const { repo, wt } = await archivedSetup();
+  await writeFile(join(wt, "src-keys.ts"), "export {};\n");
+  const stale = await leftovers(repo);
+  expect(stale?.archive).toBe(ARCHIVE);
+  expect(stale?.pulled).toBe(true);
+  expect(stale?.kept).toEqual([]);
+  expect(stale?.leftovers).toEqual([
+    {
+      kind: "worktree",
+      path: wt,
+      branch: `feat/${CHANGE}`,
+      commit: git(wt, "rev-parse", "HEAD"),
+      uncommitted: ["src-keys.ts"],
+      uncommittedCount: 1,
+      outside: ["src-keys.ts"],
+      managed: true,
+    },
+  ]);
+});
+
+test("an archive worktree with the move half committed is a stale leftover reporting that file, inside the change", async () => {
+  const repo = await tempGitRepo();
+  await withOrigin(repo);
+  const wt = join(worktreesDir(), "half", `archive-${CHANGE}`);
+  await mkdir(join(worktreesDir(), "half"), { recursive: true });
+  await ensureWorktree(repo, wt, `chore/archive-${CHANGE}`);
+  // The agent commits the new archive directory, but not the removal of the old one.
+  await mkdir(archiveDir(wt), { recursive: true });
+  for (const f of ["proposal.md", "design.md"]) await writeFile(join(archiveDir(wt), f), await readFile(join(changeDir(wt), f)));
+  git(wt, "add", "--", OPENSPEC_PATHS.archiveDir as string);
+  git(wt, "commit", "-q", "-m", "archive");
   await rm(join(changeDir(wt), "proposal.md"));
-  expect(await settledArchive(repo, wt, CHANGE, OPENSPEC_PATHS)).toEqual({ archive: ARCHIVE, uncommitted: 1 });
+  // The default branch gets the same content.
+  git(repo, "merge", "-q", "--ff-only", `chore/archive-${CHANGE}`);
+  git(repo, "push", "-q", "origin", "main");
+  const stale = await leftovers(repo);
+  const item = stale?.leftovers.find((l) => l.kind === "worktree");
+  expect(item).toMatchObject({ kind: "worktree", branch: `chore/archive-${CHANGE}`, uncommitted: [`${OPENSPEC_PATHS.changesDir}/${CHANGE}/proposal.md`], outside: [] });
 });
 
-test("a clean worktree of an archived change is settled", async () => {
-  const { repo, wt } = await settledSetup();
-  expect(await settledArchive(repo, wt, CHANGE, OPENSPEC_PATHS)).toEqual({ archive: ARCHIVE, uncommitted: 0 });
+test("a squash-merged branch without a worktree is a stale leftover", async () => {
+  const repo = await tempGitRepo();
+  await withOrigin(repo);
+  git(repo, "checkout", "-q", "-b", `feat/${CHANGE}`);
+  await writeFile(join(repo, "feature.ts"), "export const x = 1;\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", "feat");
+  git(repo, "checkout", "-q", "main");
+  git(repo, "merge", "-q", "--squash", `feat/${CHANGE}`);
+  git(repo, "commit", "-q", "-m", "squash");
+  await archive(repo);
+  git(repo, "push", "-q", "origin", "main");
+  const stale = await leftovers(repo);
+  expect(stale?.leftovers).toEqual([{ kind: "branch", name: `feat/${CHANGE}`, commit: git(repo, "rev-parse", `feat/${CHANGE}`) }]);
 });
 
-test("work outside the change's directory is never settled", async () => {
-  const { repo, wt } = await settledSetup();
-  await rm(join(changeDir(wt), "proposal.md"));
-  await writeFile(join(wt, "app.ts"), "export {};\n");
-  expect(await settledArchive(repo, wt, CHANGE, OPENSPEC_PATHS)).toBeUndefined();
+test("the created change directory left in the main checkout is a stale leftover once the archive is there", async () => {
+  const repo = await tempGitRepo();
+  await withOrigin(repo);
+  // Main archives a change that the dashboard had created and staged in the main checkout of another clone.
+  const name = "rotate-keys";
+  await mkdir(join(repo, OPENSPEC_PATHS.archiveDir as string, `2026-10-20-${name}`), { recursive: true });
+  await writeFile(join(repo, OPENSPEC_PATHS.archiveDir as string, `2026-10-20-${name}`, "proposal.md"), "# Proposal\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", "archive rotate-keys");
+  git(repo, "push", "-q", "origin", "main");
+  await mkdir(join(repo, OPENSPEC_PATHS.changesDir, name));
+  await writeFile(join(repo, OPENSPEC_PATHS.changesDir, name, ".openspec.yaml"), "schema: spec-driven\ncreated: 2026-10-01\n");
+  await writeFile(join(repo, OPENSPEC_PATHS.changesDir, name, "prompt.md"), "rotate the keys\n");
+  git(repo, "add", "--", `${OPENSPEC_PATHS.changesDir}/${name}/.openspec.yaml`);
+  const found = await staleLeftovers({ repoPath: repo, layout: OPENSPEC_PATHS, defaultBranch: "main", worktrees: [], active: new Map(), archivedOnMain: new Map(), sessions: [] });
+  const stale = found.get(name);
+  expect(stale?.pulled).toBe(false); // no archive date of the main checkout was given
+  expect(stale?.leftovers).toEqual([
+    {
+      kind: "main",
+      dir: `${OPENSPEC_PATHS.changesDir}/${name}`,
+      files: [
+        { path: ".openspec.yaml", hash: git(repo, "hash-object", `${OPENSPEC_PATHS.changesDir}/${name}/.openspec.yaml`), staged: true },
+        { path: "prompt.md", hash: git(repo, "hash-object", `${OPENSPEC_PATHS.changesDir}/${name}/prompt.md`), staged: false },
+      ],
+    },
+  ]);
+  // A session running in place in the main checkout keeps it.
+  const kept = await staleLeftovers({ repoPath: repo, layout: OPENSPEC_PATHS, defaultBranch: "main", worktrees: [], active: new Map(), archivedOnMain: new Map(), sessions: [{ worktreePath: repo, running: true }] });
+  expect(kept.get(name)?.leftovers).toEqual([]);
+  expect(kept.get(name)?.kept[0]).toMatchObject({ kind: "main", reason: "an agent session is running in the main checkout" });
 });
 
-test("a commit the default branch lacks is never settled", async () => {
-  const { repo, wt } = await settledSetup();
+test("a hand-made worktree on the change's branch outside the dashboard's folder is a leftover like a session worktree", async () => {
+  const repo = await tempGitRepo();
+  await withOrigin(repo);
+  const wt = join(await realpath(await tempDir("osd-own-")), "alpha-infra-wt");
+  git(repo, "worktree", "add", "-q", "-b", `feat/${CHANGE}`, wt, "main");
+  await archive(repo);
+  git(repo, "push", "-q", "origin", "main");
+  const stale = await leftovers(repo);
+  expect(stale?.leftovers).toMatchObject([{ kind: "worktree", path: wt, managed: false }]);
+});
+
+test("work the default branch lacks is kept with its reason", async () => {
+  const { repo, wt } = await archivedSetup();
   await writeFile(join(wt, "app.ts"), "export {};\n");
   git(wt, "add", "-A");
   git(wt, "commit", "-q", "-m", "feat: new work");
-  expect(await settledArchive(repo, wt, CHANGE, OPENSPEC_PATHS)).toBeUndefined();
+  const stale = await leftovers(repo);
+  expect(stale?.leftovers).toEqual([]);
+  expect(stale?.kept).toEqual([{ kind: "worktree", id: wt, reason: "it holds 1 commit(s) the default branch lacks" }]);
 });
 
-test("a change the default branch has not archived is never settled", async () => {
+test("a running session keeps its worktree, unless it is the session being ended", async () => {
+  const { repo, wt } = await archivedSetup();
+  const sessions: SessionHint[] = [{ change: CHANGE, branch: `feat/${CHANGE}`, worktreePath: wt, running: true }];
+  const stale = await leftovers(repo, { sessions });
+  expect(stale?.leftovers).toEqual([]);
+  expect(stale?.kept).toEqual([{ kind: "worktree", id: wt, reason: "an agent session is running in it" }]);
+  const ending = await leftovers(repo, { sessions, ending: await realpath(wt) });
+  expect(ending?.leftovers).toMatchObject([{ kind: "worktree", path: wt }]);
+});
+
+test("an archive not on the default branch yet makes nothing stale", async () => {
   const repo = await tempGitRepo();
   await withOrigin(repo);
-  const wt = join(worktreesDir(), "x", CHANGE);
-  await ensureWorktree(repo, wt, `feat/${CHANGE}`);
-  expect(await settledArchive(repo, wt, CHANGE, OPENSPEC_PATHS)).toBeUndefined();
+  const wt = join(worktreesDir(), "open-pr", `archive-${CHANGE}`);
+  await mkdir(join(worktreesDir(), "open-pr"), { recursive: true });
+  await ensureWorktree(repo, wt, `chore/archive-${CHANGE}`);
+  await archive(wt);
+  expect(await leftovers(repo, { onMain: new Map() })).toBeUndefined();
 });
 
-test("the worktree listing marks a settled worktree unless a session runs in it", async () => {
-  const { repo, repoId, wt } = await settledSetup();
+test("a newer change reusing the name has no leftovers", async () => {
+  const { repo } = await archivedSetup();
+  expect(await leftovers(repo, { active: new Map([[CHANGE, { name: CHANGE, created: "2026-08-01" }]]) })).toBeUndefined();
+});
+
+test("a branch recorded in the archive's metadata on the default branch is one of the change's branches", async () => {
+  const repo = await tempGitRepo();
+  await withOrigin(repo);
+  git(repo, "branch", "fix/logs-by-agent");
+  await rename(changeDir(repo), archiveDir(repo));
+  await writeFile(join(archiveDir(repo), ".openspec.yaml"), "schema: spec-driven\ncreated: 2026-06-10\nspec-control:\n  branch: fix/logs-by-agent\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", "archive");
+  git(repo, "push", "-q", "origin", "main");
+  const stale = await leftovers(repo);
+  expect(stale?.leftovers).toEqual([{ kind: "branch", name: "fix/logs-by-agent", commit: git(repo, "rev-parse", "fix/logs-by-agent") }]);
+});
+
+test("the scan marks the archived change stale and leaves its column alone; nothing on disk changes", async () => {
+  const { repo, wt } = await archivedSetup();
   await rm(join(changeDir(wt), "proposal.md"));
-  const config = { ...newRepoConfig(repo, true), id: repoId };
-  const session = (state: ChangeSession["state"]): ChangeSession => ({
-    id: "s1",
-    repoId,
-    change: CHANGE,
-    action: "implement",
-    agentId: "fake",
-    agentName: "Fake",
-    state,
-    worktreePath: wt,
-    branch: `feat/${CHANGE}`,
-    createdAt: "2026-07-01T00:00:00Z",
-    updatedAt: "2026-07-01T00:00:00Z",
-    resumable: true,
-  });
-  const [ended] = await listWorktrees([config], [session("exited")]);
-  expect(ended.settled).toEqual({ archive: ARCHIVE, uncommitted: 1 });
-  const [running] = await listWorktrees([config], [session("running")]);
-  expect(running.settled).toBeUndefined();
-  // Nothing on disk changed for any of it.
-  expect(await readFile(join(changeDir(wt), "design.md"), "utf8").catch(() => "")).not.toBe("");
+  const before = git(wt, "status", "--porcelain");
+  const snapshot = await scanRepo(newRepoConfig(repo, true));
+  const archived = snapshot.changes.find((c) => c.name === CHANGE && c.archived);
+  expect(archived?.stale?.leftovers).toMatchObject([{ kind: "worktree", path: wt, uncommittedCount: 1, outside: [] }]);
+  expect(archived?.column).toBe("Archived");
+  expect(git(wt, "status", "--porcelain")).toBe(before);
+  // The worktree's own copy is not an active card: the default branch archived it.
+  expect(snapshot.changes.filter((c) => c.name === CHANGE && !c.archived).every((c) => !c.stale)).toBe(true);
 });

@@ -1,7 +1,7 @@
 import type { ActivityQuery } from "../shared/activity.ts";
 import type { RepoAgentPatch } from "../shared/repoSettings.ts";
 import type { GithubClone, GithubClonesResponse, GithubRepoList, KeepAwakeStatus } from "../shared/types.ts";
-import type { ActivityPage, AutoMergePromptResult, BranchDeletePreview, BranchDeleteRequest, BranchDeleteResult, ConsoleSession, ProjectConsoleLike, CleanupPreview, CleanupResult, CleanupSelection, ChangeIssueRef, CreateChangeResponse, DismissPreview, DismissResult, EnvironmentReport, EnvironmentView, FolderPickResult, PromptResult, PullRequestsResponse, PullResolve, PullResult, RepoIssues, SetupState, ShipResult, StartResult, UpdateStatus, WorkStatus } from "../shared/types.ts";
+import type { ActivityPage, AutoMergePromptResult, BranchDeletePreview, BranchDeleteRequest, BranchDeleteResult, ConsoleSession, ProjectConsoleLike, CleanupPreview, CleanupResult, CleanupSelection, ChangeIssueRef, CreateChangeResponse, DismissPreview, DismissResult, EnvironmentReport, EnvironmentView, FolderPickResult, PromptResult, PullRequestsResponse, PullResolve, PullResult, RepoIssues, SetupState, ShipResult, StaleCleanupPreview, StaleCleanupRequest, StaleCleanupResult, StartResult, UpdateStatus, WorkStatus } from "../shared/types.ts";
 import type { AgentAvailability, AutoFetchSeconds, ArtifactFileContent, ChangeArtifacts, Config, CreateProjectResponse, DiscoverResult, IntegrationSession, PrTitleConvention, RepoConfig, ScanTriggerResult, Session, SessionAction, SessionWorktree, SharedConfig, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Snapshot } from "../shared/types.ts";
 import { socketOrigin } from "./url.ts";
 
@@ -153,6 +153,13 @@ export interface Api {
   branchDeletePreview(repoId: string, path: string): Promise<BranchDeletePreview>;
   /** Deletes that worktree and its branch whatever they hold, after a backup, if they are still what the preview showed. */
   deleteBranch(repoId: string, request: BranchDeleteRequest): Promise<BranchDeleteResult>;
+  /**
+   * Read-only: a stale change's leftovers, read afresh. `ending` names a running session of the change whose worktree is
+   * judged as if it had ended (the end-session dialog).
+   */
+  staleCleanupPreview(repoId: string, change: string, ending?: string): Promise<StaleCleanupPreview>;
+  /** Removes the stale leftovers the user confirmed, each re-checked by the server, after a backup of their uncommitted files. */
+  staleCleanup(repoId: string, change: string, request: StaleCleanupRequest): Promise<StaleCleanupResult>;
   /** Read-only: what dismissing the change would delete, file by file, and whether git could restore each. */
   dismissPreview(repoId: string, change: string): Promise<DismissPreview>;
   /**
@@ -311,6 +318,10 @@ export const httpApi: Api = {
   cleanup: (repoId, selection) => call<CleanupResult>(`/api/repos/${encodeURIComponent(repoId)}/cleanup`, { method: "POST", body: JSON.stringify(selection) }),
   branchDeletePreview: (repoId, path) => call<BranchDeletePreview>(`/api/repos/${encodeURIComponent(repoId)}/branches/delete?path=${encodeURIComponent(path)}`),
   deleteBranch: (repoId, request) => call<BranchDeleteResult>(`/api/repos/${encodeURIComponent(repoId)}/branches/delete`, { method: "POST", body: JSON.stringify(request) }),
+  staleCleanupPreview: (repoId, change, ending) =>
+    call<StaleCleanupPreview>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/stale-cleanup${ending ? `?ending=${encodeURIComponent(ending)}` : ""}`),
+  staleCleanup: (repoId, change, request) =>
+    call<StaleCleanupResult>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/stale-cleanup`, { method: "POST", body: JSON.stringify(request) }),
   dismissPreview: (repoId, change) => call<DismissPreview>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/dismiss`),
   dismissChange: (repoId, change, fingerprint) =>
     call<DismissResult>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/dismiss`, { method: "POST", body: JSON.stringify({ fingerprint }) }),
@@ -410,6 +421,8 @@ export const api: Api = {
   cleanup: (...args) => current.cleanup(...args),
   branchDeletePreview: (...args) => current.branchDeletePreview(...args),
   deleteBranch: (...args) => current.deleteBranch(...args),
+  staleCleanupPreview: (...args) => current.staleCleanupPreview(...args),
+  staleCleanup: (...args) => current.staleCleanup(...args),
   dismissPreview: (...args) => current.dismissPreview(...args),
   dismissChange: (...args) => current.dismissChange(...args),
   sharedConfig: () => current.sharedConfig(),

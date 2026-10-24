@@ -17,9 +17,9 @@ import { BranchBadge } from "./checkout.tsx";
 import { IconCheck, IconFolder } from "./icons.tsx";
 import { SourceIssueLink } from "./importIssues.tsx";
 import { type DetailPr, DetailPullRequest, detailPullRequest, usePullRequests } from "./pullRequests.tsx";
-import { DeleteBranchDialog } from "./deleteBranch.tsx";
+import { StaleCleanupDialog } from "./staleCleanup.tsx";
 import { DismissDialog } from "./dismissChange.tsx";
-import { listedWorktreePath, staleHint, staleReason } from "./staleState.ts";
+import { staleHint, staleReason } from "./staleState.ts";
 import { dismissedNotice, dismissOffer } from "./dismissState.ts";
 import { checkoutHint, daysSince, leftoverHint, pendingArchiveHint, relTime, splitPathLabel } from "./format.ts";
 import { currentQuery, followInApp, href, navigate, replaceQuery } from "./url.ts";
@@ -468,20 +468,19 @@ export function FileContent({ state, raw, isTasks, rendered, filePath }: { state
 
 /**
  * Why a change is stale and the one action that fits (stale-changes: "The change detail offers the fitting action for a
- * stale change"). Removing a settled worktree is the project details' deletion dialog, unchanged; carrying an archive
- * over starts an archive session whose commit the server takes from its own scan.
+ * stale change"). Clean up leftovers… opens the stale cleanup's dialog, which reads the leftovers afresh; carrying an
+ * archive over starts an archive session whose commit the server takes from its own scan.
  */
 export function StaleNotice({ repo, change }: { repo: RepoSnapshot; change: ChangeSnapshot }) {
   const ui = useSessionUi();
-  const [deleting, setDeleting] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string>();
   const opener = useRef<HTMLButtonElement>(null);
-  const reason = staleReason(change, ui.worktrees, repo.defaultBranch);
+  const reason = staleReason(change, repo.defaultBranch);
   if (!reason) return null;
   const sessionsHere = consoleTabAvailable(ui.config, repo.id);
   const running = ui.sessions.some((s) => s.repoId === repo.id && s.change === change.name && s.state === "running");
-  const listedPath = reason.kind === "settled" ? listedWorktreePath(reason.worktree, repo.worktrees) : undefined;
   const carryOver = async () => {
     setBusy(true);
     setFailure(await ui.start(repo.id, change.name, "archive", true, { carryOver: true }));
@@ -492,9 +491,9 @@ export function StaleNotice({ repo, change }: { repo: RepoSnapshot; change: Chan
       <p>
         <strong>{reason.title}.</strong> {staleHint(reason, sessionsHere, repo.defaultBranch)}
       </p>
-      {reason.kind === "settled" && listedPath && (
-        <button type="button" class="btn sm" ref={opener} onClick={() => setDeleting(true)}>
-          Remove worktree…
+      {reason.kind === "leftovers" && (
+        <button type="button" class="btn sm" ref={opener} onClick={() => setCleaning(true)}>
+          Clean up leftovers…
         </button>
       )}
       {reason.kind === "stranded" && sessionsHere && !running && (
@@ -503,14 +502,12 @@ export function StaleNotice({ repo, change }: { repo: RepoSnapshot; change: Chan
         </button>
       )}
       {failure && <p class="error">{failure}</p>}
-      {deleting && listedPath && reason.kind === "settled" && (
-        <DeleteBranchDialog
+      {cleaning && (
+        <StaleCleanupDialog
           repoId={repo.id}
-          path={listedPath}
-          label={reason.worktree.branch ?? "detached worktree"}
-          note={`Opened because this worktree is stale: everything it holds is already archived on ${repo.defaultBranch ?? "the default branch"} (${reason.worktree.settled?.archive}).`}
-          onClose={() => setDeleting(false)}
-          // The rescan moves the card; the session poll drops the worktree from the listing within seconds.
+          change={change.name}
+          onClose={() => setCleaning(false)}
+          // The rescan drops the mark; the session poll drops removed worktrees from the listing within seconds.
           onDone={() => void api.scan().catch(() => undefined)}
           returnFocus={() => opener.current}
         />

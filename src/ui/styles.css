@@ -1235,6 +1235,12 @@ button.badge.worktree-path.done { color: var(--success); }
 .delete-branch-facts { margin: 6px 0 0; padding-left: 18px; }
 .delete-branch-files summary { font-size: 12px; cursor: pointer; }
 .delete-branch-files .cleanup-list { margin-top: 6px; max-height: 200px; overflow-y: auto; font-size: 12px; }
+/* A stale change's leftovers (stale-changes): one entry per worktree, branch or main-checkout copy. */
+.stale-leftovers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.stale-leftovers > li { display: flex; flex-direction: column; gap: 4px; }
+.stale-leftovers .details-line, .stale-leftovers .hint { margin: 0; overflow-wrap: anywhere; }
+.end-dialog .stale-leftovers { max-height: 260px; overflow-y: auto; }
+.cleanup-list li.warn { color: var(--warning); }
 .branches-button { height: 26px; padding: 0 10px; font-size: 12px; }
 /* The project details overlay: labelled sections, one after another. */
 .project-details { display: flex; flex-direction: column; padding: 4px 24px 20px; }

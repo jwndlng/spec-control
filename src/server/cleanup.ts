@@ -13,6 +13,16 @@ import {
   type BranchDeletePreview,
   type BranchDeleteRequest,
   type BranchDeleteResult,
+  type RepoSnapshot,
+  type StaleBranchLeftover,
+  type StaleCleanupItem,
+  type StaleCleanupPreview,
+  type StaleCleanupRequest,
+  type StaleCleanupResult,
+  type StaleLeftovers,
+  type StaleMainFile,
+  type StaleMainLeftover,
+  type StaleWorktreeLeftover,
   UNCOMMITTED_LISTED,
 } from "../shared/types.ts";
 import type {
@@ -25,11 +35,18 @@ import type {
   RepoConfig,
   Worktree,
 } from "../shared/types.ts";
-import { parseWorktrees } from "./git.ts";
+import { isBranchName } from "./branchName.ts";
+import { removeStaleChangeDirectory } from "./dismissChange.ts";
+import { frameworkById, writablePaths } from "./frameworks/registry.ts";
+import { parseWorktrees, subdirectory } from "./git.ts";
 import { branchBackupsDir, worktreesDir } from "./paths.ts";
 import { backupDirName } from "./pull.ts";
+import { baseRef } from "./sessions/base.ts";
 import { contentIsInBase, readWorkStatus } from "./sessions/workStatus.ts";
 import { checkWorktreeRemovable, removeWorktree } from "./sessions/worktree.ts";
+import { mainCheckoutCopy, type SessionHint, staleLeftovers } from "./staleChanges.ts";
+
+export { isBranchName };
 
 const ENV = { GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" };
 const BRANCH_CONCURRENCY = 8;
@@ -43,20 +60,6 @@ async function git(cwd: string, args: string[], raw = false): Promise<{ ok: bool
   } catch (e) {
     return { ok: false, out: "", err: String(e) };
   }
-}
-
-/** A local branch name as git would create it; anything else never reaches git (and nothing option-like does). */
-export function isBranchName(name: unknown): name is string {
-  return (
-    typeof name === "string" &&
-    name.length <= 255 &&
-    /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(name) &&
-    !name.includes("..") &&
-    !name.includes("//") &&
-    !name.includes("/.") &&
-    !/[./]$/.test(name) &&
-    !name.endsWith(".lock")
-  );
 }
 
 export class CleanupBusyError extends Error {
@@ -441,46 +444,239 @@ export async function deleteBranch(repo: RepoConfig, request: BranchDeleteReques
   if (running.has(repo.id)) throw new CleanupBusyError();
   running.add(repo.id);
   try {
-    const { preview, backup } = await inspectWorktree(repo, request.path, sessions, true);
-    const refuse = (reason: string): BranchDeleteResult => ({ repoId: repo.id, path: request.path, outcome: "refused", reason });
-    if (preview.refused) return refuse(preview.refused);
-    if ((preview.branch ?? null) !== request.branch) return refuse("the worktree is on another branch now — look again");
-    if (preview.commit !== request.commit) return refuse("the branch changed since you looked — look again");
-    if (preview.statusDigest !== request.statusDigest) return refuse("the worktree's files changed since you looked — look again");
+    return await deleteBranchHeld(repo, request, sessions);
+  } finally {
+    running.delete(repo.id);
+  }
+}
 
-    let backupDir: string | undefined;
-    if (backup.files.length > 0) {
-      try {
-        backupDir = await writeBackup(repo, preview, backup.files);
-      } catch (err) {
-        return refuse(`nothing was deleted: the backup failed (${err instanceof Error ? err.message : String(err)})`);
+/** `deleteBranch` for a caller that holds the repository's cleanup lock already. */
+async function deleteBranchHeld(repo: RepoConfig, request: BranchDeleteRequest, sessions: Set<string>): Promise<BranchDeleteResult> {
+  const { preview, backup } = await inspectWorktree(repo, request.path, sessions, true);
+  const refuse = (reason: string): BranchDeleteResult => ({ repoId: repo.id, path: request.path, outcome: "refused", reason });
+  if (preview.refused) return refuse(preview.refused);
+  if ((preview.branch ?? null) !== request.branch) return refuse("the worktree is on another branch now — look again");
+  if (preview.commit !== request.commit) return refuse("the branch changed since you looked — look again");
+  if (preview.statusDigest !== request.statusDigest) return refuse("the worktree's files changed since you looked — look again");
+
+  let backupDir: string | undefined;
+  if (backup.files.length > 0) {
+    try {
+      backupDir = await writeBackup(repo, preview, backup.files);
+    } catch (err) {
+      return refuse(`nothing was deleted: the backup failed (${err instanceof Error ? err.message : String(err)})`);
+    }
+  }
+  const backedUp = backupDir ? { backupDir, backedUp: backup.files.length } : {};
+  if (preview.locked && preview.managed) await git(repo.path, ["worktree", "unlock", request.path]);
+  const removed = await git(repo.path, ["worktree", "remove", "--force", request.path]);
+  if (!removed.ok) return { ...refuse(`git refused to remove the worktree: ${removed.err.split("\n").pop() || "unknown error"}`), ...backedUp };
+
+  const branch = preview.branch;
+  if (!branch) return { repoId: repo.id, path: request.path, outcome: "removed", ...backedUp };
+  const ctx = await context(repo, sessions);
+  const ref = await git(repo.path, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+  const keep =
+    branch === ctx.defaultName || branch === ctx.mainBranch
+      ? "it became the default branch or the main checkout's branch"
+      : !ref.ok
+        ? "it no longer exists"
+        : ref.out !== preview.commit
+          ? "it changed while the worktree was removed"
+          : ctx.listed.some((w) => w.branch === branch)
+            ? "it is checked out in another worktree"
+            : undefined;
+  if (keep) return { repoId: repo.id, path: request.path, outcome: "removed", branch, reason: `the branch was kept: ${keep}`, ...backedUp };
+  const deleted = await git(repo.path, ["branch", "-D", "--", branch]);
+  if (!deleted.ok) {
+    return { repoId: repo.id, path: request.path, outcome: "removed", branch, reason: `the branch was kept: ${deleted.err.split("\n").pop() || "git refused to delete it"}`, ...backedUp };
+  }
+  return { repoId: repo.id, path: request.path, outcome: "deleted", branch, commit: preview.commit, ...backedUp };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Cleaning up a stale change (stale-changes: "A stale change's leftovers are cleaned up on one confirmation"). The
+// preview reads the change's leftovers afresh; applying recomputes them, takes the repository's cleanup lock and handles
+// each confirmed item on its own: a worktree through `deleteBranchHeld`, a branch with the cleanup's merged
+// `branch -D`, and the main checkout's copy through the dismissal's deletion after a backup of what differs from the
+// archive. An item that changed since the user looked is kept and reported; the others still go.
+// ---------------------------------------------------------------------------------------------------------------------
+
+export class StaleCleanupError extends Error {
+  constructor(
+    readonly status: 400 | 409,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export interface StaleScope {
+  scanned: RepoSnapshot;
+  /** The repository's session hints (`sessionHints`): branches of the change's records, sessions that keep a worktree. */
+  hints: SessionHint[];
+  /** Real paths of worktrees with a running session. */
+  runningPaths: Set<string>;
+}
+
+/** The change's leftovers, read afresh. `ending` is the real path of a worktree whose session is being ended. */
+async function readStale(repo: RepoConfig, scope: StaleScope, name: string, ending?: string): Promise<{ stale?: StaleLeftovers; ctx: Context }> {
+  const layout = writablePaths(frameworkById(scope.scanned.framework));
+  if (!layout?.archiveDir) throw new StaleCleanupError(409, "the dashboard does not clean up these changes");
+  const ctx = await context(repo, scope.runningPaths);
+  const active = scope.scanned.changes.filter((c) => !c.archived && c.name === name).map((c) => [c.name, { name: c.name, created: c.created }] as const);
+  const archivedOnMain = new Map<string, string>();
+  for (const c of scope.scanned.changes) if (c.archived && c.name === name && (archivedOnMain.get(name) ?? "") < c.archived) archivedOnMain.set(name, c.archived);
+  const found = await staleLeftovers({
+    repoPath: repo.path,
+    layout,
+    defaultBranch: ctx.defaultName,
+    worktrees: ctx.listed,
+    active: new Map(active),
+    archivedOnMain,
+    sessions: scope.hints,
+    managedRoot: ctx.managedRoot,
+    only: name,
+    ending,
+  });
+  return { stale: found.get(name), ctx };
+}
+
+/** Read-only: what cleaning up the stale change `name` would remove, and what is kept and why. */
+export async function previewStaleCleanup(repo: RepoConfig, scope: StaleScope, name: string, ending?: string): Promise<StaleCleanupPreview> {
+  const { stale } = await readStale(repo, scope, name, ending);
+  return { repoId: repo.id, name, ...(stale ? { stale } : {}), backupRoot: join(branchBackupsDir(), backupDirName(repo.id)) };
+}
+
+const samePaths = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((p, i) => p === b[i]);
+
+/** Copies the main checkout's files that differ from the archive's under the dashboard's home; undefined when none differ. */
+async function backupMainCopy(repo: RepoConfig, name: string, dir: string, archiveRoot: string, files: StaleMainFile[]): Promise<{ dir?: string; count: number }> {
+  const base = await baseRef(repo.path);
+  if (!base) throw new Error("the default branch is unknown");
+  // `--full-tree`: paths from the top level, whatever folder of the repository the project is.
+  const prefix = await subdirectory(repo.path);
+  const archivedPath = (rel: string) => `${prefix ? `${prefix}/` : ""}${archiveRoot}/${rel}`;
+  const listed = await git(repo.path, ["ls-tree", "-r", "-z", "--full-tree", base, "--", `${archivedPath("")}`], true);
+  if (!listed.ok) throw new Error("could not read the archive");
+  const archived = new Map<string, string>();
+  for (const entry of listed.out.split("\0").filter(Boolean)) {
+    const [meta, path] = entry.split("\t");
+    archived.set(path, meta.split(" ")[2]);
+  }
+  const differing = files.filter((f) => archived.get(archivedPath(f.path)) !== f.hash);
+  if (differing.length === 0) return { count: 0 };
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const target = join(branchBackupsDir(), backupDirName(repo.id), `${stamp}-${name}-main-checkout`);
+  await mkdir(join(target, "files"), { recursive: true });
+  for (const f of differing) {
+    const source = join(dir, f.path);
+    const copy = join(target, "files", f.path);
+    await mkdir(dirname(copy), { recursive: true });
+    const info = await lstat(source);
+    if (info.isSymbolicLink()) await symlink(await readlink(source), copy);
+    else await copyFile(source, copy);
+  }
+  const record = { repoId: repo.id, repoPath: repo.path, mainCheckout: dir, change: name, files: differing.map((f) => f.path), at: new Date().toISOString() };
+  await writeFile(join(target, "backup.json"), `${JSON.stringify(record, null, 2)}\n`);
+  return { dir: target, count: differing.length };
+}
+
+/**
+ * Cleans up the items the user confirmed for the stale change `name`, re-checking each against the current state.
+ * Refused as a whole only when the archive is gone from the default branch, or with `StaleCleanupError` when an item
+ * needs the acknowledgement the request does not carry; `CleanupBusyError` while another cleanup or deletion runs.
+ */
+export async function applyStaleCleanup(repo: RepoConfig, scope: StaleScope, name: string, request: StaleCleanupRequest): Promise<StaleCleanupResult> {
+  if (running.has(repo.id)) throw new CleanupBusyError();
+  running.add(repo.id);
+  try {
+    const { stale } = await readStale(repo, scope, name);
+    if (!stale) return { repoId: repo.id, name, items: [], refused: "the change is no longer archived on the default branch — nothing was removed" };
+    const worktrees = new Map<string, StaleWorktreeLeftover>();
+    for (const l of stale.leftovers) if (l.kind === "worktree") worktrees.set(await real(l.path), l);
+    const keptReason = (id: string) => stale.kept.find((k) => k.id === id)?.reason;
+
+    // Every item that needs the acknowledgement is known before anything is removed.
+    const resolved = await Promise.all(request.worktrees.map(async (w) => ({ request: w, leftover: worktrees.get(await real(w.path)) })));
+    if (!request.acknowledged && resolved.some((r) => r.leftover && r.leftover.outside.length > 0)) {
+      throw new StaleCleanupError(409, "uncommitted files outside the change would be deleted: acknowledge that first");
+    }
+
+    const items: StaleCleanupItem[] = [];
+    for (const { request: w, leftover } of resolved) {
+      const kept = (reason: string) => items.push({ kind: "worktree", id: w.path, outcome: "kept", reason });
+      if (!leftover) {
+        kept(keptReason(w.path) ?? `it is not a stale leftover of "${name}"`);
+        continue;
+      }
+      if ((leftover.branch ?? null) !== w.branch || leftover.commit !== w.commit || !samePaths(leftover.uncommitted, w.uncommitted)) {
+        kept("it changed since you looked");
+        continue;
+      }
+      const { preview } = await inspectWorktree(repo, leftover.path, scope.runningPaths, true);
+      if (preview.refused) {
+        kept(preview.refused);
+        continue;
+      }
+      const result = await deleteBranchHeld(repo, { path: leftover.path, branch: w.branch, commit: w.commit, statusDigest: preview.statusDigest }, scope.runningPaths);
+      const backup = result.backupDir ? { backupDir: result.backupDir, backedUp: result.backedUp } : {};
+      if (result.outcome === "refused") kept(result.reason ?? "it was refused");
+      else if (result.outcome === "removed") items.push({ kind: "worktree", id: w.path, outcome: "removed", ...(result.branch ? { branch: result.branch } : {}), ...(result.reason ? { reason: result.reason } : {}), ...backup });
+      else items.push({ kind: "worktree", id: w.path, outcome: "deleted", branch: result.branch, commit: result.commit, ...backup });
+    }
+
+    for (const b of request.branches) {
+      const kept = (reason: string) => items.push({ kind: "branch", id: b.name, outcome: "kept", reason });
+      const leftover = stale.leftovers.find((l): l is StaleBranchLeftover => l.kind === "branch" && l.name === b.name);
+      if (!leftover) {
+        kept(keptReason(b.name) ?? `it is not a stale leftover of "${name}"`);
+        continue;
+      }
+      const now = await git(repo.path, ["rev-parse", "--verify", "--quiet", `refs/heads/${b.name}`]);
+      if (leftover.commit !== b.commit || !now.ok || now.out !== b.commit) {
+        kept("it changed since you looked");
+        continue;
+      }
+      const deleted = await git(repo.path, ["branch", "-D", "--", b.name]);
+      if (deleted.ok) items.push({ kind: "branch", id: b.name, outcome: "deleted", branch: b.name, commit: b.commit });
+      else kept(deleted.err.split("\n").pop() || "git refused to delete it");
+    }
+
+    if (request.mainCheckout) {
+      const leftover = stale.leftovers.find((l): l is StaleMainLeftover => l.kind === "main");
+      const id = leftover?.dir ?? `${writablePaths(frameworkById(scope.scanned.framework))?.changesDir}/${name}`;
+      const kept = (reason: string) => items.push({ kind: "main", id, outcome: "kept", reason });
+      const shown = request.mainCheckout.files;
+      const matches = (files: readonly StaleMainFile[]) =>
+        files.length === shown.length && files.every((f) => shown.some((s) => s.path === f.path && s.hash === f.hash));
+      if (!leftover) kept(keptReason(id) ?? `the main checkout holds no leftover of "${name}"`);
+      else if (!matches(leftover.files)) kept("it changed since you looked");
+      else {
+        const archiveRoot = `${writablePaths(frameworkById(scope.scanned.framework))?.archiveDir}/${stale.archive}`;
+        let backup: { dir?: string; count: number } = { count: 0 };
+        const removed = await removeStaleChangeDirectory(repo, scope.scanned, name, async (dir) => {
+          const files = await mainCheckoutCopy(repo.path, leftover.dir);
+          if (!files || !matches(files)) return "it changed since you looked";
+          try {
+            backup = await backupMainCopy(repo, name, dir, archiveRoot, files);
+          } catch (err) {
+            return `nothing was deleted: the backup failed (${err instanceof Error ? err.message : String(err)})`;
+          }
+          return undefined;
+        });
+        if (!removed.removed) kept(removed.reason);
+        else
+          items.push({
+            kind: "main",
+            id,
+            outcome: "removed",
+            ...(removed.staged ? {} : { reason: "its removal could not be staged" }),
+            ...(backup.dir ? { backupDir: backup.dir, backedUp: backup.count } : {}),
+          });
       }
     }
-    const backedUp = backupDir ? { backupDir, backedUp: backup.files.length } : {};
-    if (preview.locked && preview.managed) await git(repo.path, ["worktree", "unlock", request.path]);
-    const removed = await git(repo.path, ["worktree", "remove", "--force", request.path]);
-    if (!removed.ok) return { ...refuse(`git refused to remove the worktree: ${removed.err.split("\n").pop() || "unknown error"}`), ...backedUp };
-
-    const branch = preview.branch;
-    if (!branch) return { repoId: repo.id, path: request.path, outcome: "removed", ...backedUp };
-    const ctx = await context(repo, sessions);
-    const ref = await git(repo.path, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
-    const keep =
-      branch === ctx.defaultName || branch === ctx.mainBranch
-        ? "it became the default branch or the main checkout's branch"
-        : !ref.ok
-          ? "it no longer exists"
-          : ref.out !== preview.commit
-            ? "it changed while the worktree was removed"
-            : ctx.listed.some((w) => w.branch === branch)
-              ? "it is checked out in another worktree"
-              : undefined;
-    if (keep) return { repoId: repo.id, path: request.path, outcome: "removed", branch, reason: `the branch was kept: ${keep}`, ...backedUp };
-    const deleted = await git(repo.path, ["branch", "-D", "--", branch]);
-    if (!deleted.ok) {
-      return { repoId: repo.id, path: request.path, outcome: "removed", branch, reason: `the branch was kept: ${deleted.err.split("\n").pop() || "git refused to delete it"}`, ...backedUp };
-    }
-    return { repoId: repo.id, path: request.path, outcome: "deleted", branch, commit: preview.commit, ...backedUp };
+    return { repoId: repo.id, name, items };
   } finally {
     running.delete(repo.id);
   }
