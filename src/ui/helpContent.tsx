@@ -166,7 +166,10 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           <li>
             <strong>Open work</strong> in the top bar lists running agents and worktrees that still hold something.{" "}
             <strong>End session</strong> stops an agent and, by default, pulls the repository and — when nothing would be
-            lost — removes its worktree; clear either box before confirming to skip it.
+            lost — removes its worktree; clear either box before confirming to skip it. Once the change is archived and
+            merged, it offers <strong>Clean up leftovers</strong> instead: the session's worktree and whatever else of the
+            change is left over go in the same confirmation, after a copy of their uncommitted files is kept. It is selected
+            unless a file outside the change would be deleted.
           </li>
           <li>
             The <strong>Console</strong> button in the top bar opens your agent outside every change, in a console folder of its
@@ -228,8 +231,11 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           A card marked <strong>Stale</strong> holds work that already landed while the board still shows something
           unfinished; hover the badge for the reason. An archive committed on a branch that never reached the default
           branch is offered <strong>Carry over archive</strong> in the change's detail — an archive session that
-          cherry-picks that commit instead of archiving again. A session worktree left over after its change was archived
-          is offered <strong>Remove worktree…</strong>, the same deletion as from Details.
+          cherry-picks that commit instead of archiving again. A change that is archived and merged on the default branch
+          but still has a worktree, a local branch or an uncommitted copy in the main checkout left over is offered{" "}
+          <strong>Clean up leftovers…</strong>: it lists them with their uncommitted files, copies those to{" "}
+          <code>~/.spec-control/branch-backups/</code>, and removes them on one confirmation. Remote branches are never
+          touched.
         </li>
         <li>
           <strong>Refresh</strong> scans now; the clock beside it repeats that at an interval you choose. Scanning only

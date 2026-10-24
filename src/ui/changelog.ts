@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-24-stale-means-archived-and-merged",
+    date: "2026-10-24",
+    title: "Clean up what an archived change left behind",
+    summary:
+      "Once a change is archived and merged on the default branch, its leftover worktrees, local branches and uncommitted copy in the main checkout are marked **Stale** — even with uncommitted files in them. **End session** then offers **Clean up leftovers**, and the change's detail offers **Clean up leftovers…**: one confirmation copies their uncommitted files under `~/.spec-control/branch-backups/` and removes them.",
+  },
+  {
     id: "2026-10-22-stale-changes",
     date: "2026-10-22",
     title: "Stale changes are marked, with a way out",

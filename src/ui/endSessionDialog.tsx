@@ -1,14 +1,18 @@
 // Ending a session, from a card or from the panel, goes through this one dialog. It asks as loudly as the work in the
 // worktree is unshipped, on the strength of a status read at this moment rather than the list's cached one, and it is
-// where the user can bring the repository's main checkout up to date with work that landed.
+// where the user can bring the repository's main checkout up to date with work that landed. For a change that is
+// archived and merged it offers the stale cleanup in place of the plain removal (agent-sessions: "Ending a session
+// cleans up a stale change's leftovers").
 import { useEffect, useState } from "preact/hooks";
-import type { PullResult, WorkStatus } from "../shared/types.ts";
+import type { PullResult, StaleCleanupPreview, StaleCleanupResult, WorkStatus } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { PullBlockedList, usePull } from "./pull.tsx";
 import { pullNeedsReport, pullOutcome } from "./pullState.ts";
 import { inPlaceLeftover } from "./inPlaceText.ts";
 import { endConfirmable, endSeverity, endWarning, pullOffer, removalPreselected, reportShip, worktreeRemovalPossible } from "./sessionState.ts";
 import { useSessionUi } from "./sessions.tsx";
+import { StaleCleanupOutcome, StaleLeftoverList } from "./staleCleanup.tsx";
+import { cleanupNeedsReport, endCleanupOffer, keptUntilStale, outsidePaths, staleRequest } from "./staleState.ts";
 
 interface Status {
   removable: boolean;
@@ -16,9 +20,10 @@ interface Status {
   work?: WorkStatus;
 }
 
-/** What is left of the dialog once the session has ended but the pull did not bring the checkout up to date. */
+/** What is left of the dialog once the session has ended but the pull or the cleanup needs saying. */
 interface Report {
-  result: PullResult;
+  result?: PullResult;
+  cleanup?: StaleCleanupResult;
   worktreeRemoved: boolean;
 }
 
@@ -30,6 +35,10 @@ export function EndSessionDialog() {
   const repo = ui.snapshot?.repos.find((r) => r.id === session?.repoId);
   const [status, setStatus] = useState<Status>();
   const [remove, setRemove] = useState(false);
+  // The `?ending=` preview, read only for a change the snapshot knows is archived on the default branch.
+  const [stale, setStale] = useState<StaleCleanupPreview>();
+  const [cleanupChoice, setCleanupChoice] = useState<boolean>();
+  const [stalePending, setStalePending] = useState(false);
   // Undefined until the user touches it, so the offer can stay in step with a status or snapshot that arrives later.
   const [pullChoice, setPullChoice] = useState<boolean>();
   const [busy, setBusy] = useState(false);
@@ -40,6 +49,9 @@ export function EndSessionDialog() {
   useEffect(() => {
     setStatus(undefined);
     setRemove(false);
+    setStale(undefined);
+    setCleanupChoice(undefined);
+    setStalePending(false);
     setPullChoice(undefined);
     setBusy(false);
     setPulling(false);
@@ -48,17 +60,25 @@ export function EndSessionDialog() {
     if (!id) return;
     // An in-place session has no worktree: nothing to check, nothing to remove.
     if (!worktreeRemovalPossible(session)) return;
-    let stale = false;
+    let gone = false;
     api
       .worktreeStatus(id)
       .then((result) => {
-        if (stale) return;
+        if (gone) return;
         setStatus(result);
         setRemove(removalPreselected(result)); // nothing would be lost: removing the worktree is what is left to do
       })
-      .catch(() => !stale && setStatus({ removable: false, reason: "could not check the worktree" }));
+      .catch(() => !gone && setStatus({ removable: false, reason: "could not check the worktree" }));
+    if (session && "change" in session && session.change && repo?.changes.some((c) => c.name === session.change && c.stale)) {
+      setStalePending(true);
+      api
+        .staleCleanupPreview(session.repoId, session.change, session.state === "running" ? session.id : undefined)
+        .then((preview) => !gone && setStale(preview))
+        .catch(() => undefined) // without it, the plain removal is offered as before
+        .finally(() => !gone && setStalePending(false));
+    }
     return () => {
-      stale = true;
+      gone = true;
     };
   }, [id]);
 
@@ -77,6 +97,10 @@ export function EndSessionDialog() {
   const warning = endWarning(status?.work);
   const offer = pullOffer(repo, session);
   const pullSelected = offer.offered && (pullChoice ?? offer.preselected);
+  const cleanupOffer = hasWorktree ? endCleanupOffer(stale, session) : { offered: false, preselected: false };
+  const leftovers = stale?.stale?.leftovers ?? [];
+  const cleanupSelected = cleanupOffer.offered && (cleanupChoice ?? cleanupOffer.preselected);
+  const outside = cleanupOffer.offered ? outsidePaths(leftovers) : [];
   const close = () => ui.requestEnd(undefined);
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -100,31 +124,70 @@ export function EndSessionDialog() {
     setError(undefined);
     let worktreeRemoved = false;
     try {
-      const result = await api.closeSession(session.id, remove && status?.removable === true);
+      const result = await api.closeSession(session.id, !cleanupOffer.offered && remove && status?.removable === true);
       worktreeRemoved = result.worktree?.removable === true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setBusy(false);
       return;
     }
+    // End, clean up, pull: the cleanup removes the main checkout's leftover copy before the fast-forward.
+    let cleanup: StaleCleanupResult | undefined;
+    if (cleanupSelected && "change" in session && session.change) {
+      try {
+        // Selecting the offer is the acknowledgement for files outside the change, which the offer named.
+        cleanup = await api.staleCleanup(session.repoId, session.change, staleRequest(leftovers, true));
+        worktreeRemoved = cleanup.items.some((i) => i.kind === "worktree" && i.outcome !== "kept" && (i.id === session.worktreePath || i.branch === session.branch));
+      } catch (err) {
+        cleanup = { repoId: session.repoId, name: session.change, items: [], refused: err instanceof Error ? err.message : String(err) };
+      }
+    }
+    const reportCleanup = cleanup && cleanupNeedsReport(cleanup) ? cleanup : undefined;
     if (!pullSelected) {
       await ui.refresh();
-      close();
+      if (!reportCleanup) {
+        close();
+        return;
+      }
+      setReport({ cleanup: reportCleanup, worktreeRemoved });
+      setBusy(false);
       return;
     }
     setPulling(true);
     const result = await pulls.pull(session.repoId); // never rejects; a failed call comes back as a `failed` result
     await ui.refresh();
-    if (!pullNeedsReport(result)) {
+    if (!pullNeedsReport(result) && !reportCleanup) {
       close();
       return;
     }
-    setReport({ result, worktreeRemoved });
+    setReport({ result: pullNeedsReport(result) ? result : undefined, cleanup: reportCleanup, worktreeRemoved });
     setPulling(false);
     setBusy(false);
   };
 
-  if (report) {
+  if (report && !report.result) {
+    return (
+      <div class="overlay end-overlay">
+        <div class="dialog end-dialog" role="alertdialog" aria-modal="true" aria-labelledby="end-title" aria-describedby="end-body">
+          <strong id="end-title">
+            Leftovers of <span class="mono">{session.change}</span>
+          </strong>
+          <div id="end-body" class="dialog-body">
+            {report.cleanup && <StaleCleanupOutcome result={report.cleanup} />}
+            <div class="hint">The session for <span class="mono">{session.change}</span> has ended.</div>
+          </div>
+          <div class="row">
+            <span style={{ flex: 1 }} />
+            <button type="button" class="btn sm primary" onClick={close}>
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (report?.result) {
     // Resolve and pull can be confirmed from right here, so the report follows the repository's live pull outcome.
     const live = pulls.states[session.repoId];
     const result = live && live !== "running" ? live : report.result;
@@ -144,6 +207,7 @@ export function EndSessionDialog() {
               </strong>
               {outcome.detail}
             </div>
+            {report.cleanup && <StaleCleanupOutcome result={report.cleanup} />}
             {(result.blocking !== undefined || result.resolved !== undefined) && (
               <PullBlockedList result={result} running={live === "running"} onResolve={(claim) => void pulls.resolve(session.repoId, claim)} />
             )}
@@ -173,8 +237,8 @@ export function EndSessionDialog() {
           <span class="mono">{session.change}</span>?
         </strong>
         <div id="end-body" class="dialog-body">
-          {!status && hasWorktree && <div class="hint">Checking the worktree…</div>}
-          {warning && (
+          {(stalePending || !status) && hasWorktree && <div class="hint">Checking the worktree…</div>}
+          {warning && !cleanupOffer.offered && (
             <div class={`notice ${severity === "danger" ? "danger" : "warn"}`}>
               <strong>{severity === "danger" ? "⚠ Not shipped. " : "Note: "}</strong>
               {warning}
@@ -186,6 +250,11 @@ export function EndSessionDialog() {
               Whatever the agent changed stays in <span class="mono">{session.worktreePath}</span>
               {inPlaceLeftover(repo?.isGit)}
             </div>
+          ) : cleanupOffer.offered ? (
+            <div class="hint">
+              {running && `${session.agentName} is stopped, as if you closed its terminal window. `}
+              The change is archived and merged on the default branch, so what is left of it below is no longer needed on its branches.
+            </div>
           ) : (
             <div class="hint">
               {running && `${session.agentName} is stopped, as if you closed its terminal window. `}
@@ -193,13 +262,30 @@ export function EndSessionDialog() {
               it is merged.
             </div>
           )}
+          {cleanupOffer.offered && (
+            <>
+              <label class="check">
+                <input type="checkbox" checked={cleanupSelected} onChange={(e) => setCleanupChoice(e.currentTarget.checked)} />
+                <span>
+                  also clean up the leftovers of <span class="mono">{session.change}</span>
+                  {outside.length > 0 && <> — including uncommitted files outside the change, deleted after a copy is kept</>}
+                </span>
+              </label>
+              <StaleLeftoverList leftovers={leftovers} kept={stale?.stale?.kept ?? []} />
+            </>
+          )}
           {hasWorktree &&
+            !cleanupOffer.offered &&
             (status?.removable ? (
               <label class="check">
                 <input type="checkbox" checked={remove} onChange={(e) => setRemove(e.currentTarget.checked)} /> also remove the worktree (clean, and its work is merged or exists elsewhere)
               </label>
             ) : (
-              status?.reason && <div class="hint">The worktree cannot be removed: {status.reason}.</div>
+              status?.reason && (
+                <div class="hint">
+                  The worktree cannot be removed: {status.reason}. {keptUntilStale}
+                </div>
+              )
             ))}
           {offer.offered && (
             <label class="check" title="Fetches the repository's remote and fast-forwards its main checkout. Never merges, rebases, stashes or switches branches; off the default branch it only fetches.">
@@ -217,7 +303,7 @@ export function EndSessionDialog() {
             Cancel
           </button>
           <span style={{ flex: 1 }} />
-          {severity === "danger" && (
+          {severity === "danger" && !cleanupOffer.offered && (
             <button
               type="button"
               class="btn sm primary"
@@ -234,7 +320,7 @@ export function EndSessionDialog() {
               ⇪ Ship instead
             </button>
           )}
-          <button type="button" class={`btn sm ${severity === "danger" ? "danger" : "primary"}`} disabled={!endConfirmable(session, status, busy)} onClick={() => void confirm()}>
+          <button type="button" class={`btn sm ${severity === "danger" ? "danger" : "primary"}`} disabled={!endConfirmable(session, status, busy) || stalePending} onClick={() => void confirm()}>
             {pulling ? "Pulling…" : severity === "danger" ? "End anyway" : running ? "End session" : "Done"}
           </button>
         </div>

@@ -673,3 +673,17 @@ test("every preset says how to install it on each platform, with a command to co
     }
   }
 });
+
+test("every preset's Archive prompt asks for the whole move to be committed; the previous text upgrades, an edited one stays", () => {
+  for (const { profile, formerPrompts } of AGENT_PRESETS) {
+    const archive = profile.prompts.archive ?? "";
+    expect([profile.id, archive.endsWith("and include in your commit every file the archive moved or removed.")]).toEqual([profile.id, true]);
+    // The text before this clause, verbatim, is one of the preset's former Archive prompts and is read as the current one.
+    const previous = archive.replace(", and include in your commit every file the archive moved or removed.", ".");
+    expect(formerPrompts.archive).toContain(previous);
+    const agent = { ...profile, prompts: { archive: previous } };
+    expect(validateConfig(withAgents([agent], profile.id)).agentSessions.agents[0].prompts.archive).toBe(archive);
+    const edited = { ...profile, prompts: { archive: `${previous} Then stop.` } };
+    expect(validateConfig(withAgents([edited], profile.id)).agentSessions.agents[0].prompts.archive).toBe(`${previous} Then stop.`);
+  }
+});

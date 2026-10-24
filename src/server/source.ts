@@ -5,8 +5,8 @@ import type { Dirent } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import type { LabelEntry } from "../shared/labels.ts";
-import { CHANGE_NAME_PATTERN, type StrandedArchive, type Worktree } from "../shared/types.ts";
-import { type ActiveChange, findStrandedArchives } from "./staleChanges.ts";
+import { CHANGE_NAME_PATTERN, type StaleLeftovers, type StrandedArchive, type Worktree } from "../shared/types.ts";
+import { type ActiveChange, findStrandedArchives, type SessionHint, type StaleInput, staleLeftovers } from "./staleChanges.ts";
 import { checkoutStatus, currentBranch, defaultBranch, fetchInfo, hasCommitToBranchFrom, hasRemoteRefs, isGitRepo, lastCommitDate, localOnlyCommits, type ParsedStatus, statusPaths, subdirectory, worktrees } from "./git.ts";
 
 export const CHANGE_NAME = CHANGE_NAME_PATTERN;
@@ -88,7 +88,18 @@ export interface RepoSource {
    * Archives of active changes that a branch holds and neither the main checkout nor the default branch does
    * (stale-changes spec), by change name. Optional: a source without it reports none.
    */
-  strandedArchives?(layout: ChangesLayout, changes: readonly ActiveChange[], archivedOnMain: ReadonlyMap<string, string>, defaultBranch: string | undefined): Promise<Map<string, StrandedArchive>>;
+  strandedArchives?(
+    layout: ChangesLayout,
+    changes: readonly ActiveChange[],
+    archivedOnMain: ReadonlyMap<string, string>,
+    defaultBranch: string | undefined,
+    sessions?: readonly SessionHint[],
+  ): Promise<Map<string, StrandedArchive>>;
+  /**
+   * The leftovers of changes the default branch has archived (stale-changes: "A change that is archived and merged is
+   * stale"), by change name. Optional: a source without it reports none.
+   */
+  staleLeftovers?(input: Omit<StaleInput, "repoPath">): Promise<Map<string, StaleLeftovers>>;
   /** Committer date of the last commit touching `absPath` inside the repo. */
   lastActivity(absPath: string): Promise<string | undefined>;
   /** Modified and untracked files under `relRoot` (a framework's root, e.g. `openspec`), per git. Empty for non-git repositories or on failure. */
@@ -232,8 +243,18 @@ export class LocalRepoSource implements RepoSource {
     return hasCommitToBranchFrom(this.path);
   }
 
-  strandedArchives(layout: ChangesLayout, changes: readonly ActiveChange[], archivedOnMain: ReadonlyMap<string, string>, defaultBranch: string | undefined): Promise<Map<string, StrandedArchive>> {
-    return findStrandedArchives(this.path, layout, changes, archivedOnMain, defaultBranch);
+  strandedArchives(
+    layout: ChangesLayout,
+    changes: readonly ActiveChange[],
+    archivedOnMain: ReadonlyMap<string, string>,
+    defaultBranch: string | undefined,
+    sessions: readonly SessionHint[] = [],
+  ): Promise<Map<string, StrandedArchive>> {
+    return findStrandedArchives(this.path, layout, changes, archivedOnMain, defaultBranch, sessions);
+  }
+
+  staleLeftovers(input: Omit<StaleInput, "repoPath">): Promise<Map<string, StaleLeftovers>> {
+    return staleLeftovers({ ...input, repoPath: this.path });
   }
 
   worktrees(): Promise<Worktree[]> {

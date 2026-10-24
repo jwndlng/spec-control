@@ -1,12 +1,13 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { readdir, readFile, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { applyCleanup, isBranchName, isCleaningUp, previewCleanup } from "../src/server/cleanup.ts";
+import { chmod, mkdir, readdir, readFile, realpath, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { applyCleanup, applyStaleCleanup, isBranchName, isCleaningUp, previewCleanup, previewStaleCleanup, StaleCleanupError, type StaleScope } from "../src/server/cleanup.ts";
 import { newRepoConfig } from "../src/server/config.ts";
 import { worktreesDir } from "../src/server/paths.ts";
+import { scanRepo } from "../src/server/scanner.ts";
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
-import type { CleanupPreview, RepoConfig } from "../src/shared/types.ts";
+import type { CleanupPreview, RepoConfig, StaleCleanupPreview, StaleCleanupRequest } from "../src/shared/types.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
 import { git, harness, tempGitRepo, type Harness } from "./sessionHelpers.ts";
 
@@ -323,4 +324,168 @@ test("running session worktrees are reported by real path", async () => {
   managers.push(h.manager);
   const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
   expect(await h.manager.runningWorktreePaths()).toEqual(new Set([await realpath(s.worktreePath)]));
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// A stale change's cleanup (stale-changes: "A stale change's leftovers are cleaned up on one confirmation").
+// ---------------------------------------------------------------------------------------------------------------------
+
+const STALE = "structured-logs";
+const STALE_ARCHIVE = `2026-07-01-${STALE}`;
+
+/** Archives `STALE` on `main` and pushes it; a session worktree on `feat/<STALE>` made before, and a merged archive branch. */
+async function staleRepo(): Promise<Repo & { wt: string; scope: () => Promise<StaleScope> }> {
+  const r = await repoWithOrigin();
+  const wt = join(worktreesDir(), r.repo.id, STALE);
+  await mkdir(join(worktreesDir(), r.repo.id), { recursive: true });
+  await ensureWorktree(r.path, wt, `feat/${STALE}`);
+  await rename(join(r.path, "openspec/changes", STALE), join(r.path, "openspec/changes/archive", STALE_ARCHIVE));
+  git(r.path, "add", "-A");
+  git(r.path, "commit", "-q", "-m", "archive");
+  git(r.path, "push", "-q", "origin", "main");
+  git(r.path, "branch", `chore/archive-${STALE}`);
+  const scope = async (): Promise<StaleScope> => ({ scanned: await scanRepo(r.repo), hints: [], runningPaths: new Set() });
+  return { ...r, wt: await realpath(wt), scope };
+}
+
+function requestFor(preview: StaleCleanupPreview, acknowledged = false): StaleCleanupRequest {
+  const leftovers = preview.stale?.leftovers ?? [];
+  const main = leftovers.find((l) => l.kind === "main");
+  return {
+    worktrees: leftovers.flatMap((l) => (l.kind === "worktree" ? [{ path: l.path, branch: l.branch ?? null, commit: l.commit, uncommitted: l.uncommitted }] : [])),
+    branches: leftovers.flatMap((l) => (l.kind === "branch" ? [{ name: l.name, commit: l.commit }] : [])),
+    mainCheckout: main?.kind === "main" ? { files: main.files.map(({ path, hash }) => ({ path, hash })) } : null,
+    acknowledged,
+  };
+}
+
+const heads = (path: string) => git(path, "for-each-ref", "--format=%(refname)", "refs/heads").split("\n").filter(Boolean);
+
+test("two stale leftovers go on one confirmation, with a backup of the uncommitted source file", async () => {
+  const r = await staleRepo();
+  await writeFile(join(r.wt, "keys.ts"), "export const k = 1;\n");
+  const scope = await r.scope();
+  const preview = await previewStaleCleanup(r.repo, scope, STALE);
+  expect(preview.stale?.leftovers.map((l) => l.kind).sort()).toEqual(["branch", "worktree"]);
+  const worktree = preview.stale?.leftovers.find((l) => l.kind === "worktree");
+  expect(worktree).toMatchObject({ path: r.wt, uncommitted: ["keys.ts"], outside: ["keys.ts"] });
+
+  // Without the acknowledgement nothing goes.
+  await expect(applyStaleCleanup(r.repo, scope, STALE, requestFor(preview))).rejects.toBeInstanceOf(StaleCleanupError);
+  expect(existsSync(r.wt)).toBe(true);
+
+  const result = await applyStaleCleanup(r.repo, scope, STALE, requestFor(preview, true));
+  expect(result.items.map((i) => [i.kind, i.outcome]).sort()).toEqual([
+    ["branch", "deleted"],
+    ["worktree", "deleted"],
+  ]);
+  const removed = result.items.find((i) => i.kind === "worktree");
+  expect(removed?.branch).toBe(`feat/${STALE}`);
+  expect(await readFile(join(removed?.backupDir as string, "files", "keys.ts"), "utf8")).toBe("export const k = 1;\n");
+  expect(existsSync(r.wt)).toBe(false);
+  expect(heads(r.path)).toEqual(["refs/heads/main"]);
+  // No longer stale.
+  expect((await scanRepo(r.repo)).changes.some((c) => c.stale)).toBe(false);
+});
+
+test("a worktree whose only uncommitted file is inside the change needs no acknowledgement and is still backed up", async () => {
+  const r = await staleRepo();
+  git(r.path, "branch", "-q", "-D", `chore/archive-${STALE}`);
+  await rm(join(r.wt, "openspec/changes", STALE, "proposal.md"));
+  const scope = await r.scope();
+  const preview = await previewStaleCleanup(r.repo, scope, STALE);
+  expect(preview.stale?.leftovers).toMatchObject([{ kind: "worktree", outside: [], uncommitted: [`openspec/changes/${STALE}/proposal.md`] }]);
+  const result = await applyStaleCleanup(r.repo, scope, STALE, requestFor(preview));
+  expect(result.items).toMatchObject([{ kind: "worktree", outcome: "deleted" }]);
+  expect(existsSync(r.wt)).toBe(false);
+});
+
+test("the main checkout's staged copy is backed up where it differs from the archive, removed and its removal staged", async () => {
+  const r = await staleRepo();
+  await rm(r.wt, { recursive: true, force: true });
+  git(r.path, "worktree", "prune");
+  git(r.path, "branch", "-q", "-D", `feat/${STALE}`, `chore/archive-${STALE}`);
+  // What the dashboard created and staged, and never anybody committed there.
+  const dir = join(r.path, "openspec/changes", STALE);
+  await mkdir(dir);
+  await writeFile(join(dir, "proposal.md"), await readFile(join(r.path, "openspec/changes/archive", STALE_ARCHIVE, "proposal.md")));
+  await writeFile(join(dir, "prompt.md"), "log everything\n");
+  git(r.path, "add", "--", `openspec/changes/${STALE}/`);
+  const head = git(r.path, "rev-parse", "HEAD");
+  const scope = await r.scope();
+  const preview = await previewStaleCleanup(r.repo, scope, STALE);
+  expect(preview.stale?.leftovers).toMatchObject([{ kind: "main", dir: `openspec/changes/${STALE}`, files: [{ path: "prompt.md", staged: true }, { path: "proposal.md", staged: true }] }]);
+  const result = await applyStaleCleanup(r.repo, scope, STALE, requestFor(preview));
+  expect(result.items).toMatchObject([{ kind: "main", outcome: "removed", backedUp: 1 }]);
+  // Only the file that differs from the archive's copy is kept aside.
+  expect(await readdir(join(result.items[0].backupDir as string, "files"))).toEqual(["prompt.md"]);
+  expect(existsSync(dir)).toBe(false);
+  expect(git(r.path, "status", "--porcelain")).toBe("");
+  expect(git(r.path, "rev-parse", "HEAD")).toBe(head);
+  expect(git(r.path, "branch", "--show-current")).toBe("main");
+});
+
+test("an item that changed since the dialog is kept, and the rest still goes", async () => {
+  const r = await staleRepo();
+  const scope = await r.scope();
+  const preview = await previewStaleCleanup(r.repo, scope, STALE);
+  // A new commit lands on the archive branch after the user looked.
+  git(r.path, "checkout", "-q", `chore/archive-${STALE}`);
+  await writeFile(join(r.path, "late.txt"), "late\n");
+  git(r.path, "add", "-A");
+  git(r.path, "commit", "-q", "-m", "late");
+  git(r.path, "checkout", "-q", "main");
+  const result = await applyStaleCleanup(r.repo, scope, STALE, requestFor(preview));
+  expect(result.items.find((i) => i.kind === "branch")).toMatchObject({ outcome: "kept" });
+  expect(result.items.find((i) => i.kind === "worktree")).toMatchObject({ outcome: "deleted" });
+  expect(heads(r.path)).toContain(`refs/heads/chore/archive-${STALE}`);
+});
+
+test("nothing is removed when the archive is gone from the default branch", async () => {
+  const r = await staleRepo();
+  const scope = await r.scope();
+  const preview = await previewStaleCleanup(r.repo, scope, STALE);
+  git(r.path, "reset", "-q", "--hard", "HEAD~1");
+  git(r.path, "push", "-q", "-f", "origin", "main");
+  const result = await applyStaleCleanup(r.repo, scope, STALE, requestFor(preview, true));
+  expect(result.refused).toContain("no longer archived on the default branch");
+  expect(result.items).toEqual([]);
+  expect(existsSync(r.wt)).toBe(true);
+});
+
+test("an item that is no stale leftover of the change is kept and never removed", async () => {
+  const r = await staleRepo();
+  const other = join(worktreesDir(), r.repo.id, "report");
+  await ensureWorktree(r.path, other, "feat/report");
+  const scope = await r.scope();
+  const result = await applyStaleCleanup(r.repo, scope, STALE, {
+    worktrees: [{ path: other, branch: "feat/report", commit: git(other, "rev-parse", "HEAD"), uncommitted: [] }],
+    branches: [{ name: "feat/report", commit: git(other, "rev-parse", "HEAD") }],
+    mainCheckout: null,
+    acknowledged: true,
+  });
+  expect(result.items.map((i) => i.outcome)).toEqual(["kept", "kept"]);
+  expect(result.items[0].reason).toContain(`not a stale leftover of "${STALE}"`);
+  expect(existsSync(other)).toBe(true);
+});
+
+test("a stale cleanup contacts no remote and leaves every remote-tracking ref alone", async () => {
+  const r = await staleRepo();
+  const remotes = git(r.path, "for-each-ref", "refs/remotes");
+  const marker = join(await tempDir("osd-ssh-"), "remote-was-contacted");
+  const fakeSsh = join(dirname(marker), "fake-ssh.sh");
+  await writeFile(fakeSsh, `#!/bin/sh\necho contacted >> "${marker}"\nexit 1\n`);
+  await chmod(fakeSsh, 0o755);
+  git(r.path, "remote", "set-url", "origin", "ssh://git.example.invalid/team/repo.git");
+  process.env.GIT_SSH_COMMAND = fakeSsh;
+  try {
+    const scope = await r.scope();
+    const preview = await previewStaleCleanup(r.repo, scope, STALE);
+    const result = await applyStaleCleanup(r.repo, scope, STALE, requestFor(preview, true));
+    expect(result.items.every((i) => i.outcome !== "kept")).toBe(true);
+  } finally {
+    delete process.env.GIT_SSH_COMMAND;
+  }
+  expect(existsSync(marker)).toBe(false);
+  expect(git(r.path, "for-each-ref", "refs/remotes")).toBe(remotes);
 });

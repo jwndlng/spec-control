@@ -307,7 +307,7 @@ function RepoGroups({ column, cards, now, showRepo, from, groups: controls }: { 
   const working = (c: Card) => cardWorkingState(ui.config, ui.sessions, c);
   const running = (c: Card) => cardSessionControls(ui.config, ui.sessions, c).shown.some((s) => s.state === "running");
   const merging = (c: Card) => cardMergePending(ui.sessions, c, c.pullRequest);
-  const stale = (c: Card) => staleReason(c, ui.worktrees);
+  const stale = (c: Card) => staleReason(c);
   if (!showRepo) {
     return (
       <div class="cards">
