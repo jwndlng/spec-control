@@ -1,7 +1,7 @@
 // Which cached pull request belongs to a change (openspec/specs/pull-requests: "A pull request is linked to a change
 // by its head branch"). Derived on display, never stored: the card, the detail header and the tests share this one rule
 // so they can never disagree. Pure and total — whatever an older cache wrote, it answers or returns undefined.
-import { sessionBranch } from "./sessionBranch.ts";
+import { proposalBranch, sessionBranch } from "./sessionBranch.ts";
 import type { ChangeSnapshot, PullRequest, RepoPullRequests } from "./types.ts";
 
 /** When a pull request last moved: merged or closed if it has, else opened; 0 when no date can be read. */
@@ -35,11 +35,16 @@ export function recordedBranches(change: Pick<ChangeSnapshot, "recorded">): stri
 
 /**
  * A change's candidate head branches: its recorded branches, its `branchMatch`, then the branches the dashboard's own
- * sessions create for it.
+ * sessions create for it — the proposal branch among them.
  */
 export function candidateBranches(change: Pick<ChangeSnapshot, "name" | "branchMatch" | "recorded">): string[] {
-  const names = typeof change.name === "string" && change.name !== "" ? [sessionBranch("implement", change.name), sessionBranch("archive", change.name)] : [];
+  const names = typeof change.name === "string" && change.name !== "" ? [sessionBranch("implement", change.name), sessionBranch("archive", change.name), proposalBranch(change.name)] : [];
   return [...new Set([...recordedBranches(change), ...branchOrNone(change.branchMatch), ...names])];
+}
+
+/** Whether a linked pull request is the change's proposal pull request: the one from the branch a Draft session ships from. */
+export function isProposalPullRequest(change: Pick<ChangeSnapshot, "name">, pr: Pick<PullRequest, "head"> | undefined): boolean {
+  return pr !== undefined && typeof change.name === "string" && change.name !== "" && pr.head === proposalBranch(change.name);
 }
 
 const DAY = 86_400_000;

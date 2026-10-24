@@ -1,6 +1,6 @@
 // The one rule that ties a cached pull request to a change: exact head branch, own repository, open first.
 import { expect, test } from "bun:test";
-import { candidateBranches, linkedPullRequest } from "../src/shared/pullRequestLink.ts";
+import { candidateBranches, isProposalPullRequest, linkedPullRequest } from "../src/shared/pullRequestLink.ts";
 import type { PullRequest, RepoPullRequests } from "../src/shared/types.ts";
 
 const HOUR = 3600_000;
@@ -121,13 +121,14 @@ test("it is pure: the input is left as it was", () => {
 const named = (name: string, patch: { branchMatch?: string; created?: string; repoId?: string } = {}) => ({ repoId: "alpha", name, ...patch });
 
 test("the candidates are branchMatch, then the session branches, without duplicates", () => {
-  expect(candidateBranches(named("add-validate-phase"))).toEqual(["feat/add-validate-phase", "chore/archive-add-validate-phase"]);
+  expect(candidateBranches(named("add-validate-phase"))).toEqual(["feat/add-validate-phase", "chore/archive-add-validate-phase", "docs/add-validate-phase"]);
   expect(candidateBranches(named("add-validate-phase", { branchMatch: "fix/add-validate-phase" }))).toEqual([
     "fix/add-validate-phase",
     "feat/add-validate-phase",
     "chore/archive-add-validate-phase",
+    "docs/add-validate-phase",
   ]);
-  expect(candidateBranches(named("add-validate-phase", { branchMatch: "feat/add-validate-phase" }))).toEqual(["feat/add-validate-phase", "chore/archive-add-validate-phase"]);
+  expect(candidateBranches(named("add-validate-phase", { branchMatch: "feat/add-validate-phase" }))).toEqual(["feat/add-validate-phase", "chore/archive-add-validate-phase", "docs/add-validate-phase"]);
 });
 
 test("after its worktree is removed, a change still finds the merged pull request on its session branch", () => {
@@ -219,8 +220,32 @@ test("candidate branches start with the recorded ones; a malformed record from a
     "chore/archive-rotate-keys",
     "wip/keys",
     "feat/rotate-keys",
+    "docs/rotate-keys",
   ]);
   const odd = { name: "rotate-keys", recorded: { branch: 42 } } as unknown as Parameters<typeof candidateBranches>[0];
-  expect(candidateBranches(odd)).toEqual(["feat/rotate-keys", "chore/archive-rotate-keys"]);
+  expect(candidateBranches(odd)).toEqual(["feat/rotate-keys", "chore/archive-rotate-keys", "docs/rotate-keys"]);
   expect(linkedPullRequest({ ...rotate(), recorded: "fix/rotate-keys" } as unknown as Parameters<typeof linkedPullRequest>[0], [list("alpha", [pr({ number: 150, head: "feat/rotate-keys" })])])?.number).toBe(150);
+});
+
+// ---- the proposal pull request (ship-proposals-as-docs-prs) ----
+
+test("an open proposal pull request is linked to its change, marked as the proposal's", () => {
+  const proposal = pr({ number: 90, head: "docs/rotate-keys" });
+  const linked = linkedPullRequest(named("rotate-keys"), [list("alpha", [proposal])]);
+  expect(linked?.number).toBe(90);
+  expect(isProposalPullRequest(named("rotate-keys"), linked)).toBe(true);
+});
+
+test("once the proposal merged, an open implementation pull request is shown, not marked", () => {
+  const proposal = pr({ number: 90, head: "docs/rotate-keys", state: "merged", mergedAt: at(5) });
+  const implementation = pr({ number: 94, head: "feat/rotate-keys", createdAt: at(2) });
+  const linked = linkedPullRequest(named("rotate-keys"), [list("alpha", [proposal, implementation])]);
+  expect(linked?.number).toBe(94);
+  expect(isProposalPullRequest(named("rotate-keys"), linked)).toBe(false);
+  expect(isProposalPullRequest(named("rotate-keys"), undefined)).toBe(false);
+});
+
+test("a proposal branch is compared exactly: containment is still not a match", () => {
+  expect(linkedPullRequest(named("rotate"), [list("alpha", [pr({ number: 90, head: "docs/rotate-keys" })])])).toBeUndefined();
+  expect(isProposalPullRequest(named("rotate"), pr({ number: 90, head: "docs/rotate-keys" }))).toBe(false);
 });

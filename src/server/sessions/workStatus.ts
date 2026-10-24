@@ -163,7 +163,9 @@ export async function readWorkStatus(repoPath: string, worktreePath: string): Pr
 
 /** The inverse of `worktreeName` in the manager, for worktrees whose session record is gone. */
 export function changeOfWorktree(name: string): { change: string; action: SessionAction } {
-  return name.startsWith("archive-") ? { change: name.slice("archive-".length), action: "archive" } : { change: name, action: "implement" };
+  if (name.startsWith("archive-")) return { change: name.slice("archive-".length), action: "archive" };
+  if (name.startsWith("docs-")) return { change: name.slice("docs-".length), action: "draft" };
+  return { change: name, action: "implement" };
 }
 
 const latest = (a?: string, b?: string) => (!a ? b : !b ? a : a > b ? a : b);

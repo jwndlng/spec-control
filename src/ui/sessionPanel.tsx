@@ -4,7 +4,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { SHIPPABLE_WORK, type ChangeSnapshot, type ChangeSession, type Session, type SessionAction, type SessionWorktree, type Shortcut } from "../shared/types.ts";
+import { SESSION_ACTIONS, SHIPPABLE_WORK, type ChangeSnapshot, type ChangeSession, type Session, type SessionAction, type SessionWorktree, type Shortcut } from "../shared/types.ts";
 import type { PullRequestStep } from "../shared/nextStep.ts";
 import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { api, type TerminalMessage } from "./api.ts";
@@ -281,8 +281,10 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   // `card`, the change as the snapshot has it, is also what the next steps and the empty state's starters are decided from.
   // Every starter the change's stage allows — Archive included — but only in the panel of the session that would
   // receive it, which is the change's running one. An ended session's panel offers none: nothing can be typed there.
-  const receiving = session !== undefined && nextStepFor(ui.sessions, session.repoId, session.change).promptSessionId === session.id;
-  const nextSteps = receiving && card ? startersFor(ui.config, card) : [];
+  // A proposal session receives Draft only, so each step is offered in the panel of the session it would go to.
+  const receives = (action: SessionAction) => session !== undefined && nextStepFor(ui.sessions, session.repoId, session.change, action).promptSessionId === session.id;
+  const receiving = SESSION_ACTIONS.some(receives);
+  const nextSteps = receiving && card ? startersFor(ui.config, card).filter(receives) : [];
   // The change's pull request decides which of them is recommended, as on its card; it never adds or removes one.
   const linked = card ? linkedPullRequest(card, prs.data?.repos) : undefined;
   const split = receiving && card ? starterSplit(card, nextSteps, linked) : undefined;

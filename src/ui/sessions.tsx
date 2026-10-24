@@ -8,6 +8,7 @@ import { FastForwardDialog, type FastForwardChoice } from "./fastForwardDialog.t
 import { cdCommand, relTime } from "./format.ts";
 import { assignRepoHues, repoTint } from "./repoGroups.ts";
 import { type NextStep, type PullRequestStep, waitingLabel } from "../shared/nextStep.ts";
+import { isProposalPullRequest } from "../shared/pullRequestLink.ts";
 import { ActionMenu, type ActionItem, type ActionStatus } from "./actionMenu.tsx";
 import { afterStart, agentForRepo, type AutoMergeReport, cardSessionControls, conflictBadge, openWork, pullRequestSession, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, startersFor, starterSplit, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
 import { boardFrom, changePath, CONSOLE_TAB, parseDetailQuery, routeFromPath, serializeDetailQuery } from "./routes.ts";
@@ -183,7 +184,7 @@ export function SessionProvider({
         }
       }
       try {
-        const into = options?.carryOver || options?.resolveConflicts ? undefined : nextStepFor(sessions, repoId, change).promptSessionId;
+        const into = options?.carryOver || options?.resolveConflicts ? undefined : nextStepFor(sessions, repoId, change, action).promptSessionId;
         const session = into ? await api.promptSession(into, action) : await api.openSession(repoId, change, action, options);
         reportAutoMerge((current) => afterStart(current, session.id, session.autoMerge));
         if (into) {
@@ -390,14 +391,16 @@ const STARTER_HINT: Record<SessionAction, string> = {
 /** Draft in `Ready` is for what implementing does not need; it says so wherever it is offered. */
 const DRAFT_READY_HINT = "Start an agent in a terminal to write the artifacts not required for implementing, such as a design";
 const STEP_LABEL: Record<PullRequestStep, string> = { merge: "⤵ Merge", resolveConflicts: "⚠ Resolve conflicts", fixChecks: "Fix checks" };
+/** The same steps for the change's proposal pull request, which the card names as such (kanban-board). */
+const PROPOSAL_STEP_LABEL: Record<PullRequestStep, string> = { merge: "⤵ Merge proposal", resolveConflicts: "⚠ Resolve proposal conflicts", fixChecks: "Fix proposal checks" };
 
 function starterHint(action: SessionAction, stage: ChangeSnapshot["stage"]): string {
   return action === "draft" && stage === "ready" ? DRAFT_READY_HINT : STARTER_HINT[action];
 }
 
 /** What a pull-request step does where no running session can be sent a prompt: it leads to the session, or to GitHub. */
-function pullRequestItem(step: PullRequestStep, pr: PullRequest, target: ChangeSession | undefined, open: (sessionId?: string) => void): ActionItem {
-  const label = STEP_LABEL[step];
+function pullRequestItem(step: PullRequestStep, pr: PullRequest, target: ChangeSession | undefined, open: (sessionId?: string) => void, proposal = false): ActionItem {
+  const label = (proposal ? PROPOSAL_STEP_LABEL : STEP_LABEL)[step];
   if (step === "merge" && !target) return { key: step, label, href: pr.url, title: `#${pr.number} is ready: opens it on GitHub, in a new tab` };
   const where = target ? `the Console tab of ${target.branch}` : "the Console tab";
   const title =
@@ -443,11 +446,13 @@ export function SessionControls({
 
   const controls = cardSessionControls(ui.config, ui.sessions, { ...card, pullRequest });
   const shown = into ? [] : controls.shown;
-  const { main, menu } = into ? starterSplit(card, startersFor(ui.config, card), pullRequest) : controls;
+  // Sent into `into`: only what that session receives — a proposal session takes Draft alone (`nextStepFor`).
+  const { main, menu } = into ? starterSplit(card, startersFor(ui.config, card).filter((a) => nextStepFor(ui.sessions, into.repoId, into.change, a).promptSessionId === into.id), pullRequest) : controls;
   const agent = agentForRepo(ui.config, card.repoId);
   const found = ui.agents.find((a) => a.id === agent?.id);
   const unavailable = !into && found && !found.available ? `${found.name} was not found on this machine — check its command in Settings` : undefined;
   const target = pullRequestSession(ui.sessions, card, pullRequest);
+  const proposal = isProposalPullRequest(card, pullRequest);
 
   const starterItem = (action: SessionAction, isMain: boolean): ActionItem => {
     const hint = into ? `Sends the “${STARTER_LABEL[action]}” prompt to this session’s agent` : `${starterHint(action, card.stage)} (${agent?.name})`;
@@ -469,10 +474,10 @@ export function SessionControls({
   };
   const item = (next: NextStep, isMain: boolean): ActionItem | ActionStatus | undefined => {
     if (next.kind === "start") return starterItem(next.action, isMain);
-    if (next.kind === "waiting") return { status: waitingLabel(next.reason), title: "The pull request is not ready yet; every action is still in the menu" };
+    if (next.kind === "waiting") return { status: waitingLabel(next.reason, proposal), title: "The pull request is not ready yet; every action is still in the menu" };
     if (!pullRequest) return undefined;
     if (into) return steps?.[next.step];
-    return pullRequestItem(next.step, pullRequest, target, (sessionId) => ui.openChangeConsole(card.repoId, card.name, sessionId));
+    return pullRequestItem(next.step, pullRequest, target, (sessionId) => ui.openChangeConsole(card.repoId, card.name, sessionId), proposal);
   };
   const mainPart = main ? item(main, true) : undefined;
   const items = menu.map((m) => item(m, false)).filter((m): m is ActionItem => m !== undefined && !("status" in m));

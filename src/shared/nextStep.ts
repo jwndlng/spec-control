@@ -92,14 +92,15 @@ export function menuActions(
   return items;
 }
 
-/** The waiting label, in words. */
-export function waitingLabel(reason: WaitingReason): string {
+/** The waiting label, in words; `proposal` when the pull request is the change's proposal pull request. */
+export function waitingLabel(reason: WaitingReason, proposal = false): string {
+  const of = proposal ? "proposal " : "";
   switch (reason) {
     case "draft":
-      return "Waiting: draft pull request";
+      return `Waiting: draft ${of}pull request`;
     case "checks running":
-      return "Waiting: checks running";
+      return `Waiting: ${of}checks running`;
     case "mergeability unknown":
-      return "Waiting: mergeability unknown";
+      return `Waiting: ${of}mergeability unknown`;
   }
 }

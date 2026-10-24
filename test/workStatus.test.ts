@@ -108,6 +108,7 @@ test("without a remote the main checkout is the base; a missing directory is mis
   expect((await readWorkStatus(repo, join(wt, "nope"))).work.state).toBe("missing");
   expect(changeOfWorktree("archive-add-x")).toEqual({ change: "add-x", action: "archive" });
   expect(changeOfWorktree("add-x")).toEqual({ change: "add-x", action: "implement" });
+  expect(changeOfWorktree("docs-add-x")).toEqual({ change: "add-x", action: "draft" });
 });
 
 test("reading the status writes nothing: a stale index stays byte for byte", async () => {
