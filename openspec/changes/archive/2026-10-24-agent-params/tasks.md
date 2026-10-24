@@ -20,4 +20,4 @@
 ## 4. Verification
 
 - [x] 4.1 Run `bun run check` and `bunx openspec validate agent-params --strict`, both passing
-- [~] 4.2 Build with `bun run build`, add `--mode`, `auto` to an Antigravity (or a stand-in) profile in Settings, start a console and a change session, and check the agent's process arguments (`ps -o args`) include them right after the executable
+- [x] 4.2 Build with `bun run build`, add `--mode`, `auto` to an Antigravity (or a stand-in) profile in Settings, start a console and a change session, and check the agent's process arguments (`ps -o args`) include them right after the executable
