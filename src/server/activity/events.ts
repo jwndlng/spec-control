@@ -32,6 +32,8 @@ export interface DiffOptions {
 type Draft = ActivityEvent extends infer E ? (E extends ActivityEvent ? Omit<E, "v" | "id" | "at" | "detectedAt" | "repoId" | "repoName" | "catchUp"> : never) : never;
 
 const sameTasks = (a: TaskProgress | null, b: TaskProgress | null) => (a?.done ?? -1) === (b?.done ?? -1) && (a?.total ?? -1) === (b?.total ?? -1);
+/** The counts only: the `[~]` tasks' text (`awaitingTasks`) is the repository's current state, not history to keep. */
+const taskCounts = ({ awaitingTasks: _text, ...counts }: TaskProgress): TaskProgress => counts;
 const tasksOf = (c: ChangeSnapshot) => (c.tasks ? { tasks: { done: c.tasks.done, total: c.tasks.total } } : {});
 const openChanges = (repo: RepoSnapshot) => repo.changes.filter((c) => !c.archived).length;
 
@@ -86,7 +88,7 @@ export function diffSnapshots(previous: Snapshot, next: Snapshot, options: DiffO
       if (!old.archived && change.archived) emit(repo, { kind: "change-archived", change: change.name, from: old.column }, change);
       else if (old.column !== change.column) emit(repo, { kind: "change-moved", change: change.name, from: old.column, to: change.column, ...tasksOf(change) }, change);
       else if (!change.archived && change.tasks && old.tasks && !sameTasks(old.tasks, change.tasks)) {
-        emit(repo, { kind: "tasks-progress", change: change.name, column: change.column, from: { ...old.tasks }, to: { ...change.tasks } }, change);
+        emit(repo, { kind: "tasks-progress", change: change.name, column: change.column, from: taskCounts(old.tasks), to: taskCounts(change.tasks) }, change);
       }
     }
     for (const old of was.changes) {

@@ -32,6 +32,14 @@ test("task progress within a column; moved and progressed at once is one move", 
   ]);
 });
 
+test("task progress keeps the counts, never the text of the tasks that need the user", () => {
+  const before = snap(T0, [repo("r1", "demo-ops", [change("a", "Implementing", { tasks: { done: 3, awaiting: 1, awaitingTasks: ["Check it"], total: 12 } })])]);
+  const after = snap(T0 + MIN, [repo("r1", "demo-ops", [change("a", "Implementing", { tasks: { done: 7, awaiting: 2, awaitingTasks: ["Check it", "Sign in"], total: 12 } })])]);
+  expect(brief(diff(before, after))).toEqual([
+    { kind: "tasks-progress", repoName: "demo-ops", change: "a", column: "Implementing", from: { done: 3, awaiting: 1, total: 12 }, to: { done: 7, awaiting: 2, total: 12 } },
+  ]);
+});
+
 test("created, archived and removed", () => {
   const before = snap(T0, [repo("r1", "demo-ops", [change("bump-toolchain", "Done"), change("old-idea", "Backlog")])]);
   const after = snap(T0 + MIN, [repo("r1", "demo-ops", [change("add-login", "Backlog"), change("bump-toolchain", "Archived", { archived: "2026-09-21", stage: "archived" })])]);

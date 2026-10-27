@@ -21,17 +21,17 @@ test("other cards count tasks when there are any; Backlog shows no bar", () => {
   expect(cardProgress({ stage: "backlog", artifacts: A(false, false, false, false), tasks: null })).toBeUndefined();
 });
 
-test("a task awaiting validation is its own segment, named in the label, tooltip and accessible name", () => {
+test("a task that needs the user is its own segment, named in the label, tooltip and accessible name", () => {
   const card = { stage: "done" as const, artifacts: A(true, true, true, true), tasks: { done: 13, awaiting: 2, total: 15 } };
   expect(cardProgress(card)).toEqual({ done: 13, awaiting: 2, total: 15, unit: "tasks" });
-  expect(meterText(13, 2 + 13, "tasks", 2)).toBe("13 of 15 tasks complete, 2 awaiting validation, 0 open");
-  expect(meterText(4, 12, "tasks", 3)).toBe("4 of 12 tasks complete, 3 awaiting validation, 5 open");
+  expect(meterText(13, 2 + 13, "tasks", 2)).toBe("13 of 15 tasks complete, 2 need the user, 0 open");
+  expect(meterText(4, 12, "tasks", 3)).toBe("4 of 12 tasks complete, 3 need the user, 5 open");
 
   const meter = Meter({ done: 13, total: 15, awaiting: 2, showUnit: true });
-  const text = "13 of 15 tasks complete, 2 awaiting validation, 0 open";
+  const text = "13 of 15 tasks complete, 2 need the user, 0 open";
   expect(meter.props).toMatchObject({ title: text, "aria-label": text, role: "progressbar", "aria-valuenow": 13, "aria-valuemax": 15 });
   expect(String(meter.props.class)).toContain("has-awaiting");
-  expect(textOf(meter)).toBe("13 + 2 awaiting / 15 Tasks");
+  expect(textOf(meter)).toBe("13 + 2 need you / 15 Tasks");
   // Three parts: the done tasks filled, the awaiting ones between them and the remainder.
   const segments = byTag(meter, "div").filter((d) => d.props.class === "fill" || d.props.class === "awaiting");
   expect(segments.map((d) => [d.props.class, (d.props.style as { width: string }).width])).toEqual([["fill", "87%"], ["awaiting", "13%"]]);

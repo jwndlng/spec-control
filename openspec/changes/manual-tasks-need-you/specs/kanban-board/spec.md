@@ -71,3 +71,39 @@ The branch badge in the repository board header MUST NOT extend beyond its conta
 - **WHEN** a change has `tasks` `done: 4, awaiting: 0, total: 12`
 - **THEN** its card shows no **Needs you** badge and a two-part bar labelled `4/12 Tasks`
 
+### Requirement: Cards offer Show details
+Each card SHALL offer a **Show details** action that opens its change's detail view, carrying the board it sits on and that board's filters so the detail view can lead back to them. The action SHALL be a link: opening it in a new tab or window SHALL land on the same detail view, and activating it with the keyboard SHALL open the detail view in the current tab.
+
+**Show details** SHALL be the only part of a card that navigates to the detail view, apart from the **Console** quick link, the session badge and the **Needs you** badge, which opens the detail view on the change's tasks ("Cards show only what an overview needs"). Whenever agent sessions apply to the card's repository — agent sessions on and the repository not excluded — the card SHALL show the console quick link in its top right corner, whether or not the change has a session or a session worktree, so the way into a change's terminal is always in the same place; it SHALL open the change's detail view directly on its Console tab, carrying the board like **Show details** does. The quick link is an icon; its tooltip and accessible name SHALL say that it opens the agent console of the named change. When agent sessions do not apply to the repository the card SHALL show no console quick link. The card as a whole MUST NOT be a link, and the change name MUST NOT be one; clicking a card's background, any other badge or its progress bar MUST NOT navigate anywhere. The session starters keep their own behaviour.
+
+#### Scenario: Opening a change
+- **WHEN** the user activates **Show details** on the card of change `multi-tenant-sync`
+- **THEN** the detail view of `multi-tenant-sync` is shown
+
+#### Scenario: Card background does not navigate
+- **WHEN** the user clicks the card's background, its change name, its progress bar or its age badge
+- **THEN** nothing is opened and the board stays as it is
+
+#### Scenario: The Needs you badge leads to the tasks
+- **WHEN** the user activates the **Needs you** badge on the card of change `multi-tenant-sync`
+- **THEN** the detail view of `multi-tenant-sync` is shown on its tasks, and closing it returns to the board with its filters
+
+#### Scenario: New tab
+- **WHEN** the user middle-clicks or ⌘-clicks **Show details**
+- **THEN** a new tab opens on that change's detail view
+
+#### Scenario: Keyboard
+- **WHEN** the user tabs to a card and presses Enter
+- **THEN** the detail view for that change is shown
+
+#### Scenario: Console quick link
+- **WHEN** the change `multi-tenant-sync` has a running session and the user activates the console link on its card
+- **THEN** the detail view of `multi-tenant-sync` opens on its Console tab, and closing it returns to the board with its filters
+
+#### Scenario: The link is there before any session
+- **WHEN** a change in a repository with agent sessions enabled has neither a session nor a session worktree
+- **THEN** its card still shows the console quick link at the top right, in the same place as every other card's, and activating it opens that change's Console tab
+
+#### Scenario: No console, no link
+- **WHEN** agent sessions are disabled, or the card's repository is excluded from them
+- **THEN** its card shows no console quick link

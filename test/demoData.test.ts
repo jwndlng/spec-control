@@ -7,6 +7,8 @@ import { availableActions } from "../src/shared/types.ts";
 import { buildActivity, buildPullRequests, buildSample, DEMO_AGENT, DEMO_ROOT } from "../src/ui/demo/sampleData.ts";
 import { pageEvents, retained } from "../src/shared/activity.ts";
 import { DAY_COLLAPSE_ABOVE, groupByDay } from "../src/ui/activityState.ts";
+import { awaitingTaskTexts, taskProgress } from "../src/ui/changeDetail.tsx";
+import { sampleArtifactFiles } from "../src/ui/demo/sampleArtifacts.ts";
 import { meterText } from "../src/ui/kanban.tsx";
 import { pullRequestEntries } from "../src/ui/pullRequestsState.ts";
 import { startersFor } from "../src/ui/sessionState.ts";
@@ -125,7 +127,7 @@ test("the sample shows worktree-agnostic changes: one that lives in a worktree a
   }
 });
 
-test("the demo shows a change in Done awaiting validation, with a Validate prompt on its agent", () => {
+test("the demo shows a change in Done whose tasks need the user, with a Validate prompt on its agent", () => {
   const validating = changes.filter((c) => (c.tasks?.awaiting ?? 0) > 0);
   expect(validating.length).toBeGreaterThan(0);
   for (const c of validating) {
@@ -138,9 +140,14 @@ test("the demo shows a change in Done awaiting validation, with a Validate promp
   // The starters are only offered because the demo's agent has a prompt for each.
   expect(DEMO_AGENT.prompts.validate).toBeDefined();
   expect(startersFor({ ...sample.config, repos: sample.config.repos }, { ...validating[0] })).toEqual(["validate", "archive"]);
-  // The card's bar names the awaiting count in words, not by colour alone.
-  const { done, awaiting, total } = validating[0].tasks!;
-  expect(meterText(done, total, "tasks", awaiting)).toContain(`${awaiting} awaiting validation`);
+  // The card's bar names the count in words, not by colour alone, and the card can say what the user has to do.
+  const { done, awaiting, awaitingTasks, total } = validating[0].tasks!;
+  expect(meterText(done, total, "tasks", awaiting)).toContain(`${awaiting} need the user`);
+  expect(awaitingTasks?.length).toBe(awaiting);
+  // The demo's tasks.md agrees with the scan: the same `- [~]` lines, worded the same.
+  const file = sampleArtifactFiles(validating[0]).tasks["tasks.md"];
+  expect(taskProgress(file)).toEqual({ done, awaiting, total });
+  expect(awaitingTaskTexts(file)).toEqual(awaitingTasks!);
 });
 
 test("the demo shows a change in Ready without a design: the spec-driven schema requires only tasks", () => {
