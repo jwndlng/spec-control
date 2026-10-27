@@ -23,4 +23,4 @@
 
 - [x] 4.1 Update `src/ui/helpContent.tsx`: what `- [~]` means (needs you: check or do), the column texts for `Implementing` and `Done`, and the Needs you badge
 - [x] 4.2 Add a What's new entry at the top of `src/ui/changelog.ts` (see "What's new" in CONTRIBUTING.md)
-- [ ] 4.3 `bun run check` passes
+- [x] 4.3 `bun run check` passes
