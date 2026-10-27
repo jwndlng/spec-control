@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-27-one-console-per-change",
+    date: "2026-10-27",
+    title: "One console per change, the proposal's included",
+    summary:
+      "A change's proposal session no longer runs beside its Implement session. Its console now offers **End proposal session and implement**, which ends it — keeping its worktree and branch — and starts Implement; the proposal's pull request is then handed to the Implement session to merge once it is ready.",
+  },
+  {
     id: "2026-10-24-remove-duplicate-archived-changes",
     date: "2026-10-24",
     title: "Remove a change left committed next to its archive",

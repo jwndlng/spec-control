@@ -422,16 +422,18 @@ test("a proposal pull request is labelled as such on the card and in the detail 
   expect(textOf(DetailPullRequest({ info: implHeader }))).not.toContain("Proposal");
 });
 
-test("while only the proposal session runs, the card still offers Implement", () => {
+test("while the proposal session runs, the card shows its badge and no starter; once it ended, Implement", () => {
   const ready = boardCards([{ ...repo([change({ repoId: sessionRepo.id, name: "rotate-keys", branchMatch: undefined, stage: "ready", column: "Ready" })]), id: sessionRepo.id }], new Map([[sessionRepo.id, 120]]))[0];
   const running = { ...ended, change: "rotate-keys", action: "draft" as const, state: "running" as const, exitCode: undefined };
   const proposal = { ...running, id: "p", branch: "docs/rotate-keys" };
   const implement = { ...running, id: "i", action: "implement" as const, branch: "feat/rotate-keys" };
-  expect(cardSessionControls(sessionsOn, [proposal], ready)).toMatchObject({ shown: [proposal], starters: ["implement"], main: { kind: "start", action: "implement" } });
-  expect(cardSessionControls(sessionsOn, [{ ...proposal, branch: "feat/rotate-keys" }], ready).starters).toEqual([]);
+  // One console per change (one-console-per-change): its next step is in its console, which ends it first.
+  expect(cardSessionControls(sessionsOn, [proposal], ready)).toMatchObject({ shown: [proposal], starters: [], menu: [] });
+  expect(cardSessionControls(sessionsOn, [proposal], ready).main).toBeUndefined();
   expect(cardSessionControls(sessionsOn, [implement, proposal], ready).starters).toEqual([]);
-  // The proposal pull request's checks run: the recommended step waits, and says whose checks.
-  const waiting = cardSessionControls(sessionsOn, [proposal], { ...ready, pullRequest: pr({ number: 90, head: "docs/rotate-keys", checks: "pending" }) });
+  // The proposal session ended and the proposal pull request's checks run: the recommended step waits, and says whose checks.
+  const left = { ...proposal, state: "exited" as const, exitCode: 0 };
+  const waiting = cardSessionControls(sessionsOn, [left], { ...ready, pullRequest: pr({ number: 90, head: "docs/rotate-keys", checks: "pending" }) });
   expect(waiting.main).toEqual({ kind: "waiting", reason: "checks running" });
   expect(waiting.menu).toEqual([{ kind: "start", action: "implement" }]);
   expect(waitingLabel("checks running", true)).toBe("Waiting: proposal checks running");

@@ -3,7 +3,7 @@ import { defaultAgentSessions, defaultConfig, newRepoConfig, validateConfig } fr
 import { agentEnv, agentFor, carryOverPrompt, fastForwardPrompt, integratePrompt, proposalInstruction, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, resumeLaunch, shipPrompt } from "../src/server/sessions/agents.ts";
 import { Scrollback, sessionBranch, worktreeName } from "../src/server/sessions/manager.ts";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE, CODEX_PROFILE, DEFAULT_SHORTCUTS, FORMER_PROMPTS } from "../src/shared/agentDefaults.ts";
-import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, availableActions, pastDraftingReason, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, mergeTargetSentence, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
+import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, availableActions, pastDraftingReason, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, mergeTargetSentence, proposalHandoverSentence, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
 import { agentForRepo, cardIsLive, cardSessionControls, NEEDS_YOU_AFTER_MS, parseArgLines, sessionBadge, sessionForChange, sessionsEnabledFor, silenceDuration, slugId, startersFor } from "../src/ui/sessionState.ts";
 import { openSpec } from "../src/server/frameworks/openspec/index.ts";
 import { fakeProfile } from "./sessionHelpers.ts";
@@ -291,6 +291,14 @@ test("Merge: the default prompt, then the sentence naming the pull request and i
   expect(prompt).not.toMatch(/[\r\n]/);
   // Agent-neutral: it names the host's GitHub CLI and no agent vendor.
   expect(DEFAULT_MERGE_PROMPT).not.toMatch(/claude|codex|antigravity/i);
+});
+
+test("Merge: a handed-over proposal pull request gets one more sentence naming docs/<change>, after the Merge sentence", () => {
+  const prompt = mergePrompt(fakeProfile(), "rotate-keys", { pr: 90, head: HEAD, proposal: true });
+  expect(prompt).toBe(`${DEFAULT_MERGE_PROMPT.replaceAll("{change}", "rotate-keys")} ${mergeTargetSentence(90, HEAD)} ${proposalHandoverSentence("docs/rotate-keys")}`);
+  expect(prompt).toEndWith("This pull request is the change's proposal from branch docs/rotate-keys, not the branch of this worktree.");
+  expect(prompt).not.toMatch(/[\r\n]/);
+  expect(mergePrompt(fakeProfile(), "rotate-keys", { pr: 90, head: HEAD })).not.toContain("proposal from branch");
 });
 
 test("Merge: a profile's own prompt with {change}, its additional instructions, and nothing after the sentence", () => {

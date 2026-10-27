@@ -528,6 +528,8 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
       }
       if (req.method === "POST") {
         const body = await readJson(req);
+        // Ending the proposal session first is an explicit yes or no, never something merely truthy.
+        if (body.endProposal !== undefined && typeof body.endProposal !== "boolean") return json({ error: "endProposal must be a boolean" }, 400);
         // Resolve conflicts reads the repository's cached pull-request list — never a query — and nothing else does.
         return json(await sessions.open(body, body.resolveConflicts === true ? await cachedPullRequests(state, body.repoId) : undefined), 201);
       }

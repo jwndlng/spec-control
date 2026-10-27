@@ -4,7 +4,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { SESSION_ACTIONS, SHIPPABLE_WORK, type ChangeSnapshot, type ChangeSession, type Session, type SessionAction, type SessionWorktree, type Shortcut } from "../shared/types.ts";
+import { SHIPPABLE_WORK, type ChangeSnapshot, type ChangeSession, type Session, type SessionAction, type SessionWorktree, type Shortcut } from "../shared/types.ts";
 import type { PullRequestStep } from "../shared/nextStep.ts";
 import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { api, type TerminalMessage } from "./api.ts";
@@ -12,7 +12,7 @@ import { cdCommand } from "./format.ts";
 import { inPlaceReason } from "./inPlaceText.ts";
 import { NOT_SUBMITTED_NOTICE, shortcutHint, shortcutMessage, visibleShortcuts } from "./quickReplies.ts";
 import { usePullRequests } from "./pullRequests.tsx";
-import { autoEndedText, autoMergeNotice, conflictAction, mergeControl, mergeNotice, nextStepFor, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, sessionsEnabledFor, startersFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
+import { autoEndedText, autoMergeNotice, conflictAction, consoleSteps, handedOverProposal, mergeControl, mergeNotice, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, sessionsEnabledFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
 import { ConflictBadge, SessionBadgeView, SessionControls, useSessionUi } from "./sessions.tsx";
 
 export function Copy({ text, label }: { text: string; label: string }) {
@@ -275,19 +275,19 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   const card = repoId && change ? ui.snapshot?.repos.find((r) => r.id === repoId)?.changes.find((c) => c.name === change && !c.archived) : undefined;
   const canResolve = resolvable(session, tree, card ? linkedPullRequest(card, prs.data?.repos) : undefined, prs.data?.repos.find((r) => r.repoId === repoId)?.fetchedAt);
   const merged = tree?.work.state === "merged";
-  // Merge: the session's open pull request, from the lists the page already holds (agent-merges-docs-prs D7).
-  const merge = mergeControl(session, prs.data?.repos);
-  const pendingMerge = mergeNotice(session, merge?.pr);
+  // Merge: the session's open pull request, from the lists the page already holds (agent-merges-docs-prs D7) — or the
+  // proposal's, handed to the change's running session once the proposal session ended (one-console-per-change D3).
+  const merge = mergeControl(session, prs.data?.repos, handedOverProposal(session, ui.sessions, ui.worktrees));
+  const pendingMerge = mergeNotice(merge?.recordedOn ?? session, merge?.pr);
   // `card`, the change as the snapshot has it, is also what the next steps and the empty state's starters are decided from.
   // Every starter the change's stage allows — Archive included — but only in the panel of the session that would
   // receive it, which is the change's running one. An ended session's panel offers none: nothing can be typed there.
-  // A proposal session receives Draft only, so each step is offered in the panel of the session it would go to.
-  const receives = (action: SessionAction) => session !== undefined && nextStepFor(ui.sessions, session.repoId, session.change, action).promptSessionId === session.id;
-  const receiving = SESSION_ACTIONS.some(receives);
-  const nextSteps = receiving && card ? startersFor(ui.config, card).filter(receives) : [];
+  // A proposal session receives Draft only and offers every other step as ending it first (`consoleSteps`).
+  const steps = session && card ? consoleSteps(ui.config, ui.sessions, card, session) : undefined;
+  const receiving = steps !== undefined;
   // The change's pull request decides which of them is recommended, as on its card; it never adds or removes one.
   const linked = card ? linkedPullRequest(card, prs.data?.repos) : undefined;
-  const split = receiving && card ? starterSplit(card, nextSteps, linked) : undefined;
+  const split = steps && card ? starterSplit(card, [...steps.into, ...steps.endFirst], linked) : undefined;
   // A pull-request step the split button offers is not offered a second time beside it.
   const inSplit = (step: PullRequestStep) => split !== undefined && [split.main, ...split.menu].some((n) => n?.kind === "pullRequest" && n.step === step);
   // Nothing has ever run for this change: the tab says so and offers the openings, which is why it exists at all.

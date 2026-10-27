@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
-import type { ChangeSession, ChangeSnapshot, PullRequest } from "../src/shared/types.ts";
-import { cardSessionControls, pullRequestSession } from "../src/ui/sessionState.ts";
+import type { ChangeSession, ChangeSnapshot, PullRequest, SessionWorktree } from "../src/shared/types.ts";
+import { cardSessionControls, consoleSteps, endProposalConfirmation, handedOverProposal, mergeControl, mergeNotice, pullRequestSession } from "../src/ui/sessionState.ts";
 import { fakeProfile } from "./sessionHelpers.ts";
 
 // The split button a card shows (kanban-board: "A change's actions are one split button"), as the pure rule the card
@@ -79,4 +79,59 @@ test("Merge leads to the session whose branch heads the pull request, else to no
   expect(pullRequestSession([mine], card({ name: "other" }), pr())).toBeUndefined();
   expect(pullRequestSession([mine], card(), undefined)).toBeUndefined();
   expect(cardSessionControls(config, [], card({ stage: "done", pullRequest: pr() })).main).toEqual({ kind: "pullRequest", step: "merge" });
+});
+
+// One console per change (one-console-per-change): the proposal session on docs/<change> is a running session like any
+// other on the card, and its console offers the next steps as ending it first.
+const proposal = (patch: Partial<ChangeSession> = {}) =>
+  session({ id: "p1", action: "draft", branch: "docs/rotate-keys", worktreePath: "/w/docs-rotate-keys", state: "running", exitCode: undefined, autoMergeAskedAt: "2026-10-01T09:05:00Z", ...patch });
+const worktree = (path: string, state: SessionWorktree["work"]["state"]): SessionWorktree => ({ repoId: repo.id, change: "rotate-keys", action: "draft", name: path.split("/").pop() as string, path, work: { state } });
+
+test("a running proposal session's card shows its badge and no starter", () => {
+  const controls = cardSessionControls(config, [proposal()], card({ artifacts: artifacts("ready") }));
+  expect(controls.shown.map((s) => s.id)).toEqual(["p1"]);
+  expect([controls.starters, controls.main, controls.menu]).toEqual([[], undefined, []]);
+});
+
+test("a proposal console in Ready recommends Implement, as ending the proposal session first", () => {
+  const running = proposal();
+  const steps = consoleSteps(config, [running], card({ artifacts: artifacts("ready") }), running);
+  expect(steps).toEqual({ into: ["draft"], endFirst: ["implement"] });
+  // In Drafts it offers Draft alone, sent into it; Fast-forward never ends it.
+  expect(consoleSteps(config, [running], card({ stage: "drafts", artifacts: [{ id: "proposal", status: "ready" as const, required: true }] }), running)?.endFirst).not.toContain("fastForward");
+  // Any other running session takes every step itself, and an ended one takes none.
+  const impl = session({ state: "running", exitCode: undefined });
+  expect(consoleSteps(config, [impl], card({ artifacts: artifacts("ready") }), impl)).toEqual({ into: ["draft", "implement"], endFirst: [] });
+  expect(consoleSteps(config, [session()], card(), session())).toBeUndefined();
+});
+
+test("ending the proposal session asks once only while the proposal is not pushed", () => {
+  expect(endProposalConfirmation(worktree("/w/docs-rotate-keys", "uncommitted"))).toContain("not pushed yet");
+  expect(endProposalConfirmation(worktree("/w/docs-rotate-keys", "unpushed"))).toContain("worktree and its branch are kept");
+  for (const state of ["clean", "pushed", "merged", "missing"] as const) expect(endProposalConfirmation(worktree("/w/docs-rotate-keys", state))).toBeUndefined();
+  expect(endProposalConfirmation(undefined)).toBeUndefined();
+});
+
+test("the running session's panel offers Merge for the handed-over proposal pull request", () => {
+  const ended = proposal({ state: "exited", exitCode: 0 });
+  const impl = session({ id: "i1", state: "running", exitCode: undefined, createdAt: "2026-10-01T10:00:00Z" });
+  const trees = [worktree("/w/docs-rotate-keys", "pushed")];
+  const ready = pr({ number: 90, head: "docs/rotate-keys", headOid: "c0ffee1".padEnd(40, "0") });
+  const lists = [{ repoId: repo.id, status: "ok" as const, pullRequests: [ready] }];
+
+  expect(handedOverProposal(impl, [ended, impl], trees)?.id).toBe("p1");
+  const merge = mergeControl(impl, lists, handedOverProposal(impl, [ended, impl], trees));
+  expect(merge).toMatchObject({ enabled: true, pr: { number: 90 }, recordedOn: { id: "p1" }, title: expect.stringContaining("the proposal's pull request #90 (from docs/rotate-keys)") });
+  // The pending wording reads the proposal session's record.
+  const asked = { ...ended, mergeAsked: { pr: 90, head: ready.headOid as string, at: "2026-10-01T10:05:00Z", submitted: true, by: "dashboard" as const } };
+  expect(mergeNotice(mergeControl(impl, lists, asked)?.recordedOn, ready)?.text).toBe("Asked the agent to merge #90 at c0ffee1.");
+
+  // Not handed over: its worktree is gone, it was ended by the dashboard, it carries no record, or two sessions run.
+  expect(handedOverProposal(impl, [ended, impl], [])).toBeUndefined();
+  expect(handedOverProposal(impl, [proposal({ state: "exited", autoEnded: { pr: 90, at: "x", removed: true } }), impl], trees)).toBeUndefined();
+  expect(handedOverProposal(impl, [proposal({ state: "exited", autoMergeAskedAt: undefined }), impl], trees)).toBeUndefined();
+  expect(handedOverProposal(impl, [proposal(), impl], trees)).toBeUndefined();
+  // Its own branch's pull request comes first.
+  const own = pr({ number: 91, headOid: "b".repeat(40) });
+  expect(mergeControl(impl, [{ repoId: repo.id, status: "ok" as const, pullRequests: [own, ready] }], ended)).toMatchObject({ pr: { number: 91 }, recordedOn: { id: "i1" } });
 });
