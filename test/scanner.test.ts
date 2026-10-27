@@ -36,12 +36,12 @@ test("scans a fixture repo: artifacts, tasks, archive dates, columns", async () 
 
   // All three checkbox states end to end: `[~]` is counted in `total` and in `awaiting`, never in `done`.
   const awaiting = byName.get("verify-rollout")!;
-  expect(awaiting.tasks).toEqual({ done: 3, awaiting: 2, total: 6 });
+  expect(awaiting.tasks).toEqual({ done: 3, awaiting: 2, awaitingTasks: ["1.4 Check step 3 in the browser", "1.5 Check step 3 in the packaged build"], total: 6 });
   expect(awaiting.column).toBe("Implementing");
 
   // Every task settled with two awaiting a person: the done column, sub-state `validate`.
   const validating = byName.get("confirm-retention")!;
-  expect(validating.tasks).toEqual({ done: 4, awaiting: 2, total: 6 });
+  expect(validating.tasks).toEqual({ done: 4, awaiting: 2, awaitingTasks: ["1.5 Check the retention window in the running app", "1.6 Check the packaged build keeps it"], total: 6 });
   expect([validating.column, validating.subState]).toEqual(["Done", "validate"]);
   expect(complete.subState).toBe("complete");
 
