@@ -21,6 +21,9 @@ export interface TaskProgress {
   done: number;
   /** `[~]` boxes: finished by the agent, not yet confirmed by a person. Absent in snapshots cached by older versions. */
   awaiting?: number;
+  /** The `[~]` tasks' text, in file order and bounded (`change-scanner`), so a card can say what the user has to do.
+   *  Plain text from the repository, never HTML. Absent when nothing awaits the user, and in older snapshots. */
+  awaitingTasks?: string[];
   /** Every checkbox: done, awaiting and open together. */
   total: number;
 }

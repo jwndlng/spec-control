@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { columnKind, promptBody } from "../src/ui/boardMarks.ts";
-import { ChangeCard, type Card } from "../src/ui/kanban.tsx";
+import { ChangeCard, meterText, needsYouText, type Card } from "../src/ui/kanban.tsx";
 import { byTag, textOf } from "./vnode.ts";
 
 test("column markers follow the lifecycle", () => {
@@ -24,21 +24,52 @@ const card = (patch: Partial<Card>): Card => ({
 });
 const badges = (node: Card) => byTag(ChangeCard({ card: node, now: Date.parse("2026-09-29T12:00:00Z"), from: "" }), "span").filter((b) => String(b.props.class ?? "").startsWith("badge"));
 
-test("a card whose change awaits validation shows the Validate badge, in the warning role", () => {
-  const marks = badges(card({}));
-  expect(marks.map((b) => [b.props.class, textOf(b)])).toContainEqual(["badge warning", "Validate"]);
-  expect(marks.find((b) => textOf(b) === "Validate")?.props.title).toBe("2 tasks await your confirmation");
-  const one = badges(card({ tasks: { done: 14, awaiting: 1, total: 15 } }));
-  expect(one.find((b) => textOf(b) === "Validate")?.props.title).toBe("1 task awaits your confirmation");
+const needsYou = (node: Card) => byTag(ChangeCard({ card: node, now: Date.parse("2026-09-29T12:00:00Z"), from: "/board" }), "a").filter((a) => String(a.props.class ?? "").includes("needs-you"));
+
+test("a card with tasks that need the user shows the Needs you badge, in the warning role, saying what to do", () => {
+  const tasks = { done: 13, awaiting: 2, awaitingTasks: ["Add the API token to the deployment secrets — you: set API_TOKEN", "Check the retry on a slow network"], total: 15 };
+  const [badge] = needsYou(card({ tasks }));
+  expect([badge.props.class, textOf(badge)]).toEqual(["badge warning needs-you", "2 need you"]);
+  const text = "2 tasks need you — something to check or do that only you can:\n• Add the API token to the deployment secrets — you: set API_TOKEN\n• Check the retry on a slow network";
+  expect([badge.props.title, badge.props["aria-label"]]).toEqual([text, text]);
+  expect(needsYouText({ awaiting: 1, awaitingTasks: ["Sign in"] })).toBe("1 task needs you — something to check or do that only you can:\n• Sign in");
+  // A snapshot from before the scan reported the text still says how many.
+  expect(needsYouText({ awaiting: 2 })).toBe("2 tasks need you — something to check or do that only you can");
+  // The text is the repository's, drawn as text: markup in it is just characters of the title.
+  expect(needsYouText({ awaiting: 1, awaitingTasks: ["<b>x</b>"] })).toContain("• <b>x</b>");
 });
 
-test("no Validate badge without awaiting tasks, and never on an archived change", () => {
-  expect(badges(card({ tasks: { done: 15, awaiting: 0, total: 15 } })).map(textOf)).not.toContain("Validate");
+test("the Needs you badge opens the change's tasks, carrying the board", () => {
+  const [badge] = needsYou(card({}));
+  expect(badge.props.href).toBe("/repo/r/change/confirm-retention?artifact=tasks&from=%2Fboard");
+});
+
+test("more tasks than the scan lists end in `and N more`", () => {
+  const awaitingTasks = Array.from({ length: 10 }, (_, i) => `task ${i + 1}`);
+  const [badge] = needsYou(card({ tasks: { done: 0, awaiting: 12, awaitingTasks, total: 12 } }));
+  expect(textOf(badge)).toBe("12 need you");
+  const lines = String(badge.props.title).split("\n");
+  expect(lines.slice(1)).toEqual([...awaitingTasks.map((t) => `• ${t}`), "and 2 more"]);
+});
+
+test("no Needs you badge without awaiting tasks, and never on an archived change", () => {
+  expect(needsYou(card({ tasks: { done: 15, awaiting: 0, total: 15 } }))).toEqual([]);
   // A snapshot cached before `awaiting` existed has none either.
-  expect(badges(card({ tasks: { done: 15, total: 15 } })).map(textOf)).not.toContain("Validate");
-  expect(badges(card({ archived: "2026-06-18", stage: "archived", column: "Archived", subState: undefined })).map(textOf)).not.toContain("Validate");
+  expect(needsYou(card({ tasks: { done: 15, total: 15 } }))).toEqual([]);
+  expect(needsYou(card({ archived: "2026-06-18", stage: "archived", column: "Archived", subState: undefined }))).toEqual([]);
+  // The former Validate badge is gone.
+  expect(badges(card({})).map(textOf)).not.toContain("Validate");
   // The column marker of `Done` stays `success`: the column as a whole is still the done column.
   expect(columnKind("Done")).toBe("success");
+});
+
+test("the card's bar names the tasks that need the user in words", () => {
+  const view = ChangeCard({ card: card({}), now: Date.parse("2026-09-29T12:00:00Z"), from: "" });
+  const [bar] = byTag(view, "div").filter((d) => d.props.role === "progressbar");
+  expect(textOf(bar)).toBe("13 + 2 need you / 15 Tasks");
+  expect(bar.props["aria-label"]).toBe("13 of 15 tasks complete, 2 need the user, 0 open");
+  expect(meterText(14, 15, "tasks", 1)).toBe("14 of 15 tasks complete, 1 needs the user, 0 open");
+  expect(meterText(4, 12, "tasks", 0)).toBe("4 of 12 tasks complete");
 });
 
 test("a card is marked live only when told it is working, and its name still reads in full", () => {

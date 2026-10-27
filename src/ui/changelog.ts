@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-27-manual-tasks-need-you",
+    date: "2026-10-27",
+    title: "See which tasks need you, and what to do",
+    summary:
+      "A task only you can check or carry out — a secret to enter, a sign-in, a test on a real device — is now left as `- [~]` with what to do on its line, so the change still reaches **Done**. Its card shows a **Needs you** badge listing those tasks; it opens the change's tasks, where they come first.",
+  },
+  {
     id: "2026-10-24-remove-duplicate-archived-changes",
     date: "2026-10-24",
     title: "Remove a change left committed next to its archive",
