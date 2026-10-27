@@ -5,7 +5,7 @@ import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { relTime } from "./format.ts";
 import { isProposalSession, receivingSession } from "../shared/sessionBranch.ts";
 import { mergePending, pullRequestReadiness, readinessDetail } from "../shared/pullRequestReadiness.ts";
-import { availableActions, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type RepoPullRequests, type Session, type SessionAction, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
+import { availableActions, DEFAULT_EDITOR, editorCommandLine, type EditorAvailability, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type RepoPullRequests, type Session, type SessionAction, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
 
 /** Session starters are shown when the feature is on, for every tracked repository that has not been switched off. */
 export function sessionsEnabledFor(config: Config | null, repoId: string): boolean {
@@ -661,4 +661,20 @@ export function reportShip(ui: { reportUnsent(id: string | undefined): void; rep
 export function afterStart(current: AutoMergeReport | undefined, sessionId: string, autoMerge: boolean): AutoMergeReport | undefined {
   if (autoMerge) return { id: sessionId, action: "archive" };
   return current?.id === sessionId ? undefined : current;
+}
+
+/** What the **Open in editor** control shows (editor-launch): enabled with the command it runs, or why not. */
+export interface EditorControl {
+  enabled: boolean;
+  title: string;
+  /** Set when the editor's executable was not found: the command, for the link to the Agent sessions settings. */
+  notFound?: string;
+}
+
+/** Without a report from the server, the default `code` is assumed to be there; the server still refuses if it is not. */
+export function editorControl(editor: EditorAvailability | undefined, folder: string): EditorControl {
+  const command = editor?.command.length ? editor.command : [...DEFAULT_EDITOR];
+  if (editor && !editor.found) return { enabled: false, title: `${command[0]} was not found — change the editor in Settings`, notFound: command[0] };
+  const shown = editorCommandLine(command, folder).map((arg) => (/[\s"']/.test(arg) ? JSON.stringify(arg) : arg));
+  return { enabled: true, title: `Opens this folder in your editor: ${shown.join(" ")}` };
 }

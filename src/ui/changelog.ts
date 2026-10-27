@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-27-open-in-editor",
+    date: "2026-10-27",
+    title: "Open an agent's worktree in your editor",
+    summary:
+      "**Open in editor**, beside **Copy cd** in a change's Console tab and in Open work, opens the folder the agent works in with one click — VS Code's `code` by default, or any editor you set as the **Editor command** under Settings → Agent sessions.",
+  },
+  {
     id: "2026-10-24-remove-duplicate-archived-changes",
     date: "2026-10-24",
     title: "Remove a change left committed next to its archive",

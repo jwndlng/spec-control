@@ -13,7 +13,7 @@ import { inPlaceReason } from "./inPlaceText.ts";
 import { NOT_SUBMITTED_NOTICE, shortcutHint, shortcutMessage, visibleShortcuts } from "./quickReplies.ts";
 import { usePullRequests } from "./pullRequests.tsx";
 import { autoEndedText, autoMergeNotice, conflictAction, mergeControl, mergeNotice, nextStepFor, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, sessionsEnabledFor, startersFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
-import { ConflictBadge, SessionBadgeView, SessionControls, useSessionUi } from "./sessions.tsx";
+import { ConflictBadge, OpenInEditor, SessionBadgeView, SessionControls, useSessionUi } from "./sessions.tsx";
 
 export function Copy({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false);
@@ -304,6 +304,8 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   };
 
   const path = session?.worktreePath ?? tree?.path;
+  // The session's own folder from its record, or a worktree without one by name: never a path from here.
+  const openInEditor = session ? () => api.openEditor(session.id) : tree ? () => api.openWorktreeEditor(tree.repoId, tree.name) : undefined;
   return (
     <section class="console-pane" aria-label={`Agent console ${change ?? ""}`}>
       <header class="session-head">
@@ -444,6 +446,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
             </button>
           )}
           {path && <Copy text={cdCommand(path)} label="Copy cd" />}
+          {path && openInEditor && <OpenInEditor folder={path} open={openInEditor} run={act} />}
         </div>
         {(error ?? session?.error) && <div class="notice danger">{error ?? session?.error}</div>}
         {session?.autoEnded && <div class={`notice ${session.autoEnded.removed ? "ok" : "warn"}`}>{autoEndedText(session.autoEnded)}</div>}
@@ -472,8 +475,8 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
       ) : (
         <div class="console-empty">
           <p class="detail-hint">
-            No session is recorded for this worktree, so there is no terminal to show. Its work is still here — copy a <code>cd</code> for it, or remove it from Open work
-            when that is safe.
+            No session is recorded for this worktree, so there is no terminal to show. Its work is still here — copy a <code>cd</code> for it, open it in your editor, or
+            remove it from Open work when that is safe.
           </p>
           {path && <p class="hint mono">{path}</p>}
         </div>

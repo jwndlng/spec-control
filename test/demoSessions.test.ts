@@ -401,3 +401,14 @@ test("the demo never sends or shows a pending Merge (agent-merges-docs-prs)", as
   const lists = (await api.pullRequests()).repos.flatMap((r) => r.pullRequests);
   expect(lists.filter((pr) => pr.headOid !== undefined || pr.docsOnly !== undefined)).toEqual([]);
 });
+
+test("the demo reports its editor as found and opens none (editor-launch)", async () => {
+  const { api } = demo();
+  const listed = await api.sessions();
+  expect(listed.editor).toEqual({ command: ["code"], found: true });
+  const [session] = changeSessions(listed.sessions);
+  const before = JSON.stringify(await api.sessions());
+  expect(await refusal(api.openEditor(session.id))).toBe("503: The demo opens no editor");
+  expect(await refusal(api.openWorktreeEditor(session.repoId, listed.worktrees[0].name))).toBe("503: The demo opens no editor");
+  expect(JSON.stringify(await api.sessions())).toBe(before);
+});
