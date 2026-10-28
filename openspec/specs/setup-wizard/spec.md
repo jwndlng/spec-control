@@ -609,3 +609,14 @@ saved when any creation was refused. The folder SHALL NOT be deleted afterwards,
 #### Scenario: Appeared in the meantime
 - **WHEN** the folder marked to be created exists by the time the user continues
 - **THEN** it is not created again; the step marks it as found and it is saved as a root on the next **Continue**
+
+### Requirement: The System check step names the developer tools on a Mac without them
+
+On a Mac where `git` does not count as found because only Apple's placeholder is on the PATH (`environment-check`
+capability, "On macOS the git placeholder is not git"), the System check step SHALL show the `git` check as `problem`
+with the `xcode-select --install` instruction, and showing the step or activating **Re-check** SHALL NOT run the
+placeholder.
+
+#### Scenario: First setup on a fresh Mac
+- **WHEN** the wizard's System check step is shown on a Mac without the command line developer tools
+- **THEN** the `git` card is `problem` and shows `xcode-select --install` to copy, the `git-identity` card says git was not found, and no dialog offering to install the developer tools was opened by the dashboard
