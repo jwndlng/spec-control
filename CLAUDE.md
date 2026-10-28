@@ -28,7 +28,8 @@ bun test test/scanner.test.ts   # a single test file
   `package.json` and lockfile. It runs the bundled `spec-control` binary as a child process with `--no-open` and shows
   `http://127.0.0.1:<port>/` in its window — no bridge, no injected script, no server of its own — or attaches to a
   Spec Control already on the port. It adds no network access: its own process requests only `127.0.0.1`, links to other
-  hosts open in the default browser, and there is no updater, so invariant 4 is unchanged: a new version is noticed
+  hosts open in the default browser — as does a request for a new window on its own origin, which never replaces the
+  window's page — and there is no updater, so invariant 4 is unchanged: a new version is noticed
   through the server's update check, whose banner the window shows like any other page. Its testable decisions live
   in `desktop/src/logic/` (no Electrobun import), tested by `test/desktop/` in the root `bun test`; `src/main.ts` is the
   Electrobun wiring only and is not part of the root typecheck. `bun run build:desktop` builds it.

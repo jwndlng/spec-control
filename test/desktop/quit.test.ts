@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { countRunning, quitPlan, quitQuestion, stopServer } from "../../desktop/src/logic/quit.ts";
+import { countRunning, quitPlan, quitQuestion, stopOwned, stopServer } from "../../desktop/src/logic/quit.ts";
 
 test("an attached server is never stopped, however many sessions run", () => {
   expect(quitPlan({ ownsServer: false, running: 0 })).toEqual({ kind: "exit" });
@@ -56,4 +56,22 @@ test("a real child that handles SIGTERM exits within the grace period", async ()
   await reader.read(); // started and handling signals
   expect(await stopServer(child, 5000)).toBe("stopped");
   expect(child.exitCode).toBe(0);
+});
+
+test("Another instance took the lock while the server started: the server the app started is stopped", async () => {
+  const signals: unknown[] = [];
+  let exit = () => {};
+  const started = {
+    kill: (s?: unknown) => {
+      signals.push(s);
+      exit();
+    },
+    exited: new Promise<void>((r) => (exit = r)),
+  };
+  expect(await stopOwned(started, 1000)).toBe("stopped");
+  expect(signals).toEqual(["SIGTERM"]);
+});
+
+test("Attached server is left alone: with nothing started, nothing is stopped", async () => {
+  expect(await stopOwned(undefined)).toBe("none");
 });

@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-28-desktop-window-fixes",
+    date: "2026-10-28",
+    title: "Links between a change's files, and a steadier macOS app",
+    summary:
+      "A link in an artifact to another file of the same change — `[design](./design.md)` in a proposal — now opens that file in the change's view. In the macOS app, Retry after a port change moves the window to the new port, a link that asks for a new tab opens in your browser instead of replacing the window, and quitting never leaves the server it started running.",
+  },
+  {
     id: "2026-10-27-open-in-editor",
     date: "2026-10-27",
     title: "Open an agent's worktree in your editor",
