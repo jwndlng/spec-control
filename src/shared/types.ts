@@ -707,6 +707,13 @@ export function mergeTargetSentence(pr: number, head: string): string {
   return `The pull request is #${pr} and its head commit is ${head}.`;
 }
 
+/** What follows the Merge sentence when the pull request is the change's proposal, handed to the change's running
+ *  session once the proposal session ended (one-console-per-change D3): the default Merge prompt speaks of "this
+ *  worktree's branch", which it is not. One line, not editable. */
+export function proposalHandoverSentence(branch: string): string {
+  return `This pull request is the change's proposal from branch ${branch}, not the branch of this worktree.`;
+}
+
 /** What follows the Resolve conflicts prompt, after its additional instructions, when the change has an open pull
  *  request (resolve-pr-conflicts D3): its number and both branches, from the server's own list. One line, not editable. */
 export function resolveConflictsTargetSentence(pr: number, head: string, base: string): string {

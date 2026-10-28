@@ -1,6 +1,7 @@
 // Agent profiles (design.md D16): an agent is a command line plus opening prompts. Nothing here knows any vendor.
-import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, PROPOSAL_TITLE_CONVENTIONAL, PROPOSAL_TITLE_PLAIN, CARRY_OVER_ARCHIVE_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, REMOVE_DUPLICATE_DIFFERING_SENTENCE, REMOVE_DUPLICATE_IDENTICAL_SENTENCE, REMOVE_DUPLICATE_PROMPT, resolveConflictsTargetSentence, type AgentAvailability, type DuplicateAfterArchive, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type PullRequest, type RepoConfig, type SessionAction, type StrandedArchive } from "../../shared/types.ts";
+import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, PROPOSAL_TITLE_CONVENTIONAL, PROPOSAL_TITLE_PLAIN, CARRY_OVER_ARCHIVE_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, proposalHandoverSentence, REMOVE_DUPLICATE_DIFFERING_SENTENCE, REMOVE_DUPLICATE_IDENTICAL_SENTENCE, REMOVE_DUPLICATE_PROMPT, resolveConflictsTargetSentence, type AgentAvailability, type DuplicateAfterArchive, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type PullRequest, type RepoConfig, type SessionAction, type StrandedArchive } from "../../shared/types.ts";
 import { AGENT_PRESETS } from "../../shared/agentDefaults.ts";
+import { proposalBranch } from "../../shared/sessionBranch.ts";
 import { whichOnPath } from "../paths.ts";
 import { isBranchName } from "../cleanup.ts";
 import { CHANGE_NAME } from "../source.ts";
@@ -197,12 +198,14 @@ export const HEAD_COMMIT = /^[0-9a-f]{40}$/;
  * come from the parsed pull-request list, and anything that is not a positive number or a 40-character object name is
  * refused rather than typed. One line: a profile's prompt may span lines, and a line break would submit it early.
  */
-export function mergePrompt(agent: AgentProfile, change: string, { pr, head }: { pr: number; head: string }): string {
+export function mergePrompt(agent: AgentProfile, change: string, { pr, head, proposal = false }: { pr: number; head: string; proposal?: boolean }): string {
   if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
   if (!PR_NUMBER(pr)) throw new Error("invalid pull request number");
   if (typeof head !== "string" || !HEAD_COMMIT.test(head)) throw new Error("invalid head commit");
   const prompt = compose(agent, "merge", agent.prompts.merge ?? DEFAULT_MERGE_PROMPT).replaceAll("{change}", change);
-  return `${prompt} ${mergeTargetSentence(pr, head)}`.replace(/\s+/g, " ").trim();
+  // The proposal's pull request, sent to another session of the change: it is not that worktree's branch (one-console-per-change D3).
+  const handover = proposal ? ` ${proposalHandoverSentence(proposalBranch(change))}` : "";
+  return `${prompt} ${mergeTargetSentence(pr, head)}${handover}`.replace(/\s+/g, " ").trim();
 }
 
 export interface Launch {

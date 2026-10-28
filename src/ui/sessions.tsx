@@ -4,13 +4,15 @@ import { createContext, type ComponentChildren } from "preact";
 import { useCallback, useContext, useEffect, useMemo, useState } from "preact/hooks";
 import { changeSessions, isConsole, isIntegration, isProjectConsole, type AgentAvailability, type ChangeSession, type ChangeSnapshot, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleSession, type PullRequest, type SessionAction, type SessionWorktree, type Snapshot, type EditorAvailability } from "../shared/types.ts";
 import { api } from "./api.ts";
+import { EndProposalDialog } from "./endProposalDialog.tsx";
 import { FastForwardDialog, type FastForwardChoice } from "./fastForwardDialog.tsx";
 import { cdCommand, relTime } from "./format.ts";
 import { assignRepoHues, repoTint } from "./repoGroups.ts";
 import { type NextStep, type PullRequestStep, waitingLabel } from "../shared/nextStep.ts";
 import { isProposalPullRequest } from "../shared/pullRequestLink.ts";
+import { runningProposalSession } from "../shared/sessionBranch.ts";
 import { ActionMenu, type ActionItem, type ActionStatus } from "./actionMenu.tsx";
-import { afterStart, agentForRepo, type AutoMergeReport, cardSessionControls, conflictBadge, editorControl, type EditorControl, openWork, pullRequestSession, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, startersFor, starterSplit, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
+import { afterStart, agentForRepo, type AutoMergeReport, cardSessionControls, conflictBadge, consoleSteps, editorControl, type EditorControl, endProposalConfirmation, openWork, pullRequestSession, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, starterSplit, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
 import { boardFrom, changePath, CONSOLE_TAB, parseDetailQuery, routeFromPath, serializeDetailQuery } from "./routes.ts";
 import { currentPath, currentQuery, followInApp, hrefWithQuery, navigate } from "./url.ts";
 
@@ -70,7 +72,11 @@ interface SessionUi {
    * removes a duplicate after archive. Neither is ever typed into a running session.
    * `resolveConflicts`: Resolve conflicts, where the server decides the session and branch from its own lists.
    */
-  start(repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; removeDuplicate?: boolean; resolveConflicts?: boolean }): Promise<string | undefined>;
+  /**
+   * `endProposal`: the proposal session's Console tab starting the next step, which ends that session first; asks one
+   * confirmation while the proposal is not pushed, and a cancelled one starts and ends nothing.
+   */
+  start(repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; removeDuplicate?: boolean; resolveConflicts?: boolean; endProposal?: boolean }): Promise<string | undefined>;
   refresh(): Promise<void>;
 }
 
@@ -173,8 +179,17 @@ export function SessionProvider({
     [],
   );
 
+  /** The end-proposal confirmation on screen, and how the start waiting for it goes on. */
+  const [endProposalAsk, setEndProposalAsk] = useState<{ change: string; branch?: string; action: SessionAction; warning: string; answer: (ok: boolean) => void }>();
+
   const start = useCallback(
-    async (repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; removeDuplicate?: boolean; resolveConflicts?: boolean }) => {
+    async (repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; removeDuplicate?: boolean; resolveConflicts?: boolean; endProposal?: boolean }) => {
+      if (options?.endProposal) {
+        // Asked only while the proposal is not pushed: otherwise its kept worktree and branch lose nothing (D2).
+        const proposal = runningProposalSession(sessions, repoId, change);
+        const warning = endProposalConfirmation(proposal && worktrees.find((w) => w.path === proposal.worktreePath));
+        if (warning && !(await new Promise<boolean>((answer) => setEndProposalAsk({ change, branch: proposal?.branch, action, warning, answer })))) return undefined;
+      }
       let warningNotSaved: string | undefined;
       if (action === "fastForward" && config?.agentSessions.confirmFastForward !== false) {
         const choice = await askFastForward(repoId, change);
@@ -189,7 +204,7 @@ export function SessionProvider({
         }
       }
       try {
-        const into = options?.carryOver || options?.removeDuplicate || options?.resolveConflicts ? undefined : nextStepFor(sessions, repoId, change, action).promptSessionId;
+        const into = options?.carryOver || options?.removeDuplicate || options?.resolveConflicts || options?.endProposal ? undefined : nextStepFor(sessions, repoId, change, action).promptSessionId;
         const session = into ? await api.promptSession(into, action) : await api.openSession(repoId, change, action, options);
         reportAutoMerge((current) => afterStart(current, session.id, session.autoMerge));
         if (into) {
@@ -208,7 +223,7 @@ export function SessionProvider({
         return err instanceof Error ? err.message : String(err);
       }
     },
-    [refresh, openConsole, sessions, reportUnsent, config, askFastForward, onConfig],
+    [refresh, openConsole, sessions, worktrees, reportUnsent, config, askFastForward, onConfig],
   );
 
   const shown = consoleOpen && enabled;
@@ -232,6 +247,18 @@ export function SessionProvider({
           agentName={agentForRepo(config, fastForwardAsk.repoId)?.name}
           onConfirm={answerFastForward}
           onCancel={() => answerFastForward(undefined)}
+        />
+      )}
+      {endProposalAsk && (
+        <EndProposalDialog
+          change={endProposalAsk.change}
+          branch={endProposalAsk.branch}
+          actionLabel={STARTER_LABEL[endProposalAsk.action]}
+          warning={endProposalAsk.warning}
+          onAnswer={(ok) => {
+            endProposalAsk.answer(ok);
+            setEndProposalAsk(undefined);
+          }}
         />
       )}
     </Context.Provider>
@@ -495,8 +522,11 @@ export function SessionControls({
 
   const controls = cardSessionControls(ui.config, ui.sessions, { ...card, pullRequest });
   const shown = into ? [] : controls.shown;
-  // Sent into `into`: only what that session receives — a proposal session takes Draft alone (`nextStepFor`).
-  const { main, menu } = into ? starterSplit(card, startersFor(ui.config, card).filter((a) => nextStepFor(ui.sessions, into.repoId, into.change, a).promptSessionId === into.id), pullRequest) : controls;
+  // Sent into `into`: only what that session receives — a proposal session takes Draft alone, and offers every other
+  // step as ending it first (`consoleSteps`).
+  const offered = into ? consoleSteps(ui.config, ui.sessions, card, into) : undefined;
+  const endsProposal = (action: SessionAction) => offered?.endFirst.includes(action) === true;
+  const { main, menu } = into ? starterSplit(card, offered ? [...offered.into, ...offered.endFirst] : [], pullRequest) : controls;
   const agent = agentForRepo(ui.config, card.repoId);
   const found = ui.agents.find((a) => a.id === agent?.id);
   const unavailable = !into && found && !found.available ? `${found.name} was not found on this machine — check its command in Settings` : undefined;
@@ -504,19 +534,26 @@ export function SessionControls({
   const proposal = isProposalPullRequest(card, pullRequest);
 
   const starterItem = (action: SessionAction, isMain: boolean): ActionItem => {
-    const hint = into ? `Sends the “${STARTER_LABEL[action]}” prompt to this session’s agent` : `${starterHint(action, card.stage)} (${agent?.name})`;
-    const glyph = into ? "↳" : action === "fastForward" ? "⏵⏵" : "▶";
+    const ending = endsProposal(action);
+    const hint = ending
+      ? `Ends the proposal session on ${into?.branch} — its worktree and branch are kept — and starts ${STARTER_LABEL[action]} in a new session (${agent?.name})`
+      : into
+        ? `Sends the “${STARTER_LABEL[action]}” prompt to this session’s agent`
+        : `${starterHint(action, card.stage)} (${agent?.name})`;
+    const glyph = into && !ending ? "↳" : action === "fastForward" ? "⏵⏵" : "▶";
+    const label = ending ? `End proposal session and ${STARTER_LABEL[action].toLowerCase()}` : STARTER_LABEL[action];
     return {
       key: action,
-      label: starting === action ? "Starting…" : isMain ? `${glyph} ${STARTER_LABEL[action]}` : STARTER_LABEL[action],
+      label: starting === action ? "Starting…" : isMain ? `${glyph} ${label}` : label,
       title: unavailable ?? hint,
       ariaLabel: action === "fastForward" && !into ? `${STARTER_HINT.fastForward} (${agent?.name})` : undefined,
       disabled: Boolean(unavailable),
       onActivate: async () => {
         setStarting(action);
         setFailure(undefined);
-        // On a card nothing runs, so this is always an opening; in the Console tab it is sent into `into`.
-        setFailure(await ui.start(card.repoId, card.name, action, startShowsConsole(place)));
+        // On a card nothing runs, so this is always an opening; in the Console tab it is sent into `into`, or — from a
+        // proposal session — opened after ending it, and the new session shown.
+        setFailure(await ui.start(card.repoId, card.name, action, startShowsConsole(place), ending ? { endProposal: true } : undefined));
         setStarting(undefined);
       },
     };
