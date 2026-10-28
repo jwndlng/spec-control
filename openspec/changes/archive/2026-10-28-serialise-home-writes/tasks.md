@@ -22,4 +22,4 @@
 
 ## 5. Verification
 
-- [~] 5.1 Run `bun run check` and `bun run build`; with the compiled binary, save Settings from a tab opened before a label colour was chosen in another and check the colour survives
+- [x] 5.1 Run `bun run check` and `bun run build`; with the compiled binary, save Settings from a tab opened before a label colour was chosen in another and check the colour survives
