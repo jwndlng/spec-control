@@ -38,7 +38,8 @@ import type {
 import { isBranchName } from "./branchName.ts";
 import { removeStaleChangeDirectory } from "./dismissChange.ts";
 import { frameworkById, writablePaths } from "./frameworks/registry.ts";
-import { parseWorktrees, subdirectory } from "./git.ts";
+import { parseWorktrees, repositoryKey, subdirectory } from "./git.ts";
+import { gitWrite } from "./gitWrite.ts";
 import { branchBackupsDir, worktreesDir } from "./paths.ts";
 import { backupDirName } from "./pull.ts";
 import { baseRef } from "./sessions/base.ts";
@@ -51,7 +52,7 @@ export { isBranchName };
 const ENV = { GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" };
 const BRANCH_CONCURRENCY = 8;
 
-/** `raw` keeps the output as git wrote it: porcelain status lines may begin with a space. */
+/** Read-only git; every writing command here goes through `gitWrite`. `raw` keeps the output as git wrote it: porcelain status lines may begin with a space. */
 async function git(cwd: string, args: string[], raw = false): Promise<{ ok: boolean; out: string; err: string }> {
   try {
     const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, ...ENV } });
@@ -68,11 +69,46 @@ export class CleanupBusyError extends Error {
   }
 }
 
+/**
+ * Keys of the git repositories with a cleanup, deletion or stale cleanup running: the git common directory, so tracked
+ * projects sharing one repository never remove its worktrees or branches at the same time (repository-cleanup: "One
+ * cleanup per git repository"). A project whose git directory cannot be read keeps its id.
+ */
 const running = new Set<string>();
+/** The projects holding the lock, taken synchronously so a session start right after a cleanup began is refused. */
+const holders = new Set<string>();
+/** The key each project last resolved to, so `isCleaningUp` can answer for a sibling project too. */
+const keyOfRepo = new Map<string, string>();
+
+async function lockKey(repo: RepoConfig): Promise<string> {
+  const found = await repositoryKey(repo.path);
+  const key = found ? `git:${found}` : `id:${repo.id}`;
+  keyOfRepo.set(repo.id, key);
+  return key;
+}
+
+/** Runs `fn` holding the repository's cleanup lock; `CleanupBusyError` when any project of it holds the lock. */
+async function holdingLock<T>(repo: RepoConfig, fn: () => Promise<T>): Promise<T> {
+  if (holders.has(repo.id)) throw new CleanupBusyError();
+  holders.add(repo.id);
+  try {
+    const key = await lockKey(repo);
+    if (running.has(key)) throw new CleanupBusyError();
+    running.add(key);
+    try {
+      return await fn();
+    } finally {
+      running.delete(key);
+    }
+  } finally {
+    holders.delete(repo.id);
+  }
+}
 
 /** While true, sessions must not start in the repository: a worktree could be removed between its check and its use. */
 export function isCleaningUp(repoId: string): boolean {
-  return running.has(repoId);
+  const key = keyOfRepo.get(repoId);
+  return holders.has(repoId) || (key !== undefined && running.has(key));
 }
 
 async function real(path: string): Promise<string> {
@@ -205,10 +241,8 @@ export async function previewCleanup(repo: RepoConfig, sessions: Set<string> = n
  * Removes what the user selected, in order — worktrees, stale records, branches — re-checking each item first. Items
  * that are no longer safe, or were never the repository's own, are kept and reported. One failure never stops the rest.
  */
-export async function applyCleanup(repo: RepoConfig, selection: CleanupSelection, sessions: Set<string> = new Set()): Promise<CleanupResult> {
-  if (running.has(repo.id)) throw new CleanupBusyError();
-  running.add(repo.id);
-  try {
+export function applyCleanup(repo: RepoConfig, selection: CleanupSelection, sessions: Set<string> = new Set()): Promise<CleanupResult> {
+  return holdingLock(repo, async () => {
     const items: CleanupItemResult[] = [];
 
     let ctx = await context(repo, sessions);
@@ -232,7 +266,7 @@ export async function applyCleanup(repo: RepoConfig, selection: CleanupSelection
     if (selection.prune) {
       const before = (await context(repo, sessions)).listed.filter((w) => !w.isMain && w.prunable).map((w) => w.path);
       if (before.length > 0) {
-        const pruned = await git(repo.path, ["worktree", "prune"]);
+        const pruned = await gitWrite(repo.path, ["worktree", "prune"]);
         const after = new Set((await context(repo, sessions)).listed.filter((w) => w.prunable).map((w) => w.path));
         for (const path of before) {
           items.push(
@@ -271,7 +305,7 @@ export async function applyCleanup(repo: RepoConfig, selection: CleanupSelection
           items.push({ kind: "branch", id, outcome: "kept", reason: judged.reason });
           continue;
         }
-        const deleted = await git(repo.path, ["branch", "-D", "--", name]);
+        const deleted = await gitWrite(repo.path, ["branch", "-D", "--", name]);
         items.push(
           deleted.ok
             ? { kind: "branch", id, outcome: "deleted", commit: ref.commit }
@@ -280,9 +314,7 @@ export async function applyCleanup(repo: RepoConfig, selection: CleanupSelection
       }
     }
     return { repoId: repo.id, items };
-  } finally {
-    running.delete(repo.id);
-  }
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -407,7 +439,7 @@ async function inspectWorktree(repo: RepoConfig, path: string, sessions: Set<str
             ? "an agent session is running in it — end the session first"
             : listed.locked && !managed
               ? `it is locked${listed.lockReason ? ` (${listed.lockReason})` : ""} — unlock it yourself first`
-              : !locked && running.has(repo.id)
+              : !locked && running.has(await lockKey(repo))
                 ? "a cleanup of this repository is running"
                 : backup.problem;
   return { preview: refused ? { ...preview, refused } : preview, backup };
@@ -440,14 +472,8 @@ async function writeBackup(repo: RepoConfig, preview: BranchDeletePreview, files
  * Deletes the worktree the user confirmed, and its branch, whatever they hold — if, and only if, they are still what the
  * user saw. Copies the uncommitted files first; a failed copy deletes nothing.
  */
-export async function deleteBranch(repo: RepoConfig, request: BranchDeleteRequest, sessions: Set<string> = new Set()): Promise<BranchDeleteResult> {
-  if (running.has(repo.id)) throw new CleanupBusyError();
-  running.add(repo.id);
-  try {
-    return await deleteBranchHeld(repo, request, sessions);
-  } finally {
-    running.delete(repo.id);
-  }
+export function deleteBranch(repo: RepoConfig, request: BranchDeleteRequest, sessions: Set<string> = new Set()): Promise<BranchDeleteResult> {
+  return holdingLock(repo, () => deleteBranchHeld(repo, request, sessions));
 }
 
 /** `deleteBranch` for a caller that holds the repository's cleanup lock already. */
@@ -468,8 +494,8 @@ async function deleteBranchHeld(repo: RepoConfig, request: BranchDeleteRequest, 
     }
   }
   const backedUp = backupDir ? { backupDir, backedUp: backup.files.length } : {};
-  if (preview.locked && preview.managed) await git(repo.path, ["worktree", "unlock", request.path]);
-  const removed = await git(repo.path, ["worktree", "remove", "--force", request.path]);
+  if (preview.locked && preview.managed) await gitWrite(repo.path, ["worktree", "unlock", request.path]);
+  const removed = await gitWrite(repo.path, ["worktree", "remove", "--force", request.path]);
   if (!removed.ok) return { ...refuse(`git refused to remove the worktree: ${removed.err.split("\n").pop() || "unknown error"}`), ...backedUp };
 
   const branch = preview.branch;
@@ -487,7 +513,7 @@ async function deleteBranchHeld(repo: RepoConfig, request: BranchDeleteRequest, 
             ? "it is checked out in another worktree"
             : undefined;
   if (keep) return { repoId: repo.id, path: request.path, outcome: "removed", branch, reason: `the branch was kept: ${keep}`, ...backedUp };
-  const deleted = await git(repo.path, ["branch", "-D", "--", branch]);
+  const deleted = await gitWrite(repo.path, ["branch", "-D", "--", branch]);
   if (!deleted.ok) {
     return { repoId: repo.id, path: request.path, outcome: "removed", branch, reason: `the branch was kept: ${deleted.err.split("\n").pop() || "git refused to delete it"}`, ...backedUp };
   }
@@ -521,7 +547,8 @@ export interface StaleScope {
 
 /** The change's leftovers, read afresh. `ending` is the real path of a worktree whose session is being ended. */
 async function readStale(repo: RepoConfig, scope: StaleScope, name: string, ending?: string): Promise<{ stale?: StaleLeftovers; ctx: Context }> {
-  const layout = writablePaths(frameworkById(scope.scanned.framework));
+  const framework = frameworkById(scope.scanned.framework);
+  const layout = writablePaths(framework);
   if (!layout?.archiveDir) throw new StaleCleanupError(409, "the dashboard does not clean up these changes");
   const ctx = await context(repo, scope.runningPaths);
   const active = scope.scanned.changes.filter((c) => !c.archived && c.name === name).map((c) => [c.name, { name: c.name, created: c.created }] as const);
@@ -530,6 +557,7 @@ async function readStale(repo: RepoConfig, scope: StaleScope, name: string, endi
   const found = await staleLeftovers({
     repoPath: repo.path,
     layout,
+    metadata: framework?.changeMetadata,
     defaultBranch: ctx.defaultName,
     worktrees: ctx.listed,
     active: new Map(active),
@@ -587,10 +615,8 @@ async function backupMainCopy(repo: RepoConfig, name: string, dir: string, archi
  * Refused as a whole only when the archive is gone from the default branch, or with `StaleCleanupError` when an item
  * needs the acknowledgement the request does not carry; `CleanupBusyError` while another cleanup or deletion runs.
  */
-export async function applyStaleCleanup(repo: RepoConfig, scope: StaleScope, name: string, request: StaleCleanupRequest): Promise<StaleCleanupResult> {
-  if (running.has(repo.id)) throw new CleanupBusyError();
-  running.add(repo.id);
-  try {
+export function applyStaleCleanup(repo: RepoConfig, scope: StaleScope, name: string, request: StaleCleanupRequest): Promise<StaleCleanupResult> {
+  return holdingLock(repo, async () => {
     const { stale } = await readStale(repo, scope, name);
     if (!stale) return { repoId: repo.id, name, items: [], refused: "the change is no longer archived on the default branch — nothing was removed" };
     const worktrees = new Map<string, StaleWorktreeLeftover>();
@@ -638,7 +664,7 @@ export async function applyStaleCleanup(repo: RepoConfig, scope: StaleScope, nam
         kept("it changed since you looked");
         continue;
       }
-      const deleted = await git(repo.path, ["branch", "-D", "--", b.name]);
+      const deleted = await gitWrite(repo.path, ["branch", "-D", "--", b.name]);
       if (deleted.ok) items.push({ kind: "branch", id: b.name, outcome: "deleted", branch: b.name, commit: b.commit });
       else kept(deleted.err.split("\n").pop() || "git refused to delete it");
     }
@@ -677,7 +703,5 @@ export async function applyStaleCleanup(repo: RepoConfig, scope: StaleScope, nam
       }
     }
     return { repoId: repo.id, name, items };
-  } finally {
-    running.delete(repo.id);
-  }
+  });
 }

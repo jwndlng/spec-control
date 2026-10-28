@@ -1,8 +1,12 @@
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { rm } from "node:fs/promises";
 import { AutoFetcher } from "../src/server/autoFetch.ts";
-import { defaultConfig } from "../src/server/config.ts";
-import type { FetchOutcome } from "../src/server/pull.ts";
+import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
+import { type FetchOutcome, fetchRepository, pullRepository } from "../src/server/pull.ts";
 import { AUTO_FETCH_SECONDS, type Config, type RepoConfig, type RepoSnapshot, type Snapshot } from "../src/shared/types.ts";
+import { useTempHome } from "./helpers.ts";
+import { hookLog, installRepoHooks } from "./hookHelpers.ts";
+import { type Fixture, fixture, git, remoteCommits } from "./pullHelpers.ts";
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -302,4 +306,56 @@ test("nothing is fetched while setup is pending, and fetching starts once it is 
   await time.advance(MINUTE);
   expect(fetched).toEqual(["alpha-infra"]);
   fetcher.stop();
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The automatic fetch against real repositories: no hooks, and nothing pruned whatever the configuration says.
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe("against a real repository", () => {
+  let cleanupHome: () => Promise<void>;
+  const bases: string[] = [];
+  beforeAll(async () => {
+    ({ cleanup: cleanupHome } = await useTempHome());
+  });
+  afterAll(async () => {
+    for (const b of bases) await rm(b, { recursive: true, force: true });
+    await cleanupHome();
+  });
+  const make = async (): Promise<Fixture> => {
+    const f = await fixture();
+    bases.push(f.base);
+    return f;
+  };
+
+  test("hooks do not run: an automatic fetch moves origin/main and no hook ran", async () => {
+    const f = await make();
+    const log = await installRepoHooks(f.repo);
+    await remoteCommits(f, 1);
+    expect(await fetchRepository(newRepoConfig(f.repo, true))).toMatchObject({ ok: true, moved: true });
+    expect(git(f.repo, "rev-parse", "origin/main")).toBe(git(f.other, "rev-parse", "HEAD"));
+    expect(await hookLog(log)).toEqual([]);
+  });
+
+  test("prune configured: a remote-tracking ref of a deleted remote branch survives the automatic fetch and the pull", async () => {
+    const f = await make();
+    git(f.other, "push", "-q", "origin", "HEAD:refs/heads/feat/old-work");
+    git(f.repo, "fetch", "-q", "origin");
+    const ref = git(f.repo, "rev-parse", "refs/remotes/origin/feat/old-work");
+    git(f.other, "push", "-q", "origin", ":refs/heads/feat/old-work");
+    for (const [key, value] of [
+      ["fetch.prune", "true"],
+      ["fetch.pruneTags", "true"],
+      ["remote.origin.prune", "true"],
+    ]) {
+      git(f.repo, "config", key, value);
+    }
+    const repo = newRepoConfig(f.repo, true);
+    await remoteCommits(f, 1);
+    expect(await fetchRepository(repo)).toMatchObject({ ok: true, moved: true });
+    expect(git(f.repo, "rev-parse", "refs/remotes/origin/feat/old-work")).toBe(ref);
+    await remoteCommits(f, 1);
+    expect(await pullRepository(repo)).toMatchObject({ update: "fast-forwarded" });
+    expect(git(f.repo, "rev-parse", "refs/remotes/origin/feat/old-work")).toBe(ref);
+  });
 });

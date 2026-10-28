@@ -6,10 +6,11 @@ import { defaultConfig, loadConfig } from "../src/server/config.ts";
 import { configPath, worktreesDir } from "../src/server/paths.ts";
 import { Scanner } from "../src/server/scanner.ts";
 import { resolveConflictsPrompt, shipPrompt } from "../src/server/sessions/agents.ts";
-import { changeOfWorktree, readWorkStatus } from "../src/server/sessions/workStatus.ts";
+import { changeOfWorktree, contentIsInBase, readWorkStatus } from "../src/server/sessions/workStatus.ts";
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
 import { CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, type Session, type SessionWorktree } from "../src/shared/types.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
+import { commitFiles, monorepo, squashMerge } from "./monorepoHelpers.ts";
 import { FAKE_AGENT, fakeProfile, git, harness, recordFor, tempGitRepo, waitFor, watch, type Harness } from "./sessionHelpers.ts";
 
 setDefaultTimeout(30_000);
@@ -358,4 +359,51 @@ test("resolve conflicts without a resume command starts the agent with the defau
   expect(git(h.repoPath, "rev-parse", "HEAD")).toBe(head);
   expect(git(h.repoPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe(branch);
   expect(git(s.worktreePath, "rev-parse", "HEAD")).toBe(wtHead); // no rebase, no merge, no commit by the dashboard
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The content check from a project in a subfolder (repository-cleanup, stale-changes: "… works from a project in a
+// subfolder"): changed files are named from the top level, whatever the working directory or `diff.relative` say.
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("from a project in a subfolder: unmerged is not in base, squash-merged is, a rename keeping its source is not", async () => {
+  const m = await monorepo();
+  const tools = m.project();
+  const inBase = (ref: string) => contentIsInBase(tools, "origin/main", ref);
+
+  git(m.top, "branch", "feat/rotate-keys");
+  git(m.top, "switch", "-q", "feat/rotate-keys");
+  await commitFiles(m.top, { "packages/tools/src/keys.ts": "export const keys = 2;\n" });
+  git(m.top, "switch", "-q", "main");
+  expect(await inBase("feat/rotate-keys")).toBe(false);
+  // The same answer from the top level and from inside the project's own source folder.
+  expect(await contentIsInBase(m.top, "origin/main", "feat/rotate-keys")).toBe(false);
+  expect(await contentIsInBase(join(tools, "src"), "origin/main", "feat/rotate-keys")).toBe(false);
+
+  squashMerge(m.top, "feat/rotate-keys");
+  expect(await inBase("feat/rotate-keys")).toBe(true);
+
+  // A rename whose new path the base holds with the same content, but whose old path the base still has.
+  git(m.top, "switch", "-q", "-c", "feat/rename-keys");
+  git(m.top, "mv", "packages/tools/src/keys.ts", "packages/tools/src/secrets.ts");
+  git(m.top, "commit", "-q", "-m", "rename");
+  git(m.top, "switch", "-q", "main");
+  await commitFiles(m.top, { "packages/tools/src/secrets.ts": "export const keys = 2;\n" }, "copy");
+  git(m.top, "push", "-q", "origin", "main");
+  expect(await inBase("feat/rename-keys")).toBe(false);
+});
+
+test("from a project in a subfolder, diff.relative changes nothing — also for a file outside the project", async () => {
+  const m = await monorepo();
+  const tools = m.project();
+  git(m.top, "config", "diff.relative", "true");
+  git(m.top, "switch", "-q", "-c", "feat/readme");
+  await commitFiles(m.top, { "README.md": "edited at the top level\n" });
+  git(m.top, "switch", "-q", "-c", "feat/keys", "main");
+  await commitFiles(m.top, { "packages/tools/src/keys.ts": "export const keys = 3;\n" });
+  git(m.top, "switch", "-q", "main");
+  expect(await contentIsInBase(tools, "origin/main", "feat/readme")).toBe(false);
+  expect(await contentIsInBase(tools, "origin/main", "feat/keys")).toBe(false);
+  squashMerge(m.top, "feat/keys");
+  expect(await contentIsInBase(tools, "origin/main", "feat/keys")).toBe(true);
 });

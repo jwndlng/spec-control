@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { isGithubRepo, issueChangeName, issueRef, issueUrl, toSourceIssue } from "../src/shared/issues.ts";
 import { CHANGE_NAME_PATTERN } from "../src/shared/types.ts";
+import { isNewChangeName } from "../src/shared/changeNames.ts";
 
 test("issueChangeName follows the spec's examples", () => {
   expect(issueChangeName("Retry webhook delivery on 5xx (again!)", 42)).toBe("retry-webhook-delivery-on-5xx-again");
@@ -8,6 +9,12 @@ test("issueChangeName follows the spec's examples", () => {
   expect(issueChangeName("", 8)).toBe("issue-8");
   expect(issueChangeName("  Ünïcödé — only?  ", 9)).toBe("n-c-d-only");
   expect(issueChangeName("日本語", 10)).toBe("issue-10");
+});
+
+test("issueChangeName steps around the reserved archive root", () => {
+  expect(issueChangeName("Archive", 12)).toBe("archive-12");
+  expect(issueChangeName("ARCHIVE!", 13)).toBe("archive-13");
+  expect(issueChangeName("Archive old boards", 14)).toBe("archive-old-boards");
 });
 
 test("issueChangeName cuts long titles at a hyphen, to at most 48 characters", () => {
@@ -21,7 +28,7 @@ test("issueChangeName cuts long titles at a hyphen, to at most 48 characters", (
 test("every proposed name is a valid change name", () => {
   for (const title of ["a/b\\c", "..", "-lead-", "UPPER case", "a".repeat(200), "tab\tand\nnewline", "x-".repeat(40)]) {
     const name = issueChangeName(title, 3);
-    expect([title, CHANGE_NAME_PATTERN.test(name) && name.length <= 48 && !name.startsWith("-") && !name.endsWith("-")]).toEqual([title, true]);
+    expect([title, isNewChangeName(name) && CHANGE_NAME_PATTERN.test(name) && name.length <= 48 && !name.startsWith("-") && !name.endsWith("-")]).toEqual([title, true]);
   }
 });
 

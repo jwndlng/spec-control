@@ -9,12 +9,12 @@
 // background, at most two at a time — a third is queued — and the user may cancel one, which ends it like a failure.
 // Their outcomes and progress live in memory until the dashboard restarts (never history, invariant 5) and are never an
 // input to scanning, columns or actions.
-import { mkdir, rmdir } from "node:fs/promises";
-import { join } from "node:path";
+import { rmdir } from "node:fs/promises";
 import { defaultCloneFolder, githubCloneUrl, parseGithubRepo } from "../shared/github.ts";
 import type { GithubClone, GithubClonePhase } from "../shared/types.ts";
 import { REDIRECTING_GIT_ENV } from "./createProject.ts";
 import { isSpecProject } from "./discover.ts";
+import { emptyHooksDir } from "./gitWrite.ts";
 import { checkNewFolder, makeNewFolder, NewFolderError } from "./newFolder.ts";
 import { canonicalPath, dashboardHome, whichOnPath } from "./paths.ts";
 import { reasonFrom } from "./pull.ts";
@@ -33,13 +33,6 @@ function needsCredentials(stderr: string): boolean {
 export function cloneFailureReason(stderr: string): string {
   const reason = reasonFrom(stderr);
   return needsCredentials(stderr) ? `${reason} — ${CREDENTIALS_HINT}` : reason;
-}
-
-/** An empty directory under the home that `core.hooksPath` points at: no hook — not even a template's — can run. */
-async function emptyHooksDir(): Promise<string> {
-  const dir = join(dashboardHome(), "clone-hooks");
-  await mkdir(dir, { recursive: true });
-  return dir;
 }
 
 // ---- progress (git clone --progress) ----

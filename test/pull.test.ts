@@ -9,6 +9,8 @@ import { Scanner } from "../src/server/scanner.ts";
 import { AutoFetcher } from "../src/server/autoFetch.ts";
 import { type AppState, createFetchHandler } from "../src/server/api.ts";
 import { useTempHome } from "./helpers.ts";
+import { hookLog, installRepoHooks } from "./hookHelpers.ts";
+import { commitFiles, monorepo } from "./monorepoHelpers.ts";
 import { type Fixture, fixture, git, localChange, remoteChange, remoteCommits } from "./pullHelpers.ts";
 
 // These tests create git repositories, run real git against local remotes and wait on deliberately slow fake remotes;
@@ -534,4 +536,56 @@ test("with auto fetch on by default, scans, discovery and the state endpoint sti
   expect((await (await call("/api/state")).json()).repos[0].autoFetch).toMatchObject({ ok: false });
   expect(moved).toBe(0);
   state.autoFetcher.stop();
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Configuration and hooks cannot widen the pull; one pull or fetch per git repository (harden-git-invocations).
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("hooks do not run for the pull's fetch or its fast-forward", async () => {
+  const f = await make();
+  const log = await installRepoHooks(f.repo);
+  await remoteCommits(f, 2);
+  expect(await pull(f)).toMatchObject({ fetched: true, update: "fast-forwarded", commits: 2 });
+  expect(head(f.repo)).toBe(head(f.other));
+  expect(await hookLog(log)).toEqual([]);
+});
+
+test("merge.autoStash configured: an overlapping edit is refused as local work, nothing is stashed or changed", async () => {
+  const f = await make();
+  git(f.repo, "config", "merge.autoStash", "true");
+  await remoteCommits(f, 1, "app.txt");
+  await writeFile(join(f.repo, "app.txt"), "my edit to the same file\n");
+  const at = head(f.repo);
+  const index = await readFile(join(f.repo, ".git", "index"));
+  const refused = await pull(f);
+  expect(refused).toMatchObject({ fetched: true, update: "refused", blocking: [{ path: "app.txt", kind: "local-work" }] });
+  expect([head(f.repo), await readFile(join(f.repo, "app.txt"), "utf8"), status(f.repo)]).toEqual([at, "my edit to the same file\n", "M app.txt"]);
+  expect(Buffer.compare(index, await readFile(join(f.repo, ".git", "index")))).toBe(0);
+  expect(git(f.repo, "stash", "list")).toBe("");
+});
+
+test("one pull per git repository: a sibling project's pull is refused, and its automatic fetch skipped", async () => {
+  const m = await monorepo(["packages/a", "packages/b"]);
+  bases.push(m.base);
+  const a = newRepoConfig(m.project("packages/a"), true);
+  const b = newRepoConfig(m.project("packages/b"), true);
+  // Both projects were pulled once before, as on any day after the first.
+  expect((await pullRepository(a)).update).toBe("up-to-date");
+  expect((await pullRepository(b)).update).toBe("up-to-date");
+
+  const remoteCommit = async () => {
+    await commitFiles(m.other, { "packages/a/src/keys.ts": `export const keys = ${Math.random()};\n` });
+    git(m.other, "push", "-q");
+  };
+  await remoteCommit();
+  const first = pullRepository(b);
+  await expect(pullRepository(a)).rejects.toBeInstanceOf(PullBusyError);
+  expect(await first).toMatchObject({ update: "fast-forwarded", commits: 1 });
+  expect(git(m.top, "reflog", "-n", "1", "--format=%gs")).toContain("merge");
+
+  await remoteCommit();
+  const pulling = pullRepository(a);
+  expect(await fetchRepository(b)).toMatchObject({ skipped: true, ok: false, moved: false });
+  expect(await pulling).toMatchObject({ update: "fast-forwarded", commits: 1 });
 });

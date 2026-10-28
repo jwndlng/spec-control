@@ -8,10 +8,11 @@
 import { createHash } from "node:crypto";
 import { lstat, readdir, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { isChangeDirName } from "../shared/changeNames.ts";
 import type { DismissFile, DismissPreview, DismissResult, RepoConfig, RepoSnapshot } from "../shared/types.ts";
 import { frameworkById, writablePaths } from "./frameworks/registry.ts";
 import { knownStatusPaths, subdirectory } from "./git.ts";
-import { CHANGE_NAME } from "./source.ts";
+import { gitWrite } from "./gitWrite.ts";
 
 const GIT_TIMEOUT_MS = 10_000;
 
@@ -22,11 +23,6 @@ export class DismissError extends Error {
   ) {
     super(message);
   }
-}
-
-/** A change name that may reach the file system here: the scanner's pattern, and never `archive`, `.` or `..`. */
-export function isDismissableName(name: unknown): name is string {
-  return typeof name === "string" && CHANGE_NAME.test(name) && name !== "archive" && name !== "." && name !== "..";
 }
 
 const running = new Set<string>();
@@ -46,31 +42,11 @@ export function isDismissing(repoId: string, name: string): boolean {
 }
 
 /**
- * The one writing git command dismissing may run. Deliberately not `git.ts`'s runner: that module is read-only by
- * contract. No shell, no prompt, no stdin; any failure resolves to `false`, because by then the directory is gone.
+ * The one writing git command dismissing may run: no hooks, no prompt, no stdin (`gitWrite`). Any failure resolves to
+ * `false`, because by then the directory is gone.
  */
-async function gitWrite(cwd: string, args: string[]): Promise<boolean> {
-  let timedOut = false;
-  try {
-    const proc = Bun.spawn(["git", ...args], {
-      cwd,
-      stdout: "ignore",
-      stderr: "ignore",
-      stdin: "ignore",
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
-    });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      proc.kill();
-    }, GIT_TIMEOUT_MS);
-    try {
-      return (await proc.exited) === 0 && !timedOut;
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch {
-    return false;
-  }
+async function stageRemoval(cwd: string, dir: string): Promise<boolean> {
+  return (await gitWrite(cwd, ["add", "--all", "--", dir], { timeoutMs: GIT_TIMEOUT_MS })).ok;
 }
 
 /** Why a change without an active directory in the main checkout cannot be dismissed. */
@@ -87,7 +63,7 @@ function notInMain(scanned: RepoSnapshot, name: string): DismissError {
  * changes directory (`openspec/changes/`). Throws the reason otherwise.
  */
 async function activeDir(repo: RepoConfig, scanned: RepoSnapshot, name: string): Promise<string> {
-  if (!isDismissableName(name)) throw new DismissError(400, "invalid change name");
+  if (!isChangeDirName(name)) throw new DismissError(400, "invalid change name");
   const changes = changesDir(scanned);
   const parent = join(repo.path, changes);
   const dir = join(parent, name);
@@ -173,7 +149,7 @@ export async function previewDismiss(repo: RepoConfig, scanned: RepoSnapshot, na
  * Staging is best-effort: a repository without git, an untracked change or a git failure report `staged: false`.
  */
 export async function dismissChange(repo: RepoConfig, scanned: RepoSnapshot, name: string, fingerprint: string, hasOpenSession: () => boolean = () => false): Promise<DismissResult> {
-  if (!isDismissableName(name)) throw new DismissError(400, "invalid change name");
+  if (!isChangeDirName(name)) throw new DismissError(400, "invalid change name");
   const k = key(repo.id, name);
   if (running.has(k)) throw new DismissError(409, `"${name}" is already being dismissed`);
   running.add(k);
@@ -191,7 +167,7 @@ export async function dismissChange(repo: RepoConfig, scanned: RepoSnapshot, nam
 async function deleteAndStage(repo: RepoConfig, scanned: RepoSnapshot, dir: string, name: string): Promise<boolean> {
   await rm(dir, { recursive: true });
   // The files are gone; whatever git does, the deletion has succeeded.
-  return scanned.isGit ? await gitWrite(repo.path, ["add", "--all", "--", `${changesDir(scanned)}/${name}/`]) : false;
+  return scanned.isGit ? await stageRemoval(repo.path, `${changesDir(scanned)}/${name}/`) : false;
 }
 
 /**
@@ -206,7 +182,7 @@ export async function removeStaleChangeDirectory(
   name: string,
   verify: (dir: string) => Promise<string | undefined>,
 ): Promise<{ removed: false; reason: string } | { removed: true; staged: boolean }> {
-  if (!isDismissableName(name)) return { removed: false, reason: "invalid change name" };
+  if (!isChangeDirName(name)) return { removed: false, reason: "invalid change name" };
   const k = key(repo.id, name);
   if (running.has(k)) return { removed: false, reason: `"${name}" is being dismissed` };
   running.add(k);

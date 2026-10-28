@@ -1,5 +1,5 @@
 // Pure helpers for the shared-config settings UI: profile ids, the assignment grid and what is pending.
-import type { RepoSharedConfig, SharedConfigAssignment, SharedProfile } from "../shared/types.ts";
+import type { RepoSharedConfig, SharedConfigAssignment, SharedConfigPreview, SharedProfile } from "../shared/types.ts";
 
 /** A profile id from a display name: lower-case slug, unique among `taken`. */
 export function profileIdFrom(name: string, taken: string[]): string {
@@ -46,6 +46,18 @@ export function isPending(row: GridRow, profiles: SharedProfile[]): boolean {
 
 export function pendingAssignments(rows: GridRow[], profiles: SharedProfile[]): SharedConfigAssignment[] {
   return rows.filter((row) => isPending(row, profiles)).map((row) => ({ repoId: row.repoId, profileIds: profiles.map((p) => p.id).filter((id) => row.selected.includes(id)) }));
+}
+
+/**
+ * What Apply sends: exactly the assignments the preview was produced for, each with its preview's digest, so the server
+ * writes only what was shown. Repositories the preview refused are left out; the live grid is never consulted.
+ */
+export function withDigests(assignments: SharedConfigAssignment[], previews: SharedConfigPreview[]): SharedConfigAssignment[] {
+  const byRepo = new Map(previews.map((p) => [p.repoId, p]));
+  return assignments.flatMap((a) => {
+    const preview = byRepo.get(a.repoId);
+    return preview && !preview.refusal ? [{ repoId: a.repoId, profileIds: a.profileIds, digest: preview.digest }] : [];
+  });
 }
 
 /** One-line summary for the overview and tooltips; undefined when there is nothing to say. */

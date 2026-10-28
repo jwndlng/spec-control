@@ -1,9 +1,11 @@
 // The git *writes* the dashboard performs for agent sessions (design.md D17), both on an explicit user action:
 // creating a session's worktree, and removing it after read-only checks proved it holds nothing that exists nowhere else.
 // The one more is `repairMovedWorktree`, run by the home migration once the user started a binary that moved the home.
+// Every one of those writes goes through `gitWrite` (no hooks, no automatic maintenance); `git` below only reads.
 import { cp, mkdir, realpath, stat } from "node:fs/promises";
 import { OPENSPEC_PATHS } from "../frameworks/registry.ts";
 import { parseWorktrees } from "../git.ts";
+import { gitWrite } from "../gitWrite.ts";
 import { dirname, join } from "node:path";
 
 const ENV = { GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" };
@@ -60,8 +62,8 @@ export async function checkWorktreeRemovable(worktreePath: string, merged = fals
 export async function removeWorktree(repoPath: string, worktreePath: string, merged = false, unlock = true): Promise<Removable> {
   const check = await checkWorktreeRemovable(worktreePath, merged);
   if (!check.removable) return check;
-  if (unlock) await git(repoPath, ["worktree", "unlock", worktreePath]); // fails harmlessly when it was not locked
-  const removed = await git(repoPath, ["worktree", "remove", worktreePath]);
+  if (unlock) await gitWrite(repoPath, ["worktree", "unlock", worktreePath]); // fails harmlessly when it was not locked
+  const removed = await gitWrite(repoPath, ["worktree", "remove", worktreePath]);
   return removed.ok ? { removable: true } : { removable: false, reason: "git refused to remove the worktree" };
 }
 
@@ -147,22 +149,22 @@ export async function ensureWorktree(repoPath: string, worktreePath: string, bra
     const remote = `origin/${branch}`;
     if (!(await git(repoPath, ["show-ref", "--verify", "--quiet", `refs/remotes/${remote}`])).ok) throw new UnknownBranchError(branch);
     await mkdir(dirname(worktreePath), { recursive: true });
-    await git(repoPath, ["worktree", "prune"]);
+    await gitWrite(repoPath, ["worktree", "prune"]);
     // `--track` writes the same two `branch.<name>` keys git's default `branch.autoSetupMerge` gives every session branch.
-    const added = await git(repoPath, ["worktree", "add", "--track", "-b", branch, worktreePath, remote]);
+    const added = await gitWrite(repoPath, ["worktree", "add", "--track", "-b", branch, worktreePath, remote]);
     if (!added.ok) throw new Error(`could not create the worktree: ${added.err.split("\n").pop()}`);
     return { created: true, base: remote };
   }
   const base = hasBranch ? "HEAD" : (options.startPoint ?? (await defaultRef(repoPath)));
   if (!hasBranch && base === "HEAD" && !(await git(repoPath, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])).ok) throw new NoCommitError();
   await mkdir(dirname(worktreePath), { recursive: true });
-  await git(repoPath, ["worktree", "prune"]); // forget worktrees whose directory was deleted by hand
+  await gitWrite(repoPath, ["worktree", "prune"]); // forget worktrees whose directory was deleted by hand
   if (hasBranch) {
-    const added = await git(repoPath, ["worktree", "add", worktreePath, branch]);
+    const added = await gitWrite(repoPath, ["worktree", "add", worktreePath, branch]);
     if (!added.ok) throw new Error(`could not create the worktree: ${added.err.split("\n").pop()}`);
     return { created: true };
   }
-  const added = await git(repoPath, ["worktree", "add", "-b", branch, worktreePath, base]);
+  const added = await gitWrite(repoPath, ["worktree", "add", "-b", branch, worktreePath, base]);
   if (!added.ok) throw new Error(`could not create the worktree: ${added.err.split("\n").pop()}`);
   return { created: true, base };
 }
@@ -192,7 +194,7 @@ export async function repairMovedWorktree(worktreePath: string): Promise<string 
   }
   const common = await git(worktreePath, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   if (!common.ok || !common.out) return `its repository could not be found${common.err ? `: ${common.err.split("\n").pop()}` : ""}`;
-  const repaired = await git(worktreePath, [`--git-dir=${common.out}`, "worktree", "repair", worktreePath]);
+  const repaired = await gitWrite(worktreePath, [`--git-dir=${common.out}`, "worktree", "repair", worktreePath]);
   if (!repaired.ok) return `git worktree repair failed: ${repaired.err.split("\n").pop() || "no reason given"}`;
   // git reports some problems on stderr and still exits 0, so the record itself decides.
   const listed = await git(worktreePath, [`--git-dir=${common.out}`, "worktree", "list", "--porcelain"]);

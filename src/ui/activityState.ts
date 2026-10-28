@@ -307,3 +307,20 @@ export function unseenLabel(count: number | undefined): string {
   if (!count || count < 1) return "";
   return count > 99 ? "99+" : String(count);
 }
+
+/**
+ * Latest request wins, as in `githubState.ts`: `begin()` numbers a request and supersedes every earlier one,
+ * `supersede()` does the same without a request (a filter change), `latest()` reads the current number without
+ * superseding (Load older), and `current(n)` says whether an answer to request `n` may still be applied.
+ */
+export function latestOnly(): { begin: () => number; supersede: () => void; latest: () => number; current: (n: number) => boolean } {
+  let seq = 0;
+  return {
+    begin: () => ++seq,
+    supersede: () => {
+      seq++;
+    },
+    latest: () => seq,
+    current: (n) => n === seq,
+  };
+}

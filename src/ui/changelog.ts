@@ -15,11 +15,32 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
-    id: "2026-10-27-one-console-per-change",
-    date: "2026-10-27",
-    title: "One console per change, the proposal's included",
+    id: "2026-10-28-tasks-counted-like-openspec",
+    date: "2026-10-28",
+    title: "Task counts match `openspec status`",
     summary:
-      "A change's proposal session no longer runs beside its Implement session. Its console now offers **End proposal session and implement**, which ends it — keeping its worktree and branch — and starts Implement; the proposal's pull request is then handed to the Implement session to merge once it is ready.",
+      "A card's task count is now exactly what the `openspec` CLI counts: a link bullet such as `- [x](notes.md)` is no longer a task, and `-[ ] task` without a space is. A change can no longer reach **Done** early on a ticked link.",
+  },
+  {
+    id: "2026-10-28-shorter-end-session-dialog",
+    date: "2026-10-28",
+    title: "A shorter dialog when you end a session",
+    summary:
+      "Ending or cleaning up a session now shows a headline, one line and short options — **Remove worktree**, **Clean up leftovers**, **Pull** — with the details on hover. Every option starts ticked, **Clean up leftovers** too when it also deletes files outside the change, which are named beside it and copied first.",
+  },
+  {
+    id: "2026-10-28-apply-what-was-previewed",
+    date: "2026-10-28",
+    title: "Shared config applies exactly what you previewed",
+    summary:
+      "**Apply** in the shared-config preview now writes only the repositories and profiles the preview showed. If a repository's `openspec/config.yaml` or the profiles changed after you opened it, that repository is refused with **changed since the preview** — preview again to see the new diff.",
+  },
+  {
+    id: "2026-10-28-desktop-window-fixes",
+    date: "2026-10-28",
+    title: "Links between a change's files, and a steadier macOS app",
+    summary:
+      "A link in an artifact to another file of the same change — `[design](./design.md)` in a proposal — now opens that file in the change's view. In the macOS app, Retry after a port change moves the window to the new port, a link that asks for a new tab opens in your browser instead of replacing the window, and quitting never leaves the server it started running.",
   },
   {
     id: "2026-10-28-long-prompts-reach-the-agent",
@@ -27,6 +48,13 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
     title: "Long prompts reach a running agent intact",
     summary:
       "**Archive**, **Ship** and **Merge** sent to a running agent no longer turn into `[Pasted text #1]` followed by a fragment of the prompt when the prompt is long. The text is typed in small pieces, so the agent shows it as typed and it is submitted as usual.",
+  },
+  {
+    id: "2026-10-27-one-console-per-change",
+    date: "2026-10-27",
+    title: "One console per change, the proposal's included",
+    summary:
+      "A change's proposal session no longer runs beside its Implement session. Its console now offers **End proposal session and implement**, which ends it — keeping its worktree and branch — and starts Implement; the proposal's pull request is then handed to the Implement session to merge once it is ready.",
   },
   {
     id: "2026-10-27-open-in-editor",

@@ -7,6 +7,7 @@ import { dirname, join, relative } from "node:path";
 import type { LabelEntry } from "../shared/labels.ts";
 import { CHANGE_NAME_PATTERN, type DuplicateAfterArchive, type StaleLeftovers, type StrandedArchive, type Worktree } from "../shared/types.ts";
 import { type ActiveChange, findDuplicates, findStrandedArchives, type SessionHint, type StaleInput, staleLeftovers } from "./staleChanges.ts";
+import type { ChangeMetadata } from "./frameworks/framework.ts";
 import { checkoutStatus, currentBranch, defaultBranch, fetchInfo, hasCommitToBranchFrom, hasRemoteRefs, isGitRepo, lastCommitDate, localOnlyCommits, type ParsedStatus, statusPaths, subdirectory, worktrees } from "./git.ts";
 
 export const CHANGE_NAME = CHANGE_NAME_PATTERN;
@@ -104,7 +105,12 @@ export interface RepoSource {
    * Changes the default branch holds both as a change directory and as its archive (stale-changes: "A change committed
    * next to its archive is reported as a duplicate"), by change name. Optional: a source without it reports none.
    */
-  duplicates?(layout: ChangesLayout, archivedOnMain: ReadonlyMap<string, string>, worktrees: readonly Worktree[]): Promise<Map<string, DuplicateAfterArchive>>;
+  duplicates?(
+    layout: ChangesLayout,
+    metadata: ChangeMetadata | undefined,
+    archivedOnMain: ReadonlyMap<string, string>,
+    worktrees: readonly Worktree[],
+  ): Promise<Map<string, DuplicateAfterArchive>>;
   /** Committer date of the last commit touching `absPath` inside the repo. */
   lastActivity(absPath: string): Promise<string | undefined>;
   /** Modified and untracked files under `relRoot` (a framework's root, e.g. `openspec`), per git. Empty for non-git repositories or on failure. */
@@ -262,8 +268,13 @@ export class LocalRepoSource implements RepoSource {
     return staleLeftovers({ ...input, repoPath: this.path });
   }
 
-  duplicates(layout: ChangesLayout, archivedOnMain: ReadonlyMap<string, string>, worktrees: readonly Worktree[]): Promise<Map<string, DuplicateAfterArchive>> {
-    return findDuplicates(this.path, layout, archivedOnMain, worktrees);
+  duplicates(
+    layout: ChangesLayout,
+    metadata: ChangeMetadata | undefined,
+    archivedOnMain: ReadonlyMap<string, string>,
+    worktrees: readonly Worktree[],
+  ): Promise<Map<string, DuplicateAfterArchive>> {
+    return findDuplicates(this.path, layout, metadata, archivedOnMain, worktrees);
   }
 
   worktrees(): Promise<Worktree[]> {

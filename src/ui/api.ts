@@ -209,7 +209,10 @@ export interface Api {
   /** Stores the profiles in the dashboard home; never writes to a repository. */
   saveSharedConfig(config: SharedConfig): Promise<SharedConfig>;
   previewSharedConfig(assignments: SharedConfigAssignment[]): Promise<{ previews: SharedConfigPreview[] }>;
-  /** The one call that writes to tracked repositories: the managed sections of `openspec/config.yaml`. */
+  /**
+   * The one call that writes to tracked repositories: the managed sections of `openspec/config.yaml`. Each assignment
+   * carries its preview's `digest`; a repository without one, or whose file or result changed since, is refused.
+   */
   applySharedConfig(assignments: SharedConfigAssignment[]): Promise<{ results: SharedConfigApplyResult[] }>;
 
   /** Agent sessions (optional feature): an agent CLI in a terminal, one per change. */

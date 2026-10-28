@@ -294,7 +294,7 @@ export async function scanRepo(
     ? latestIso(await source.lastActivity(frameworkDir), newestDirty(dirty, frameworkDir))
     : await source.newestMtime(frameworkDir);
   const ctx: RepoContext = { repo, source, root: repo.path, isMain: true, isGit, branch, worktrees, dirty, framework, project };
-  const detectedLabels = await scanLabels(source, repo.path);
+  const detectedLabels = await scanLabels(source, repo.path, framework.layout.skipDirs);
 
   const listing = await framework.listChanges(source);
   const warnings = [...listing.warnings];
@@ -329,6 +329,7 @@ export async function scanRepo(
       ? await source
           .staleLeftovers({
             layout: framework.layout,
+            metadata: framework.changeMetadata,
             defaultBranch: mainBranch,
             worktrees: listed,
             active: new Map(open.map((c) => [c.name, { name: c.name, created: c.created, ...(c.recorded ? { recorded: c.recorded } : {}) }])),
@@ -341,7 +342,7 @@ export async function scanRepo(
   // The default branch holds the change next to its archive: marked, never moved (stale-changes spec).
   const duplicates =
     isGit && !noCommit && source.duplicates && framework.layout.archiveDir
-      ? await source.duplicates(framework.layout, archivedOnMain, listed).catch(() => undefined)
+      ? await source.duplicates(framework.layout, framework.changeMetadata, archivedOnMain, listed).catch(() => undefined)
       : undefined;
   const changes = resolveDependencies(markStale([...active, ...archived], stale, duplicates));
 
@@ -384,18 +385,20 @@ function markStale(changes: ChangeSnapshot[], stale: Map<string, StaleLeftovers>
   });
 }
 
-const LABEL_SKIP_DIRS = new Set(["node_modules", "vendor", "dist", "build", "target", "openspec"]);
+const LABEL_SKIP_DIRS = ["node_modules", "vendor", "dist", "build", "target"];
 const LABEL_MAX_SUBDIRS = 64;
 const LABEL_MAX_ENTRIES = 500;
 
 /**
  * Technology labels of a project folder: the names of its entries and of its immediate subdirectories' entries, and
- * nothing deeper. Lists directories only — no file is opened, no git runs — so a scan stays read-only.
+ * nothing deeper. Lists directories only — no file is opened, no git runs — so a scan stays read-only. `frameworkDirs`
+ * are the framework module's own directories (`layout.skipDirs`), skipped like dependency folders.
  */
-export async function scanLabels(source: Pick<RepoSource, "listEntries">, root: string): Promise<DetectedLabel[]> {
+export async function scanLabels(source: Pick<RepoSource, "listEntries">, root: string, frameworkDirs: readonly string[]): Promise<DetectedLabel[]> {
+  const skip = new Set([...LABEL_SKIP_DIRS, ...frameworkDirs]);
   const top = (await source.listEntries(root)).slice(0, LABEL_MAX_ENTRIES);
   const subdirs = top
-    .filter((e) => e.kind === "dir" && !e.name.startsWith(".") && !LABEL_SKIP_DIRS.has(e.name))
+    .filter((e) => e.kind === "dir" && !e.name.startsWith(".") && !skip.has(e.name))
     .map((e) => e.name)
     .sort()
     .slice(0, LABEL_MAX_SUBDIRS);

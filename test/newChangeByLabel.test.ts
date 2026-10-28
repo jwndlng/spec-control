@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { ApiError, type Api, httpApi, setApi } from "../src/ui/api.ts";
-import { createInRepos, DependsOnField, toggleDependency } from "../src/ui/newChangeForm.tsx";
+import { createInRepos, DependsOnField, submitState, toggleDependency } from "../src/ui/newChangeForm.tsx";
 import { dependencyChoices, newChangeTargets } from "../src/ui/repoGroups.ts";
 import { byTag, textOf } from "./vnode.ts";
 
@@ -116,4 +116,16 @@ test("the request carries dependsOn only when some were picked", async () => {
     globalThis.fetch = realFetch;
   }
   expect(sent).toEqual([{ name: "add-billing-ui", dependsOn: ["add-billing-schema", "add-billing-api"] }, { name: "add-billing-ui", prompt: "why" }]);
+});
+
+test("the form, in every mode, refuses a reserved or unusable name with its reason as text", () => {
+  expect(submitState("archive", null, false)).toEqual({ trimmed: "archive", nameError: "archive is reserved for archived changes", canSubmit: false });
+  expect(submitState(" Archive ", null, false).canSubmit).toBe(false);
+  expect(submitState("-wip", null, false)).toEqual({ trimmed: "-wip", nameError: "must not start with . or -", canSubmit: false });
+  expect(submitState(".git", null, false).nameError).toBe("must not start with . or -");
+  expect(submitState("foo/bar", null, false).nameError).toContain("only letters");
+  expect(submitState("", null, false).nameError).toBe("required");
+  expect(submitState("add-audit-trail", null, false)).toEqual({ trimmed: "add-audit-trail", nameError: null, canSubmit: true });
+  expect(submitState("add-audit-trail", "choose a label", false).canSubmit).toBe(false);
+  expect(submitState("add-audit-trail", null, true).canSubmit).toBe(false);
 });

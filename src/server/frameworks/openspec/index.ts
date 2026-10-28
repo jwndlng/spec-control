@@ -5,7 +5,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { FRAMEWORK_INFO } from "../../../shared/types.ts";
 import { CHANGE_NAME, type ChangeDirEntry, type RepoSource } from "../../source.ts";
-import { type ChangeScaffold, type FrameworkChange, type FrameworkChangeOutputs, type FrameworkLayout, type FrameworkProject, SpecFramework, type SpecSyncResult } from "../framework.ts";
+import { type ChangeMetadata, type ChangeScaffold, type FrameworkChange, type FrameworkChangeOutputs, type FrameworkLayout, type FrameworkProject, SpecFramework, type SpecSyncResult } from "../framework.ts";
 import { DEFAULT_SCHEMA, readChangeArtifacts } from "./adapter.ts";
 import { parseMarker } from "./marker.ts";
 import { changeSpecsSynced } from "./specSync.ts";
@@ -25,6 +25,14 @@ export class OpenSpecFramework extends SpecFramework {
     skipDirs: [ROOT],
   };
   override readonly sharedConfigFile = CONFIG_FILE;
+  /** The marker, read on a git ref exactly as from a checkout; its warnings are the scan's to report, not stale detection's. */
+  override readonly changeMetadata: ChangeMetadata = {
+    file: CHANGE_MARKER,
+    parse(text) {
+      const { created, recorded } = parseMarker(text);
+      return { ...(created ? { created } : {}), ...(recorded ? { recorded } : {}) };
+    },
+  };
 
   async isProject(dir: string): Promise<boolean> {
     for (const marker of PROJECT_MARKERS) {

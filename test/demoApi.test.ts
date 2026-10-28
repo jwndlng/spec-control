@@ -4,7 +4,7 @@ import { revisionOf } from "../src/ui/api.ts";
 import { createDemoApi } from "../src/ui/demo/demoApi.ts";
 import { DEMO_ROOT } from "../src/ui/demo/sampleData.ts";
 import { candidateBranches } from "../src/shared/pullRequestLink.ts";
-import type { ChangeSnapshot } from "../src/shared/types.ts";
+import type { ChangeSnapshot, SharedConfigAssignment } from "../src/shared/types.ts";
 import { boardCards, ChangeCard } from "../src/ui/kanban.tsx";
 import { type DetailPr, DetailPullRequest, detailPullRequest } from "../src/ui/pullRequests.tsx";
 import { createPrRefresher } from "../src/ui/pullRequestsState.ts";
@@ -96,8 +96,13 @@ test("shared config in the demo: per-repository profiles, outdated after an edit
   const { api } = demo();
   // the demo starts with profiles already carried (see the seed test below); clear the slate for this walk-through
   await api.saveSharedConfig({ profiles: [] });
+  // Apply as the dialog does: with the digests of a preview taken just before.
+  const previewThenApply = async (assignments: SharedConfigAssignment[]) => {
+    const { previews } = await api.previewSharedConfig(assignments);
+    return api.applySharedConfig(assignments.map((a) => ({ ...a, digest: previews.find((p) => p.repoId === a.repoId)?.digest })));
+  };
   const everyRepo = (await api.state()).repos.map((r) => ({ repoId: r.id, profileIds: [] }));
-  await api.applySharedConfig(everyRepo);
+  await previewThenApply(everyRepo);
   expect(await api.sharedConfig()).toEqual({ profiles: [] });
   expect((await api.state()).repos.every((r) => r.sharedConfig === undefined)).toBe(true);
 
@@ -115,10 +120,11 @@ test("shared config in the demo: per-repository profiles, outdated after an edit
   expect(previews[2].refusal).toContain("not an enabled repository");
   expect((await api.state()).repos[0].sharedConfig?.applied).toEqual([]); // a preview changes nothing
 
-  const { results } = await api.applySharedConfig(assignments.slice(0, 3));
+  expect((await api.applySharedConfig([assignments[0]])).results[0].reason).toContain("changed since the preview"); // no digest
+  const { results } = await api.applySharedConfig(assignments.slice(0, 3).map((a, i) => ({ ...a, digest: previews[i].digest })));
   expect(results.map((r) => r.result)).toEqual(["written", "written", "refused"]);
-  expect((await api.applySharedConfig([assignments[1]])).results[0].result).toBe("unchanged");
-  expect((await api.applySharedConfig([{ repoId: first.id, profileIds: ["missing"] }])).results[0].reason).toBe("unknown profile: missing");
+  expect((await previewThenApply([assignments[1]])).results[0].result).toBe("unchanged");
+  expect((await previewThenApply([{ repoId: first.id, profileIds: ["missing"] }])).results[0].reason).toBe("unknown profile: missing");
   let repos = (await api.state()).repos;
   expect(repos[0].sharedConfig?.applied).toEqual([{ id: "base", state: "in-sync" }, { id: "security", state: "in-sync" }]);
   expect(repos[1].sharedConfig?.applied).toEqual([{ id: "base", state: "in-sync" }]);

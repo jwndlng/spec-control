@@ -7,6 +7,8 @@ import {
   ArtifactTabs,
   absoluteFilePath,
   artifactLabel,
+  artifactLinks,
+  artifactLinkTarget,
   awaitingTaskTexts,
   ChangeNotFound,
   closeOnEscape,
@@ -593,4 +595,39 @@ test("the header lists what the change depends on, with states in words, and wha
   expect(byTag(api, "a").map(textOf)).toEqual(["add-billing-ui"]); // add-billing-docs is not in this snapshot
 
   expect(classed(DetailHeader({ repo: billing, change: changes[0], onClose: noop }), "detail-deps")).toEqual([]);
+});
+
+const linked: ChangeArtifactEntry[] = [
+  { id: "proposal", status: "done", files: [{ path: "proposal.md", bytes: 10 }] },
+  { id: "design", status: "done", files: [{ path: "design.md", bytes: 10 }] },
+  { id: "specs", status: "done", files: [{ path: "specs/auth/spec.md", bytes: 10 }] },
+];
+
+test("Link to another artifact of the change: the detail view of the change with that file selected, in place", () => {
+  expect(artifactLinkTarget("./design.md", "proposal.md", linked)).toEqual({ artifactId: "design", file: "design.md" });
+  expect(artifactLinkTarget("design.md#decisions", "proposal.md", linked)).toEqual({ artifactId: "design", file: "design.md" });
+  expect(artifactLinkTarget("../../proposal.md", "specs/auth/spec.md", linked)).toEqual({ artifactId: "proposal", file: "proposal.md" });
+
+  const resolver = artifactLinks("demo-ops", "rotate-keys", "proposal.md", linked, "/board");
+  const href = resolver.resolve("./design.md");
+  expect(href).toBe("/repo/demo-ops/change/rotate-keys?artifact=design&file=design.md&from=%2Fboard");
+  const a = byTag(renderMarkdown("[the design](./design.md)", resolver), "a")[0];
+  expect(a.props.href).toBe(href);
+  expect(a.props.target).toBeUndefined();
+  expect(parseDetailQuery(new URL(a.props.href as string, "http://127.0.0.1:4711").search)).toMatchObject({ artifact: "design", file: "design.md" });
+});
+
+test("Link to a delta spec selects that file", () => {
+  expect(artifactLinkTarget("specs/auth/spec.md", "proposal.md", linked)).toEqual({ artifactId: "specs", file: "specs/auth/spec.md" });
+  expect(artifactLinkTarget("./specs/auth/./spec.md?plain=1", "proposal.md", linked)).toEqual({ artifactId: "specs", file: "specs/auth/spec.md" });
+});
+
+test("Relative link outside the change, to an unlisted file or only a fragment is text", () => {
+  for (const target of ["../../specs/auth/spec.md", "./missing.md", "#top", "", "/proposal.md", "..\\proposal.md", "../proposal.md", "%E0%A4%A.md"]) {
+    expect(artifactLinkTarget(target, "proposal.md", linked)).toBeUndefined();
+  }
+  const resolver = artifactLinks("demo-ops", "rotate-keys", "proposal.md", linked, undefined);
+  const tree = renderMarkdown("[main spec](../../specs/auth/spec.md) and [notes](./missing.md)", resolver);
+  expect(byTag(tree, "a")).toEqual([]);
+  expect(textOf(tree)).toBe("main spec and notes");
 });

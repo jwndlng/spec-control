@@ -2,13 +2,16 @@ import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from 
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, realpath, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { applyCleanup, applyStaleCleanup, isBranchName, isCleaningUp, previewCleanup, previewStaleCleanup, StaleCleanupError, type StaleScope } from "../src/server/cleanup.ts";
+import { applyCleanup, applyStaleCleanup, CleanupBusyError, isBranchName, isCleaningUp, previewCleanup, previewStaleCleanup, StaleCleanupError, type StaleScope } from "../src/server/cleanup.ts";
 import { newRepoConfig } from "../src/server/config.ts";
+import { repositoryKey } from "../src/server/git.ts";
 import { worktreesDir } from "../src/server/paths.ts";
 import { scanRepo } from "../src/server/scanner.ts";
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
 import type { CleanupPreview, RepoConfig, StaleCleanupPreview, StaleCleanupRequest } from "../src/shared/types.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
+import { hookLog, installRepoHooks } from "./hookHelpers.ts";
+import { commitFiles, monorepo, squashMerge as squashMergeAt } from "./monorepoHelpers.ts";
 import { git, harness, tempGitRepo, type Harness } from "./sessionHelpers.ts";
 
 setDefaultTimeout(30_000);
@@ -488,4 +491,69 @@ test("a stale cleanup contacts no remote and leaves every remote-tracking ref al
   }
   expect(existsSync(marker)).toBe(false);
   expect(git(r.path, "for-each-ref", "refs/remotes")).toBe(remotes);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Projects in a subfolder of their repository, hooks, and one cleanup per git repository (harden-git-invocations).
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("a subfolder project's unmerged branch is kept with its commit count, and a crafted confirmation deletes nothing", async () => {
+  const m = await monorepo();
+  const repo = newRepoConfig(m.project(), true);
+  git(m.top, "switch", "-q", "-c", "feat/rotate-keys");
+  const tip = await commitFiles(m.top, { "packages/tools/src/keys.ts": "export const keys = 2;\n" });
+  git(m.top, "switch", "-q", "main");
+
+  const p = await previewCleanup(repo);
+  expect(branchOf(p, "feat/rotate-keys")).toMatchObject({ removable: false, reason: "1 commit(s) not in origin/main" });
+  const result = await applyCleanup(repo, { worktrees: [], prune: false, branches: [{ name: "feat/rotate-keys", commit: tip }] });
+  expect(result.items).toMatchObject([{ kind: "branch", id: "feat/rotate-keys", outcome: "kept", reason: "1 commit(s) not in origin/main" }]);
+  expect(branches(m.top)).toContain("refs/heads/feat/rotate-keys");
+
+  squashMergeAt(m.top, "feat/rotate-keys");
+  const merged = await previewCleanup(repo);
+  expect(branchOf(merged, "feat/rotate-keys")).toMatchObject({ removable: true, mergedBy: "content" });
+  const deleted = await applyCleanup(repo, { worktrees: [], prune: false, branches: [{ name: "feat/rotate-keys", commit: tip }] });
+  expect(deleted.items).toMatchObject([{ kind: "branch", outcome: "deleted" }]);
+});
+
+test("hooks do not run: a cleanup removes a merged worktree, prunes a record and deletes a merged branch", async () => {
+  const r = await repoWithOrigin();
+  const wt = await userWorktree(r, "feat/pushed");
+  await commit(wt, "x.txt", "1");
+  git(wt, "push", "-q", "-u", "origin", "feat/pushed");
+  git(r.path, "merge", "-q", "--ff-only", "feat/pushed");
+  git(r.path, "push", "-q", "origin", "main");
+  git(r.path, "branch", "feat/extra");
+  const gone = await userWorktree(r, "feat/gone");
+  await rm(gone, { recursive: true, force: true });
+  const log = await installRepoHooks(r.path);
+
+  const p = await previewCleanup(r.repo);
+  const pick = (n: string) => ({ name: n, commit: branchOf(p, n)!.commit });
+  const result = await applyCleanup(r.repo, { worktrees: [wt], prune: true, branches: [pick("feat/pushed"), pick("feat/extra")] });
+  expect(result.items.map((i) => [i.kind, i.outcome])).toEqual([
+    ["worktree", "removed"],
+    ["prune", "pruned"],
+    ["branch", "deleted"],
+    ["branch", "deleted"],
+  ]);
+  expect(await hookLog(log)).toEqual([]);
+});
+
+test("one cleanup per git repository: a cleanup of a sibling project is refused as busy while one runs", async () => {
+  const m = await monorepo(["packages/a", "packages/b"]);
+  const a = newRepoConfig(m.project("packages/a"), true);
+  const b = newRepoConfig(m.project("packages/b"), true);
+  git(m.top, "branch", "feat/extra");
+  const tip = git(m.top, "rev-parse", "feat/extra");
+  // Both projects resolved their repository once before, as any earlier action does.
+  await Promise.all([repositoryKey(a.path), repositoryKey(b.path)]);
+
+  const first = applyCleanup(a, { worktrees: [], prune: true, branches: [] });
+  await expect(applyCleanup(b, { worktrees: [], prune: false, branches: [{ name: "feat/extra", commit: tip }] })).rejects.toBeInstanceOf(CleanupBusyError);
+  await first;
+  expect(branches(m.top)).toContain("refs/heads/feat/extra");
+  // Once it is over, the sibling's cleanup runs.
+  expect((await applyCleanup(b, { worktrees: [], prune: false, branches: [{ name: "feat/extra", commit: tip }] })).items).toMatchObject([{ outcome: "deleted" }]);
 });

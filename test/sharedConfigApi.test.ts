@@ -66,6 +66,13 @@ async function fingerprint(root: string): Promise<Record<string, string>> {
   return out;
 }
 
+/** Apply as the dialog does: preview first, then send each repository back with its preview's digest. */
+const previewThenApply = async (body: ReturnType<typeof assign>) => {
+  const { previews } = (await api("/api/shared-config/preview", "POST", body)).body as { previews: { repoId: string; digest: string }[] };
+  const digests = new Map(previews.map((p) => [p.repoId, p.digest]));
+  return api("/api/shared-config/apply", "POST", { assignments: body.assignments.map((a) => ({ ...a, digest: digests.get(a.repoId) })) });
+};
+
 const changedPaths = (a: Record<string, string>, b: Record<string, string>) => [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => a[k] !== b[k]).sort();
 
 beforeAll(async () => {
@@ -136,7 +143,7 @@ test("apply: partial success, exactly one file changes, git sees one modificatio
   const index = await readFile(join(healthy.path, ".git", "index"));
   const others = await Promise.all([broken, disabled].map((r) => fingerprint(r.path)));
 
-  const res = await api("/api/shared-config/apply", "POST", assign(["base", "security"], healthy, broken, disabled));
+  const res = await previewThenApply(assign(["base", "security"], healthy, broken, disabled));
   expect(res.status).toBe(200);
   const byId = Object.fromEntries(res.body.results.map((r: { repoId: string }) => [r.repoId, r]));
   expect(byId[healthy.id]).toEqual({ repoId: healthy.id, result: "written" });
@@ -151,24 +158,39 @@ test("apply: partial success, exactly one file changes, git sees one modificatio
   expect(await stateOf(healthy.id)).toEqual({ unreadable: false, applied: [{ id: "base", state: "in-sync" }, { id: "security", state: "in-sync" }] });
 
   // again: nothing to do, nothing written
-  const again = await api("/api/shared-config/apply", "POST", assign(["base", "security"], healthy));
+  const again = await previewThenApply(assign(["base", "security"], healthy));
   expect(again.body.results).toEqual([{ repoId: healthy.id, result: "unchanged" }]);
 });
 
-test("apply works from the file as it is at write time, not from an earlier preview", async () => {
+test("apply refuses a file changed after the preview and writes nothing; a fresh preview then applies", async () => {
   const file = join(healthy.path, "openspec", "config.yaml");
   await api("/api/shared-config", "PUT", { profiles: [{ ...BASE, context: "We use conventional commits. Squash on merge." }, SECURITY] });
   await freshScan();
   expect((await stateOf(healthy.id)).applied[0]).toEqual({ id: "base", state: "outdated" });
-  await api("/api/shared-config/preview", "POST", assign(["base"], healthy));
-  await writeFile(file, `${await readFile(file, "utf8")}profile: strict # added by hand after the preview\n`);
-  const res = await api("/api/shared-config/apply", "POST", assign(["base"], healthy)); // also detaches "security"
+  const { previews } = (await api("/api/shared-config/preview", "POST", assign(["base"], healthy))).body;
+  const edited = `${await readFile(file, "utf8")}profile: strict # added by hand after the preview\n`;
+  await writeFile(file, edited);
+  const stale = await api("/api/shared-config/apply", "POST", { assignments: [{ repoId: healthy.id, profileIds: ["base"], digest: previews[0].digest }] });
+  expect(stale.status).toBe(200);
+  expect(stale.body.results).toEqual([{ repoId: healthy.id, result: "refused", reason: expect.stringContaining("changed since the preview") }]);
+  expect(await readFile(file, "utf8")).toBe(edited);
+
+  const res = await previewThenApply(assign(["base"], healthy)); // also detaches "security"
   expect(res.body.results[0].result).toBe("written");
   const text = await readFile(file, "utf8");
   expect(text).toContain("Squash on merge.");
   expect(text).toContain("profile: strict # added by hand after the preview");
   expect(text).not.toContain("Threat-model");
   await state.scanner.trigger().done;
+});
+
+test("apply without a digest is refused and writes nothing", async () => {
+  const before = await fingerprint(healthy.path);
+  const res = await api("/api/shared-config/apply", "POST", assign(["base", "security"], healthy));
+  expect(res.status).toBe(200);
+  expect(res.body.results).toEqual([{ repoId: healthy.id, result: "refused", reason: expect.stringContaining("changed since the preview") }]);
+  expect(await fingerprint(healthy.path)).toEqual(before);
+  expect((await api("/api/shared-config/apply", "POST", { assignments: [{ repoId: healthy.id, profileIds: [], digest: 42 }] })).status).toBe(400);
 });
 
 test("malformed selection is a 400; the guard applies to these routes too", async () => {

@@ -157,7 +157,7 @@ The dashboard SHALL be built with `bun build --compile` into one executable name
 - **THEN** the response is `400` with a message
 
 ### Requirement: Create-change endpoint
-`POST /api/repos/<id>/changes` SHALL create a new OpenSpec change in the repository identified by `<id>`. The request body SHALL be JSON `{ name, prompt?, dependsOn?, issue? }`, where `name` is a valid change name (`^[A-Za-z0-9._-]+$`), `prompt` is an optional string and `dependsOn` is an optional list of at most 32 distinct valid change names, none of them equal to `name`, and `issue` is an optional `{ number, title? }` naming the GitHub issue the change is imported from, with `number` a positive integer and `title` a string of at most 256 characters; with `issue` the server writes `issue.yaml` as the `change-creation` capability specifies, deriving the GitHub repository from the repository's `origin` remote. The names in `dependsOn` need not exist: a name that does not is reported as a `missing` dependency once the change is scanned. On success the response is `201` with `{ name, staged }`, where `staged` says whether the new directory was staged in the repository's index, and the repository is rescanned. On failure the response is `400` (invalid body, invalid name, a `dependsOn` that is not such a list, or an invalid `issue`), `404` (unknown repository) or `409` (repository disabled, last scan failed, no `openspec/` parent, an active or archived change already uses that name, or an `issue` was given for a repository whose `origin` is not on `github.com`) with a JSON message. The endpoint MUST NOT write anything to the repository unless the request succeeds; a failed request MUST leave the repository byte-for-byte unchanged, its index and refs included. A failure to stage a successfully created change MUST NOT fail the request. The endpoint is mutating and MUST pass the same-origin protection.
+`POST /api/repos/<id>/changes` SHALL create a new OpenSpec change in the repository identified by `<id>`. The request body SHALL be JSON `{ name, prompt?, dependsOn?, issue? }`, where `name` is a name the `change-creation` capability accepts for a new change ("Reserved and unusable change names are refused": `^[A-Za-z0-9._-]+$`, at most 128 characters, not starting with `.` or `-`, no `..`, not ending in `.` or `.lock`, and not `archive` in any letter case), `prompt` is an optional string and `dependsOn` is an optional list of at most 32 distinct valid change names, none of them equal to `name`, and `issue` is an optional `{ number, title? }` naming the GitHub issue the change is imported from, with `number` a positive integer and `title` a string of at most 256 characters; with `issue` the server writes `issue.yaml` as the `change-creation` capability specifies, deriving the GitHub repository from the repository's `origin` remote. The names in `dependsOn` need not exist: a name that does not is reported as a `missing` dependency once the change is scanned. On success the response is `201` with `{ name, staged }`, where `staged` says whether the new directory was staged in the repository's index, and the repository is rescanned. On failure the response is `400` (invalid body, invalid name, a `dependsOn` that is not such a list, or an invalid `issue`), `404` (unknown repository) or `409` (repository disabled, last scan failed, no `openspec/` parent, an active or archived change already uses that name, or an `issue` was given for a repository whose `origin` is not on `github.com`) with a JSON message. The endpoint MUST NOT write anything to the repository unless the request succeeds; a failed request MUST leave the repository byte-for-byte unchanged, its index and refs included. A failure to stage a successfully created change MUST NOT fail the request. The endpoint is mutating and MUST pass the same-origin protection.
 
 #### Scenario: Successful create
 - **WHEN** `POST /api/repos/<id>/changes` is called with `{ "name": "add-audit-trail" }` for an enabled, successfully scanned repository that has no `add-audit-trail` change
@@ -194,6 +194,10 @@ The dashboard SHALL be built with `bun build --compile` into one executable name
 #### Scenario: Invalid issue
 - **WHEN** the request body's `issue` has a `number` that is not a positive integer, or a `title` longer than 256 characters
 - **THEN** the response is `400` and nothing is written
+
+#### Scenario: Reserved name
+- **WHEN** the request body is `{ "name": "archive" }`
+- **THEN** the response is `400` with a message saying the name is reserved, and nothing is written
 
 ### Requirement: Issue endpoint
 `POST /api/repos/<id>/issues` SHALL run the issue query of the `issue-import` capability for the enabled repository `<id>` and return `{ status, github?, reason?, fetchedAt?, truncated?, issues: [...] }`, where `status` is `ok`, `unavailable` or `failed`, `github` is the repository's `owner/name` when its `origin` is on `github.com`, `reason` explains `unavailable` and `failed` with credentials masked, and `issues` holds the open issues as that capability specifies (empty unless `ok`). An unknown or disabled `<id>` SHALL be refused with `404` without starting a process. A repository that is not a git repository or not on GitHub SHALL be answered `unavailable` without starting a `gh` process. Concurrent requests for the same repository SHALL share one running query. The endpoint is a POST because it starts a process that contacts GitHub; it is a mutating request under the same-origin protection, even though it changes nothing. It SHALL NOT trigger a scan and MUST NOT write anything to disk. No GET endpoint SHALL start the issue query.
@@ -412,6 +416,50 @@ Every API request with a method other than `GET` SHALL be rejected with `403` un
 #### Scenario: Command-line client
 - **WHEN** `curl -X POST -H 'content-type: application/json'` calls `/api/scan` without an `Origin` header
 - **THEN** the request is processed
+
+### Requirement: Every request must be addressed to a loopback host name
+
+The server SHALL refuse every request whose URL host name — the name in its `Host` header — is not `127.0.0.1`, `localhost` or `[::1]` (compared case-insensitively), whatever its method or path: API routes with `GET`, `HEAD` and every other method, `GET /api/version`, the embedded page and any other path the server answers, and requests answered while the server is still starting. The refusal SHALL be `403`, with a JSON `{ error }` body under `/api/`, and SHALL happen before anything else: no route runs, the body is not read, no process is started, no scan is triggered and nothing is read from or written to a repository or the dashboard's home. This protects the read endpoints against DNS rebinding, where a page on another name that resolves to `127.0.0.1` is same-origin with its own requests and could otherwise read their answers. The checks of "Mutating requests are protected against cross-site requests" and of the terminal WebSocket SHALL still apply in addition.
+
+#### Scenario: Rebound page reads the configuration
+- **WHEN** a request `GET /api/config` arrives with `Host: attacker.example:4711`
+- **THEN** the response is `403` and contains no part of the configuration
+
+#### Scenario: Rebound page reads a change's file
+- **WHEN** a request `GET /api/repos/<id>/changes/rotate-keys/file?path=proposal.md` arrives with `Host: attacker.example:4711`
+- **THEN** the response is `403` and the file is not read
+
+#### Scenario: Rebound page forces environment checks
+- **WHEN** a request `GET /api/environment?force=1` arrives with `Host: attacker.example:4711`
+- **THEN** the response is `403` and no process is started
+
+#### Scenario: The page under a foreign name
+- **WHEN** a request `GET /` arrives with `Host: attacker.example:4711`
+- **THEN** the response is `403` and the page is not served
+
+#### Scenario: While starting
+- **WHEN** a request `GET /api/version` arrives with `Host: attacker.example:4711` before the server is ready
+- **THEN** the response is `403`, not the version
+
+#### Scenario: Loopback names keep working
+- **WHEN** the browser, the desktop app or `curl` requests `GET /api/state` at `http://127.0.0.1:4711`, `http://localhost:4711` or `http://[::1]:4711`
+- **THEN** the request is answered as before
+
+### Requirement: Malformed requests are answered with 400
+
+A request the server cannot interpret SHALL be answered with `400` and a JSON `{ error }` message, never with an unhandled exception: a request body that is not JSON on any route that reads one, and a path segment that is not valid percent-encoding (for example `%E0`) in any route that takes a repository id or change name from its path. A refused malformed request SHALL have no side effect: no process is started, no scan is triggered and nothing is written. Any other error that escapes a route SHALL be answered with `500` and `{ "error": "internal error" }`, without a stack trace or other internal detail in the response.
+
+#### Scenario: Body that is not JSON
+- **WHEN** `POST /api/pull-requests/refresh` or `POST /api/github/repos` arrives from the dashboard's own origin with the body `{bad`
+- **THEN** the response is `400` with an `error` message and no `gh` process is started
+
+#### Scenario: Undecodable path segment
+- **WHEN** `POST /api/repos/%E0/enabled` or `GET /api/repos/%E0/cleanup` arrives from the dashboard's own origin
+- **THEN** the response is `400` with an `error` message and nothing is changed
+
+#### Scenario: Unexpected failure
+- **WHEN** a route throws an error it does not handle
+- **THEN** the response is `500` with `{ "error": "internal error" }` and no stack trace
 
 ### Requirement: Session endpoints
 
@@ -1425,3 +1473,67 @@ the same-origin guard of every mutating route.
 #### Scenario: Wrong action
 - **WHEN** a request carries `removeDuplicate: true` with `action: "implement"`
 - **THEN** it is refused and no session starts
+
+### Requirement: Editor endpoints
+The API SHALL provide `POST /api/sessions/<id>/editor`, which opens the editor of the `editor-launch` capability on that
+session's working directory, and `POST /api/worktrees/editor` with `{ repoId, name }`, which opens it on that session
+worktree; both SHALL take the folder from the server's own session records and session worktree list and SHALL return
+`{ started: true, command }` once the editor was started, `command` being the argument list that ran. `repoId` MUST be a
+configured repository and `name` MUST be a single path segment of lower-case letters, digits, dots, dashes and
+underscores. A request SHALL be refused, with no process started, with `403` when agent sessions are disabled or the
+repository is excluded from them; `404` for an unknown session, repository or worktree; `400` for an invalid `name` or
+for a session that belongs to no change (the main console, a project console or an integration session); `409` when
+the folder no longer exists; `503` when the editor's executable is not found, naming the command; and `500` with the
+system's reason when the start fails. Both routes are mutating and subject to the same-origin protection that applies
+to every mutating API request. `GET /api/sessions` SHALL additionally return `editor`: the editor command in effect
+(the configured one, or `code`) and whether its executable was found on this machine.
+
+#### Scenario: Opening a session's worktree
+- **WHEN** `POST /api/sessions/<id>/editor` is sent for an ended change session whose worktree exists
+- **THEN** the response is `200` with `started: true` and the command that ran, whose last argument is that worktree's path
+
+#### Scenario: Path traversal
+- **WHEN** `POST /api/worktrees/editor` is sent with `name` set to `../x`
+- **THEN** the response is `400` and no process is started
+
+#### Scenario: A console is refused
+- **WHEN** `POST /api/sessions/<id>/editor` names a project console session
+- **THEN** the response is `400` and no process is started
+
+#### Scenario: Feature disabled
+- **WHEN** agent sessions are disabled and `POST /api/worktrees/editor` is sent
+- **THEN** the response is `403` and no process is started
+
+#### Scenario: Editor not found
+- **WHEN** the editor command is `my-editor`, which is not on the `PATH`, and an editor request is sent
+- **THEN** the response is `503` naming `my-editor`, and `GET /api/sessions` reports the editor as not found
+
+#### Scenario: Editor routes are same-origin only
+- **WHEN** a page from another origin sends `POST /api/worktrees/editor`
+- **THEN** the response is `403` and no process is started
+
+### Requirement: Writing git commands run no hooks and ignore configuration that would widen them
+Every git command the dashboard runs that writes to a tracked repository, as enumerated in "The dashboard never writes
+to tracked repositories" — the pull action's and the automatic fetch's `fetch`, the fast-forward `merge`, the leftover
+`rm --cached` and restoring `add`, the create-change and dismissal `add`, `branch -D`, and `worktree add`, `remove`,
+`unlock`, `prune` and `repair` — SHALL run with `core.hooksPath` pointed at an empty folder under the dashboard home and
+with automatic maintenance off, so that no hook of the repository, of the user's global hooks folder or of a git
+template runs. Where a configuration setting of the system, the user or the repository would make such a command do
+more than its requirement allows, the command SHALL be given the command-line option that overrides it, as specified per
+command in the `repository-pull` capability. These are options and `-c` settings of the subcommands already enumerated;
+they MUST NOT add a subcommand. `git init` of a new project and the GitHub clone keep their own requirements.
+
+#### Scenario: A reference-transaction hook
+- **WHEN** a tracked repository has an executable `reference-transaction` hook that appends to a log file, and the user
+  pulls it, an automatic fetch runs, a session worktree is created and later removed, and a cleanup deletes a merged
+  branch
+- **THEN** the log file is empty and every one of those actions has its usual outcome
+
+#### Scenario: A global hooks folder
+- **WHEN** the user's global configuration sets `core.hooksPath` to a folder holding an executable `post-index-change`
+  hook, and the user creates a change and then dismisses another
+- **THEN** the hook never runs, and both directories are staged as before
+
+#### Scenario: No new subcommand
+- **WHEN** every git invocation of a pull, a Resolve and pull, a cleanup and a stale cleanup is recorded
+- **THEN** each writing invocation's subcommand is one of those already enumerated, preceded only by `-c` settings

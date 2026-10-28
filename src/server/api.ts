@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { ACTIVITY_KINDS, AUTO_FETCH_SECONDS, type ActivityKind, isChangeless, UNCOMMITTED_LISTED } from "../shared/types.ts";
 import { availableName } from "../shared/nameHints.ts";
+import { isChangeDirName } from "../shared/changeNames.ts";
 import { labelKey } from "../shared/labels.ts";
 import { withAutoFetch, withPrTitleConvention, withRepoAgent } from "../shared/repoSettings.ts";
 import { MAX_PAGE, type ActivityLog, type PageQuery } from "./activity/log.ts";
@@ -15,7 +16,7 @@ import { NewFolderError } from "./newFolder.ts";
 import { ConfigValidationError, configRevision, newRepoConfig, repoId, updateConfig, validateConfig, validateIgnorePaths, validateScanRoots } from "./config.ts";
 import { createChange } from "./createChange.ts";
 import { createProject, CreateProjectError } from "./createProject.ts";
-import { dismissChange, DismissError, isDismissableName, previewDismiss } from "./dismissChange.ts";
+import { dismissChange, DismissError, previewDismiss } from "./dismissChange.ts";
 import { discoverRepos } from "./discover.ts";
 import { environmentReport } from "./environment.ts";
 import { confirmIntegration, confirmPendingIntegrations, startIntegration } from "./integration.ts";
@@ -27,7 +28,7 @@ import { MAX_BLOCKING_FILES, PullBusyError, pullAll, pullRepository, resolvePull
 import { Issues } from "./issues.ts";
 import { PullRequests, type RepoTarget } from "./pullRequests.ts";
 import type { Scanner } from "./scanner.ts";
-import { applyTo, EMPTY_SHARED_CONFIG, loadSharedConfig, previewFor, SharedConfigValidationError, saveSharedConfig } from "./sharedConfig.ts";
+import { applyTo, EMPTY_SHARED_CONFIG, loadSharedConfig, previewDigest, previewFor, SharedConfigValidationError, saveSharedConfig } from "./sharedConfig.ts";
 import { SessionError, type SessionManager } from "./sessions/manager.ts";
 import { LocalRepoSource } from "./source.ts";
 import { sessionHints } from "./staleChanges.ts";
@@ -619,6 +620,8 @@ interface Selection {
   /** Why the repository is refused when `repo` is undefined. */
   refusal: string;
   profileIds: string[];
+  /** The preview's digest the request sent back, if any; apply refuses without a matching one. */
+  digest?: string;
 }
 
 /**
@@ -634,16 +637,16 @@ async function selection(state: AppState, req: Request): Promise<Selection[] | R
   }
   const assignments = (body as { assignments?: unknown } | null)?.assignments;
   const valid = (a: unknown): a is SharedConfigAssignment =>
-    typeof a === "object" && a !== null && typeof (a as SharedConfigAssignment).repoId === "string" && Array.isArray((a as SharedConfigAssignment).profileIds) && (a as SharedConfigAssignment).profileIds.every((id) => typeof id === "string");
-  if (!Array.isArray(assignments) || !assignments.every(valid)) return json({ error: "assignments must be a list of { repoId, profileIds }" }, 400);
+    typeof a === "object" && a !== null && typeof (a as SharedConfigAssignment).repoId === "string" && Array.isArray((a as SharedConfigAssignment).profileIds) && (a as SharedConfigAssignment).profileIds.every((id) => typeof id === "string") && ((a as SharedConfigAssignment).digest === undefined || typeof (a as SharedConfigAssignment).digest === "string");
+  if (!Array.isArray(assignments) || !assignments.every(valid)) return json({ error: "assignments must be a list of { repoId, profileIds, digest? }" }, 400);
   const enabled = new Map(state.config.repos.filter((r) => r.enabled).map((r) => [r.id, r]));
   const byRepo = new Map(assignments.map((a) => [a.repoId, a])); // last one wins for a repeated repository
   // Shared profiles live in a framework's own config file; a repository whose framework has none is not offered them.
   const framework = new Map(state.scanner.snapshot.repos.map((r) => [r.id, frameworkById(r.framework)]));
   return [...byRepo.values()].map((a) => {
     const repo = enabled.get(a.repoId);
-    if (repo && framework.has(a.repoId) && !framework.get(a.repoId)?.sharedConfigFile) return { repoId: a.repoId, repo: undefined, profileIds: a.profileIds, refusal: NO_SHARED_CONFIG };
-    return { repoId: a.repoId, repo, profileIds: a.profileIds, refusal: NOT_TRACKED };
+    if (repo && framework.has(a.repoId) && !framework.get(a.repoId)?.sharedConfigFile) return { repoId: a.repoId, repo: undefined, profileIds: a.profileIds, digest: a.digest, refusal: NO_SHARED_CONFIG };
+    return { repoId: a.repoId, repo, profileIds: a.profileIds, digest: a.digest, refusal: NOT_TRACKED };
   });
 }
 
@@ -656,7 +659,7 @@ async function postSharedConfigPreview(state: AppState, req: Request): Promise<R
   const shared = (await loadSharedConfig()) ?? EMPTY_SHARED_CONFIG;
   const previews: SharedConfigPreview[] = [];
   for (const { repoId, repo, profileIds, refusal } of selected) {
-    previews.push(repo ? await previewFor(repo, shared, profileIds) : { repoId, current: { unreadable: true, applied: [] }, before: "", after: "", refusal });
+    previews.push(repo ? await previewFor(repo, shared, profileIds) : { repoId, current: { unreadable: true, applied: [] }, before: "", after: "", digest: previewDigest("", ""), refusal });
   }
   return json({ previews });
 }
@@ -667,8 +670,8 @@ async function postSharedConfigApply(state: AppState, req: Request): Promise<Res
   if (selected instanceof Response) return selected;
   const shared = (await loadSharedConfig()) ?? EMPTY_SHARED_CONFIG;
   const results: SharedConfigApplyResult[] = [];
-  for (const { repoId, repo, profileIds, refusal } of selected) {
-    results.push(repo ? await applyTo(repo, shared, profileIds) : { repoId, result: "refused", reason: refusal });
+  for (const { repoId, repo, profileIds, digest, refusal } of selected) {
+    results.push(repo ? await applyTo(repo, shared, profileIds, digest) : { repoId, result: "refused", reason: refusal });
   }
   state.scanner.trigger();
   return json({ results });
@@ -749,7 +752,7 @@ function dismissTarget(state: AppState, repoId: string, name: string): { repo: R
   if (!repo.enabled) return json({ error: "repository is disabled" }, 409);
   const scanned = state.scanner.snapshot.repos.find((r) => r.id === repoId);
   if (!scanned?.ok) return json({ error: "repository has not been successfully scanned" }, 409);
-  if (!isDismissableName(name)) return json({ error: "invalid change name" }, 400);
+  if (!isChangeDirName(name)) return json({ error: "invalid change name" }, 400);
   return { repo, scanned };
 }
 
@@ -966,7 +969,7 @@ async function postBranchDelete(state: AppState, req: Request, repoId: string): 
 async function staleTarget(state: AppState, repoId: string, name: string): Promise<{ repo: RepoConfig; scope: StaleScope } | Response> {
   const repo = cleanupTarget(state, repoId);
   if (repo instanceof Response) return repo;
-  if (!isDismissableName(name)) return json({ error: "invalid change name" }, 400);
+  if (!isChangeDirName(name)) return json({ error: "invalid change name" }, 400);
   const scanned = state.scanner.snapshot.repos.find((r) => r.id === repoId);
   if (!scanned?.ok) return json({ error: "repository has not been successfully scanned" }, 409);
   const sessions = state.sessions?.list() ?? [];

@@ -90,13 +90,14 @@ artifacts are in, and MUST NOT carry an artifact state label.
 Selecting it SHALL show the selected session's terminal — what the agent printed, as it printed it, with what the
 terminal has shown so far before it follows live — together with the session's change, repository, agent, worktree path
 and branch, its state, its default responses and its actions: End session or Clean up, Resume when available, Delete
-record for an ended session, and "Copy cd" for the worktree. The terminal SHALL be coloured from the dashboard's theme
+record for an ended session, "Copy cd" for the worktree and **Open in editor** (`editor-launch`) for the folder the
+session's agent works in. The terminal SHALL be coloured from the dashboard's theme
 tokens and SHALL load nothing from the network. It SHALL follow the size of the panel, and SHALL be the part of the
 overlay that scrolls, so the page behind it does not move.
 
 With no session to show the tab SHALL say why and leave the user something to do: for a change whose session worktree
 has outlived its session record, that there is no terminal to show while its work is still there, with the worktree's
-path and a `cd` to copy; for a change that has neither a session nor a session worktree, that no agent has worked on it
+path, a `cd` to copy and **Open in editor** for that worktree; for a change that has neither a session nor a session worktree, that no agent has worked on it
 yet, together with the starters its stage allows. Neither state SHALL show a terminal, and neither MUST be reported as
 an error.
 
@@ -106,7 +107,8 @@ and the detail view MUST look and behave as it did before.
 #### Scenario: A change with a session
 - **WHEN** the user opens the detail view of a change whose Implement session is running
 - **THEN** the tab strip shows `Proposal`, `Design`, `Specs`, `Tasks` and `Console`, and selecting `Console` shows that
-  session's terminal with its earlier output, its worktree path and branch, and its actions
+  session's terminal with its earlier output, its worktree path and branch, and its actions, **Open in editor** among
+  them
 
 #### Scenario: Console is selectable while artifacts are not
 - **WHEN** a change has a running session and no artifact file at all
@@ -123,7 +125,8 @@ and the detail view MUST look and behave as it did before.
 
 #### Scenario: A worktree without a session record
 - **WHEN** the change's session record is gone and its worktree still holds uncommitted work
-- **THEN** the Console tab says there is no terminal to show, names the worktree's path and offers a `cd` to copy
+- **THEN** the Console tab says there is no terminal to show, names the worktree's path, offers a `cd` to copy and offers
+  **Open in editor** for that worktree
 
 #### Scenario: Feature off
 - **WHEN** agent sessions are disabled
@@ -141,6 +144,14 @@ session, and MUST NOT ask the user for a further key press. When the prompt was 
 say so as it does for any other text sent on the user's behalf. Archive SHALL open its own session as before, and no
 starter SHALL be offered for a session that a prompt cannot reach.
 
+For a running **Draft artifacts** session on `docs/<change>` the tab SHALL offer Draft as sent into that session and
+every other starter the stage allows but Fast-forward as **ending the proposal session and starting** that action —
+labelled and described so, never as sending the prompt to this session — so the tab always offers the change's next
+step. Activating one SHALL open the action asking to end the proposal session first (`agent-sessions`: "The proposal
+session gives way to the next step") and then show the new session. When the proposal worktree's work status is
+`uncommitted` or `unpushed`, it SHALL first ask one confirmation saying that the proposal is not pushed yet and that its
+worktree and branch are kept; for any other work status it SHALL ask nothing, since ending it loses nothing.
+
 For a change with no session and no session worktree the tab SHALL offer the starters its stage allows as openings for
 a new session, disabled with an explanation when the repository's agent is not found on this machine.
 
@@ -153,6 +164,17 @@ not required for implementing, such as a design.
 - **WHEN** a Draft session is still running, the change has moved to `Ready`, and its Console tab is open
 - **THEN** the tab offers **Implement**, saying it sends the prompt to this session, and activating it types that prompt
   into the terminal without asking the user for another key press
+
+#### Scenario: Proposal finished, Implement next
+- **WHEN** the Draft session of `rotate-keys` runs on `docs/rotate-keys`, its proposal is pushed, the change has moved to
+  `Ready`, and its Console tab is open
+- **THEN** the split button shows **Implement**, described as ending the proposal session and starting Implement;
+  activating it asks nothing, ends that session, starts Implement on `feat/rotate-keys` and shows it in the tab
+
+#### Scenario: Proposal not pushed yet
+- **WHEN** the same holds but the `docs-rotate-keys` worktree has uncommitted files
+- **THEN** activating **Implement** first asks for confirmation, saying the proposal is not pushed and its worktree is kept,
+  and cancelling ends nothing
 
 #### Scenario: The prompt was not sent
 - **WHEN** the next step is sent to a session whose agent never shows the typed prompt
@@ -175,8 +197,8 @@ not required for implementing, such as a design.
 - **THEN** its Console tab's main part says it waits for the checks, and its menu offers **Implement**
 
 ### Requirement: The console tab selects among the change's sessions
-A change MAY have more than one session at a time — its own session and the session of its archive worktree run in
-separate worktrees. When it has more than one, the Console tab SHALL list them with their action, branch and live
+A change MAY have more than one session record — at most one of them running (`agent-sessions`: "Session lifecycle and
+control"), the others ended, their output still readable and their worktrees possibly still holding work. When it has more than one, the Console tab SHALL list them with their action, branch and live
 state, most recent first, and show the selected one; with a single session the list MAY be omitted. The most recently
 active session SHALL be selected by default.
 
@@ -185,8 +207,9 @@ selected tab. A URL naming a session the change does not have SHALL fall back to
 error. Typing, default responses and next-step prompts MUST reach only the selected session.
 
 #### Scenario: Two sessions
-- **WHEN** a change has a running Implement session and a running Archive session
-- **THEN** the Console tab lists both with their branch and state and shows the more recently active one
+- **WHEN** a change has an ended Draft session on `docs/rotate-keys` and a running Implement session on `feat/rotate-keys`
+- **THEN** the Console tab lists both with their branch and state, shows the more recently active one, and only the
+  running one offers next steps
 
 #### Scenario: Selection is linkable
 - **WHEN** the user selects the Console tab and its second session and reloads the page
@@ -306,7 +329,7 @@ The detail view SHALL offer a toggle that shows the selected file's source text 
 - **THEN** that file is also shown as raw source
 
 ### Requirement: Tasks are shown as a read-only checklist
-When the tasks artifact is selected, its task list SHALL be rendered as checkboxes reflecting each task's state, together with the same progress the card shows. A task SHALL be drawn in one of three states: **done**, ticked; **awaiting validation** (`- [~]`), a third state that is neither ticked nor empty and is announced as mixed rather than as done or not done; and **open**, empty. Where any task awaits validation, the view SHALL say in words how many do. The checkboxes MUST NOT be operable in any state: the dashboard MUST NOT write a change to the repository from this view.
+When the tasks artifact is selected, its task list SHALL be rendered as checkboxes reflecting each task's state, together with the same progress the card shows. A task SHALL be drawn in one of three states: **done**, ticked; **needs you** (`- [~]`), a third state that is neither ticked nor empty and is announced as mixed rather than as done or not done; and **open**, empty. Where any task needs the user, the view SHALL say in words how many do — `N tasks need you` (`1 task needs you`) — and that each is something to check or do that only the user can, confirmed with **Validate** or when archiving; and it SHALL list those tasks' text above the checklist, in file order, so what the user has to do is the first thing the view shows. The checkboxes MUST NOT be operable in any state: the dashboard MUST NOT write a change to the repository from this view.
 
 #### Scenario: Checklist
 - **WHEN** the tasks artifact has 12 tasks of which 4 are ticked
@@ -314,7 +337,7 @@ When the tasks artifact is selected, its task list SHALL be rendered as checkbox
 
 #### Scenario: Awaiting validation
 - **WHEN** the tasks artifact has 15 tasks of which 13 are ticked and 2 are `- [~]`
-- **THEN** 15 checkboxes are shown, the 2 awaiting ones are drawn in the third state and announced as mixed, and the view says that 2 tasks await validation
+- **THEN** 15 checkboxes are shown, the 2 awaiting ones are drawn in the third state and announced as mixed, and the view says that 2 tasks need you and lists their text above the checklist
 
 #### Scenario: Not editable
 - **WHEN** the user clicks a checkbox in the tasks view, in any of the three states

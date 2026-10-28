@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type AppState, createFetchHandler } from "../src/server/api.ts";
@@ -234,6 +234,20 @@ test("400 (invalid name) in a git repository leaves the index and tree untouched
   const before = await indexAndTree(h.repoRoot);
   const res = await post(h.base, `/api/repos/${h.repoId}/changes`, { name: "foo/bar" });
   expect(res.status).toBe(400);
+  expect(await indexAndTree(h.repoRoot)).toBe(before);
+});
+
+test("400 for the archive root in a repository with no archived change yet: nothing is written, the index included", async () => {
+  h = await harness({ git: true });
+  const before = await indexAndTree(h.repoRoot);
+  for (const name of ["archive", "Archive", ".git", "-wip", "a..b", "notes.", "notes.lock"]) {
+    const res = await post(h.base, `/api/repos/${h.repoId}/changes`, { name });
+    expect([name, res.status]).toEqual([name, 400]);
+    const body = (await res.json()) as { error: string };
+    expect([name, body.error.startsWith("invalid change name: ")]).toEqual([name, true]);
+    if (name === "archive") expect(body.error).toContain("reserved");
+  }
+  expect(existsSync(join(h.repoRoot, "openspec", "changes", "archive"))).toBe(false);
   expect(await indexAndTree(h.repoRoot)).toBe(before);
 });
 

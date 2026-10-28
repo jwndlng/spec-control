@@ -6,6 +6,7 @@
 // repository carries, and whether they are current, is therefore derived from the repository alone, and everything
 // outside the markers stays the project's own. Applying is the only operation here that writes to a tracked
 // repository; it touches nothing but those sections of that one file.
+import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isMap, isScalar, isSeq, parseDocument, Scalar, YAMLSeq } from "yaml";
@@ -288,22 +289,34 @@ export function resolveProfiles(shared: SharedConfig, profileIds: string[]): Sha
   return shared.profiles.filter((p) => profileIds.includes(p.id));
 }
 
+/** Digest of what a preview showed: the file text and the text apply would write. */
+export function previewDigest(before: string, after: string): string {
+  return createHash("sha256").update(`${before}\0${after}`).digest("hex");
+}
+
+export const CHANGED_SINCE_PREVIEW = "the file or the profiles changed since the preview; preview again";
+
 /** What apply would do to one repository. Reads only. `repo` must come from the dashboard config, never a request. */
 export async function previewFor(repo: RepoConfig, shared: SharedConfig, profileIds: string[]): Promise<SharedConfigPreview> {
   const before = await readConfigYaml(repo);
   const base = { repoId: repo.id, current: repoSharedConfig(before, shared), before: before ?? "" };
-  if (before === undefined) return { ...base, after: "", refusal: "openspec/config.yaml does not exist or cannot be read" };
+  const withDigest = (preview: Omit<SharedConfigPreview, "digest">): SharedConfigPreview => ({ ...preview, digest: previewDigest(preview.before, preview.after) });
+  if (before === undefined) return withDigest({ ...base, after: "", refusal: "openspec/config.yaml does not exist or cannot be read" });
   try {
-    return { ...base, after: applyShared(before, resolveProfiles(shared, profileIds)) };
+    return withDigest({ ...base, after: applyShared(before, resolveProfiles(shared, profileIds)) });
   } catch (err) {
-    return { ...base, after: before, refusal: err instanceof Error ? err.message : String(err) };
+    return withDigest({ ...base, after: before, refusal: err instanceof Error ? err.message : String(err) });
   }
 }
 
-/** Writes the managed sections into one repository's `openspec/config.yaml`. Re-reads the file; never trusts a preview. */
-export async function applyTo(repo: RepoConfig, shared: SharedConfig, profileIds: string[]): Promise<SharedConfigApplyResult> {
+/**
+ * Writes the managed sections into one repository's `openspec/config.yaml`. Re-reads the file and never trusts a
+ * preview's text: it writes only what it computes now, and only when that matches the preview's `digest`.
+ */
+export async function applyTo(repo: RepoConfig, shared: SharedConfig, profileIds: string[], digest: string | undefined): Promise<SharedConfigApplyResult> {
   const preview = await previewFor(repo, shared, profileIds);
   if (preview.refusal) return { repoId: repo.id, result: "refused", reason: preview.refusal };
+  if (digest !== preview.digest) return { repoId: repo.id, result: "refused", reason: CHANGED_SINCE_PREVIEW };
   if (preview.after === preview.before) return { repoId: repo.id, result: "unchanged" };
   try {
     const mode = (await stat(configYaml(repo))).mode & 0o777;

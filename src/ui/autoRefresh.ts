@@ -154,6 +154,15 @@ export function createRefreshLoop({ intervalMs: delay, run, setTimer, clearTimer
   };
 }
 
+/**
+ * Whether a fetched snapshot may replace the shown one: snapshots only move forward, so a poll that answers after a
+ * refresh cannot step the board back to an earlier scan. `generatedAt` values are ISO strings and compare as text; an
+ * equal one is taken, so an unchanged poll still counts as an answer.
+ */
+export function newerSnapshot(shown: string | undefined, next: string): boolean {
+  return shown === undefined || next >= shown;
+}
+
 export interface RefreshOptions<S extends { generatedAt: string }> {
   /** Narrowed on purpose: a refresh can reach the scan and the snapshot, and nothing else. */
   api: { scan(): Promise<{ started: boolean }>; state(): Promise<S> };
