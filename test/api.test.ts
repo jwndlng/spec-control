@@ -73,8 +73,8 @@ test("enabling a repo persists and triggers a scan that populates state", async 
   expect(snap.repos[0].name).toBe("demo-ops");
   expect(snap.repos[0].changes.length).toBeGreaterThan(8);
   expect((await (await send("/api/scan", "POST")).json()).started).toBe(true);
-  await state.scanner.trigger().done;
-});
+  while (state.scanner.scanning) await Bun.sleep(10);
+}, 30_000); // the scan request during the first scan queues a follow-up: three full scans of the fixture
 
 test("changing only labels saves without a scan; an invalid label is refused and changes nothing", async () => {
   const [repo] = state.config.repos;
@@ -330,3 +330,71 @@ test("a config save naming the current revision is applied; one naming an older 
   expect(state.config.pollIntervalSeconds).toBe(60);
   expect(state.config.labelColors).toBeUndefined();
 });
+
+/** A second server whose scans wait on a gate, so a request can arrive while one is in flight. */
+async function gatedServer() {
+  let open: () => void = () => {};
+  let gate = new Promise<void>((resolve) => (open = resolve));
+  let scans = 0;
+  const gated: AppState = { config: defaultConfig(), scanner: undefined as unknown as Scanner };
+  gated.scanner = new Scanner(() => gated.config, {
+    persist: false,
+    sharedConfig: async () => {
+      scans++;
+      await gate;
+      return undefined;
+    },
+  });
+  const srv = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: createFetchHandler({ state: gated, indexHtml: "<title>stub</title>" }) });
+  const url = `http://127.0.0.1:${srv.port}`;
+  return {
+    state: gated,
+    scans: () => scans,
+    release: () => {
+      open();
+      gate = new Promise<void>((resolve) => (open = resolve));
+    },
+    request: (path: string, method = "GET", body?: string) =>
+      fetch(`${url}${path}`, { method, body, headers: method === "GET" ? {} : { "content-type": "application/json" } }),
+    stop: () => srv.stop(true),
+  };
+}
+
+test("a repository enabled through PUT /api/config during a slow scan shows up without another trigger", async () => {
+  const g = await gatedServer();
+  try {
+    const nano = newRepoConfig(join(FIXTURES, "demo-ops"), true);
+    const soc = newRepoConfig(join(FIXTURES, "beta-soc"), true);
+    expect((await g.request("/api/config", "PUT", JSON.stringify({ ...defaultConfig(), repos: [nano] }))).status).toBe(200);
+    expect(g.state.scanner.scanning).toBe(true);
+    expect((await g.request("/api/config", "PUT", JSON.stringify({ ...defaultConfig(), repos: [nano, soc] }))).status).toBe(200);
+    // Let the running scan and then the follow-up through; nothing else triggers one.
+    while (g.state.scanner.scanning) {
+      g.release();
+      await Bun.sleep(20);
+    }
+    const snap = await (await g.request("/api/state")).json();
+    expect(snap.repos.map((r: { name: string }) => r.name)).toEqual(["demo-ops", "beta-soc"]);
+    expect(g.scans()).toBe(2);
+  } finally {
+    g.stop();
+  }
+}, 30_000);
+
+test("POST /api/scan: started when idle; during a scan not started, but one follow-up is queued", async () => {
+  const g = await gatedServer();
+  try {
+    expect(await (await g.request("/api/scan", "POST")).json()).toEqual({ started: true });
+    expect(await (await g.request("/api/scan", "POST")).json()).toEqual({ started: false });
+    expect(await (await g.request("/api/scan", "POST")).json()).toEqual({ started: false });
+    expect(g.scans()).toBe(1);
+    g.release();
+    while (g.scans() < 2) await Bun.sleep(5);
+    expect(g.state.scanner.scanning).toBe(true);
+    g.release();
+    while (g.state.scanner.scanning) await Bun.sleep(5);
+    expect(g.scans()).toBe(2);
+  } finally {
+    g.stop();
+  }
+}, 30_000);

@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, normalize, parse } from "node:path";
 
@@ -110,6 +110,99 @@ export function canonicalPath(p: string): string {
  */
 export function whichOnPath(command: string): string | undefined {
   return Bun.which(command, { PATH: process.env.PATH ?? "" }) ?? undefined;
+}
+
+/**
+ * What decides whether macOS's `/usr/bin/git` is git. On every Mac that path is an `xcrun` placeholder: it runs the git of
+ * the active developer directory, or, when there is none, asks the system to offer installing the command line
+ * developer tools and fails. Replaceable for tests, which have no Mac (and must not depend on whether theirs has the
+ * tools); the server always uses the defaults.
+ */
+export interface GitLookup {
+  platform: string;
+  env: Record<string, string | undefined>;
+  placeholder: string;
+  /** The link `xcode-select --switch` maintains. */
+  selectLink: string;
+  /** Where `xcode-select -p` looks when neither `DEVELOPER_DIR` nor the link names a directory, in its order. */
+  developerDirs: readonly string[];
+}
+
+let gitLookupOverride: Partial<GitLookup> | undefined;
+
+/** For tests: simulate another machine's git lookup, or `undefined` to return to this one's. */
+export function useGitLookup(lookup: Partial<GitLookup> | undefined): void {
+  gitLookupOverride = lookup;
+}
+
+function gitLookup(): GitLookup {
+  return {
+    platform: process.platform,
+    env: process.env,
+    placeholder: "/usr/bin/git",
+    selectLink: "/var/db/xcode_select_link",
+    developerDirs: ["/Applications/Xcode.app/Contents/Developer", "/Library/Developer/CommandLineTools"],
+    ...gitLookupOverride,
+  };
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function realpathOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * The active developer directory, found the way `xcode-select -p` finds it but with file-system lookups only: starting
+ * `xcode-select` would be a process the environment report promises not to start.
+ */
+function developerDir(lookup: GitLookup): string | undefined {
+  const fromEnv = lookup.env.DEVELOPER_DIR;
+  let fromLink: string | undefined;
+  try {
+    fromLink = realpathSync(lookup.selectLink);
+  } catch {
+    fromLink = undefined;
+  }
+  const candidates = [fromEnv, fromLink, ...lookup.developerDirs].filter((dir): dir is string => Boolean(dir));
+  return candidates.find(isDirectory);
+}
+
+/**
+ * The first `git` on the PATH — the one every git command the dashboard runs would start — and whether it is only
+ * macOS's placeholder (`placeholder: true`), which is never run to find out.
+ */
+export function locateGit(): { path: string; placeholder: boolean } | undefined {
+  const path = whichOnPath("git");
+  if (!path) return undefined;
+  const lookup = gitLookup();
+  if (lookup.platform !== "darwin" || realpathOrSelf(path) !== realpathOrSelf(lookup.placeholder)) return { path, placeholder: false };
+  const dir = developerDir(lookup);
+  return { path, placeholder: !(dir && isFile(join(dir, "usr", "bin", "git"))) };
+}
+
+/** Where git is, when it is git: the one answer every "is git there" question gets (environment-check). */
+export function gitExecutable(): string | undefined {
+  const git = locateGit();
+  return git && !git.placeholder ? git.path : undefined;
 }
 
 /** Last fetched pull-request lists. Display-only: deleting it loses the cached lists and nothing else. */

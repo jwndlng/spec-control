@@ -7,7 +7,7 @@ import { join, sep } from "node:path";
 import { agentInstallSteps, type InstallPlatform, installPlatform } from "../shared/agentDefaults.ts";
 import { ENVIRONMENT_STATUS_ORDER, type Config, type EnvironmentCheck, type EnvironmentReport, type EnvironmentStatus, type EnvironmentView, type InstructionStep, type Snapshot } from "../shared/types.ts";
 import { describeStep, migrationOutcome } from "./homeMigration.ts";
-import { dashboardHome, whichOnPath } from "./paths.ts";
+import { dashboardHome, gitExecutable, locateGit, whichOnPath } from "./paths.ts";
 import { availability } from "./sessions/agents.ts";
 
 /** Reused for at most this long, so a double mount costs one computation. **Re-check** asks for a fresh one. */
@@ -129,12 +129,18 @@ function migrationWarning(id: string, label: string, dir: string): EnvironmentCh
       id,
       label,
       status: "warning",
-      found: `writable: ${dir}; moving the home left ${outcome.pending.length === 1 ? "one step" : `${outcome.pending.length} steps`} to finish: ${outcome.pending.map(describeStep).join("; ")}`,
+      found: `writable: ${dir}; ${outcome.kind === "retried" && outcome.resumed ? "resuming a move of the home that an earlier start was stopped in the middle of" : "moving the home"} left ${outcome.pending.length === 1 ? "one step" : `${outcome.pending.length} steps`} to finish: ${outcome.pending.map(describeStep).join("; ")}`,
       remedy: "Spec Control retries these on the next start; the link at the former home keeps everything usable meanwhile.",
       instructions: [{ text: "Restart Spec Control once the repositories named above are back where they were." }],
     };
   }
   return undefined;
+}
+
+/** A move of the home that this start finished for an interrupted one: said once, on an otherwise fine check. */
+function migrationNote(): string {
+  const outcome = migrationOutcome();
+  return outcome.kind === "retried" && outcome.resumed && outcome.pending.length === 0 ? "; this start finished moving the home, which an earlier start was stopped in the middle of" : "";
 }
 
 async function checkDashboardHome(): Promise<EnvironmentCheck> {
@@ -146,7 +152,7 @@ async function checkDashboardHome(): Promise<EnvironmentCheck> {
   try {
     await mkdir(dir, { recursive: true });
     await writeFile(probe, "");
-    return migrationWarning(id, label, dir) ?? { id, label, status: "ok", found: `writable: ${dir}` };
+    return migrationWarning(id, label, dir) ?? { id, label, status: "ok", found: `writable: ${dir}${migrationNote()}` };
   } catch (err) {
     return {
       id,
@@ -164,13 +170,15 @@ async function checkDashboardHome(): Promise<EnvironmentCheck> {
 function checkGit(relevance: Relevance, platform: InstallPlatform): EnvironmentCheck {
   const id = "git";
   const label = "git";
-  const path = whichOnPath("git");
-  if (path) return { id, label, status: "ok", found: path };
+  const git = locateGit();
+  if (git && !git.placeholder) return { id, label, status: "ok", found: git.path };
   return {
     id,
     label,
     status: relevance.missing,
-    found: "not found on the PATH",
+    found: git
+      ? `${git.path} is Apple's placeholder: the command line developer tools are not installed (a git placed before it on the PATH would also do)`
+      : "not found on the PATH",
     remedy: "Install git — worktrees, pull, cleanup and every work status need it.",
     instructions: INSTALL.git[platform],
   };
@@ -187,7 +195,8 @@ async function checkGitIdentity(relevance: Relevance, config: Config, platform: 
   const label = "Git committer identity";
   if (relevance.disabled) return notNeeded(id, label, relevance.disabled);
   const remedy = 'Run `git config --global user.name "…"` and `git config --global user.email "…"`; a repository may also set its own.';
-  if (!whichOnPath("git")) {
+  // Never through macOS's placeholder: running it can open the system's offer to install the developer tools.
+  if (!gitExecutable()) {
     return { id, label, status: relevance.missing, found: "could not be read: git was not found", remedy, instructions: [...INSTALL.git[platform], ...identitySteps(["user.name", "user.email"])] };
   }
   const cwd = identityCwd(config);

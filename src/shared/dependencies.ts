@@ -27,7 +27,18 @@ function unreadable(change: ChangeSnapshot): boolean {
 export function resolveDependencies(changes: ChangeSnapshot[]): ChangeSnapshot[] {
   const byName = new Map<string, ChangeSnapshot[]>();
   for (const change of changes) byName.set(change.name, [...(byName.get(change.name) ?? []), change]);
-  const met = (name: string) => byName.get(name)?.some(onMainAsFinished) ?? false;
+  /**
+   * An active change of the name is the one waited for: an archive dated before its creation belongs to an earlier
+   * change that reused the name (the rule `foldLeftovers` and `mergeChanges` tell a leftover from a new change by).
+   */
+  const met = (name: string) => {
+    const copies = byName.get(name) ?? [];
+    const active = copies.find((c) => !c.archived);
+    if (!active) return copies.some(onMainAsFinished);
+    if (onMainAsFinished(active)) return true;
+    const created = active.created;
+    return created !== undefined && copies.some((c) => c.archived !== undefined && c.archived >= created && onMainAsFinished(c));
+  };
 
   const declaring = changes.filter((c) => !c.archived && (c.dependsOn?.length || unreadable(c)));
   if (declaring.length === 0 && !changes.some((c) => c.dependsOn || c.requiredBy || c.blocked)) return changes;

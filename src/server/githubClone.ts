@@ -16,7 +16,7 @@ import { REDIRECTING_GIT_ENV } from "./createProject.ts";
 import { isSpecProject } from "./discover.ts";
 import { emptyHooksDir } from "./gitWrite.ts";
 import { checkNewFolder, makeNewFolder, NewFolderError } from "./newFolder.ts";
-import { canonicalPath, dashboardHome, whichOnPath } from "./paths.ts";
+import { canonicalPath, dashboardHome, gitExecutable } from "./paths.ts";
 import { reasonFrom } from "./pull.ts";
 
 export const CLONE_TIMEOUT_MS = 10 * 60_000;
@@ -249,7 +249,7 @@ export class GithubClones {
     const parsed = parseGithubRepo(input.repo);
     if (!parsed.ok) throw new NewFolderError(400, parsed.reason);
     const name = input.name === undefined ? defaultCloneFolder(parsed.repo) : input.name;
-    if (!whichOnPath("git")) throw new NewFolderError(503, "git was not found on this machine");
+    if (!gitExecutable()) throw new NewFolderError(503, "git was not found on this machine");
     const { root, path } = await checkNewFolder(this.context.config(), input.root, name);
     await makeNewFolder(path);
 

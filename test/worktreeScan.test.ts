@@ -99,7 +99,7 @@ test("a change that exists only, uncommitted, in a worktree is on the board with
   await utimes(join(dir, "tasks.md"), mtime, mtime);
 
   const snap = await scan(root);
-  expect([snap.ok, snap.warnings]).toEqual([true, undefined]);
+  expect([snap.ok, snap.warnings, snap.unreadWorktrees]).toEqual([true, undefined, undefined]);
   const [change, ...rest] = byName(snap, "audit-trail");
   expect(rest).toEqual([]);
   expect([change.column, change.tasks, change.branchMatch]).toEqual(["Implementing", { done: 1, awaiting: 0, total: 3 }, "wip/compliance"]);
@@ -203,14 +203,18 @@ test("detached, prunable and failing worktrees: read, skipped, warned about — 
   const fromDetached = snap.changes.find((c) => c.name === "from-detached")!;
   expect([fromDetached.checkout?.branch, fromDetached.branchMatch]).toEqual([undefined, undefined]);
   expect(snap.warnings).toEqual(["worktree feat/broken: disk says no"]);
+  // the failing one is listed as not read; the deleted one is not a worktree with changes, so it is not
+  expect(snap.unreadWorktrees).toEqual([broken]);
   expect(snap.worktrees.find((w) => w.path === gone)?.prunable).toBe(true);
 });
 
 test(`at most ${WORKTREE_LIMIT} worktrees are read, the most recently changed first, and the rest are counted in a warning`, async () => {
   const root = await repo();
   const total = WORKTREE_LIMIT + 3;
+  const paths: string[] = [];
   for (let i = 0; i < total; i++) {
     const wt = await worktree(root, join(root, ".claude", "worktrees", `w${i}`), `feat/w${i}`);
+    paths.push(wt);
     await writeChange(wt, `change-${String(i).padStart(2, "0")}`);
     const when = new Date(Date.UTC(2026, 8, 1 + i)); // w0 oldest … newest last
     await utimes(join(wt, "openspec", "changes"), when, when);
@@ -220,6 +224,7 @@ test(`at most ${WORKTREE_LIMIT} worktrees are read, the most recently changed fi
   expect(names).toHaveLength(WORKTREE_LIMIT);
   expect(names[0]).toBe("change-03"); // the three oldest were left out
   expect(snap.warnings).toEqual([`3 of ${total} worktrees were not read (limit ${WORKTREE_LIMIT}; the most recently changed ones are)`]);
+  expect(snap.unreadWorktrees).toEqual(paths.slice(0, 3).sort());
 }, 60_000);
 
 test("scanning writes nothing: main checkout, linked worktrees and the shared .git are byte-for-byte untouched", async () => {

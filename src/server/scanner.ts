@@ -328,6 +328,7 @@ export async function scanRepo(
   const fromWorktrees = await scanWorktrees(ctx, archivedOnMain);
   copies.push(...fromWorktrees.copies);
   warnings.push(...fromWorktrees.warnings);
+  const unreadWorktrees = fromWorktrees.unread;
 
   const merged = isGit ? mergeChanges(copies, archivedOnMain, fromWorktrees.pending) : copies.map((c) => c.change);
   // An archive committed on a branch that never reached the default branch: marked, never moved (stale-changes spec).
@@ -373,6 +374,7 @@ export async function scanRepo(
     ...(fetched ? { hasRemote: fetched.hasRemote, lastFetchedAt: fetched.lastFetchedAt } : {}),
     worktrees,
     workInProgress,
+    ...(unreadWorktrees.length ? { unreadWorktrees } : {}),
     // A repository whose only activity is in a worktree is still an active repository.
     lastUpdatedAt: latestIso(lastUpdatedAt, ...active.map((c) => c.lastActivityAt)),
     sharedConfig,
@@ -428,8 +430,11 @@ interface WorktreeCopies {
   pending: ChangeCopy[];
 }
 
-/** Changes of every readable linked worktree. A worktree that cannot be read becomes a warning, never an error. */
-async function scanWorktrees(main: RepoContext, archivedOnMain: Map<string, string>): Promise<WorktreeCopies & { warnings: string[] }> {
+/**
+ * Changes of every readable linked worktree. A worktree that cannot be read becomes a warning, never an error, and its
+ * path is listed in `unread` with those the limit left out — so a change missing from this scan is not taken for gone.
+ */
+async function scanWorktrees(main: RepoContext, archivedOnMain: Map<string, string>): Promise<WorktreeCopies & { warnings: string[]; unread: string[] }> {
   const warnings: string[] = [];
   const candidates: { worktree: Worktree; source: RepoSource; mtime: number }[] = [];
   // A project in a subdirectory of its repository is in that same subdirectory of every worktree; a worktree's top
@@ -446,6 +451,7 @@ async function scanWorktrees(main: RepoContext, archivedOnMain: Map<string, stri
   candidates.sort((a, b) => b.mtime - a.mtime || a.worktree.path.localeCompare(b.worktree.path));
   const selected = candidates.slice(0, WORKTREE_LIMIT);
   if (candidates.length > selected.length) warnings.push(`${candidates.length - selected.length} of ${candidates.length} worktrees were not read (limit ${WORKTREE_LIMIT}; the most recently changed ones are)`);
+  const unread = candidates.slice(WORKTREE_LIMIT).map((c) => c.worktree.path);
 
   // Committed work on a change is read against the fork point from this base; none means no worktree holds any.
   const base = selected.length ? await main.source.baseRef().catch(() => undefined) : undefined;
@@ -459,11 +465,12 @@ async function scanWorktrees(main: RepoContext, archivedOnMain: Map<string, stri
         results[index] = await withTimeout(scanWorktree(main, worktree, source, archivedOnMain, base), WORKTREE_TIMEOUT_MS, `worktree ${worktreeLabel(worktree)}`);
       } catch (err) {
         warnings.push(`worktree ${worktreeLabel(worktree)}: ${err instanceof Error ? err.message : String(err)}`);
+        unread.push(worktree.path);
       }
     }
   };
   await Promise.all(Array.from({ length: Math.min(WORKTREE_CONCURRENCY, selected.length) }, worker));
-  return { copies: results.flatMap((r) => r.copies), pending: results.flatMap((r) => r.pending), warnings };
+  return { copies: results.flatMap((r) => r.copies), pending: results.flatMap((r) => r.pending), warnings, unread: unread.sort() };
 }
 
 async function scanWorktree(main: RepoContext, worktree: Worktree, source: RepoSource, archivedOnMain: Map<string, string>, base: string | undefined): Promise<WorktreeCopies> {
@@ -516,6 +523,8 @@ export interface ScannerOptions {
 export class Scanner {
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight: Promise<Snapshot> | undefined;
+  /** The one scan queued by triggers while another ran; not started yet, so it reads the configuration afresh. */
+  private followUp: Promise<Snapshot> | undefined;
   snapshot: Snapshot;
 
   constructor(
@@ -527,7 +536,7 @@ export class Scanner {
   }
 
   get scanning(): boolean {
-    return this.inFlight !== undefined;
+    return this.inFlight !== undefined || this.followUp !== undefined;
   }
 
   start(): void {
@@ -542,13 +551,27 @@ export class Scanner {
     this.timer = undefined;
   }
 
-  /** Starts a scan unless one is running. Returns whether a new scan started. */
+  /**
+   * Starts a scan unless one is running. Returns whether a new scan started; otherwise `done` is the one follow-up
+   * scan every trigger during the running scan shares, which starts once it has settled (design D1).
+   */
   trigger(): { started: boolean; done: Promise<Snapshot> } {
-    if (this.inFlight) return { started: false, done: this.inFlight };
-    this.inFlight = this.scanAll().finally(() => {
-      this.inFlight = undefined;
+    if (this.followUp) return { started: false, done: this.followUp };
+    if (!this.inFlight) return { started: true, done: this.run() };
+    const settled = () => {
+      this.followUp = undefined;
+      return this.run();
+    };
+    this.followUp = this.inFlight.then(settled, settled);
+    return { started: false, done: this.followUp };
+  }
+
+  private run(): Promise<Snapshot> {
+    const scan = this.scanAll().finally(() => {
+      if (this.inFlight === scan) this.inFlight = undefined;
     });
-    return { started: true, done: this.inFlight };
+    this.inFlight = scan;
+    return scan;
   }
 
   private async scanAll(): Promise<Snapshot> {

@@ -1,11 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmod, mkdir, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { defaultConfig } from "../src/server/config.ts";
 import { environmentReport, resetEnvironmentCache } from "../src/server/environment.ts";
 import { type MigrationOutcome, recordMigrationOutcome } from "../src/server/homeMigration.ts";
+import { useGitLookup } from "../src/server/paths.ts";
 import type { Config, EnvironmentCheck, EnvironmentReport, RepoSnapshot, Snapshot } from "../src/shared/types.ts";
-import { tempDir, useTempHome } from "./helpers.ts";
+import { fakeMac, tempDir, useTempHome } from "./helpers.ts";
 
 /** Every tool the report looks for, as a stub that is never meant to be run — except `git`, which answers `config --get`. */
 const TOOLS = ["git", "openspec", "gh", "claude"] as const;
@@ -167,6 +168,17 @@ test("a pending migration step is a warning naming the worktree and the reason",
   expect(check.remedy).toContain("next start");
 });
 
+test("a resumed migration that still has a step left says it was resumed and names the step", async () => {
+  const check = await homeCheckWith({
+    kind: "retried",
+    pending: [{ kind: "repair", worktree: "/w/u/.spec-control/worktrees/3d84480c2b4d/feat-x", error: "its repository could not be found" }],
+    resumed: { from: "/w/u/.openspec-dashboard", to: "/w/u/.spec-control" },
+  });
+  expect(check.status).toBe("warning");
+  expect(check.found).toContain("an earlier start was stopped in the middle of");
+  expect(check.found).toContain("/w/u/.spec-control/worktrees/3d84480c2b4d/feat-x");
+});
+
 test("a refused move is a warning saying the former home is in use", async () => {
   const check = await homeCheckWith({ kind: "refused", reason: "EBUSY: resource busy" });
   expect(check.status).toBe("warning");
@@ -263,6 +275,82 @@ test("without git the identity says it could not be read", async () => {
   const check = byId(await report(bin, withAgents()), "git-identity");
   expect(check.found).toContain("git was not found");
   expect(check.status).toBe("warning");
+});
+
+// macos-git-check — Apple's `/usr/bin/git` placeholder, simulated: no test here needs a Mac, nor depends on having one.
+async function macReport(path: string, view: "settings" | "setup" = "settings"): Promise<EnvironmentReport> {
+  const home = await useTempHome();
+  cleanups.push(home.cleanup);
+  process.env.PATH = path;
+  resetEnvironmentCache();
+  return environmentReport(withAgents(), { generatedAt: "2026-09-30T10:00:00.000Z", repos: [] }, { platform: "darwin", view });
+}
+
+async function useFakeMac() {
+  const mac = await fakeMac();
+  cleanups.push(mac.restore);
+  return mac;
+}
+
+test("the macOS placeholder is not git, in Settings and in the setup view", async () => {
+  const mac = await useFakeMac();
+  const { bin } = await machine(["openspec", "gh", "claude"]);
+  for (const view of ["settings", "setup"] as const) {
+    const result = await macReport(`${bin}:${mac.usrBin}`, view);
+    const git = byId(result, "git");
+    expect(git.status).toBe(view === "setup" ? "problem" : "warning");
+    expect(git.found).toContain(join(mac.usrBin, "git"));
+    expect(git.found).toContain("placeholder");
+    expect(git.found).toContain("command line developer tools are not installed");
+    expect(git.instructions?.[0].command).toBe("xcode-select --install");
+    const identity = byId(result, "git-identity");
+    expect(identity.found).toContain("git was not found");
+    expect(identity.instructions?.map((step) => step.command)).toEqual(["xcode-select --install", 'git config --global user.name "Your Name"', 'git config --global user.email "you@example.com"']);
+  }
+  expect(await mac.placeholderRuns()).toEqual([]);
+});
+
+test("no git config runs through the placeholder", async () => {
+  const mac = await useFakeMac();
+  await macReport(mac.usrBin);
+  await environmentReport(withAgents(), { generatedAt: "2026-09-30T10:00:00.000Z", repos: [] }, { platform: "darwin", force: true });
+  expect(await mac.placeholderRuns()).toEqual([]);
+});
+
+test("the placeholder is git when DEVELOPER_DIR names the developer tools", async () => {
+  const mac = await useFakeMac();
+  mac.setDeveloperDirVariable(await mac.installDeveloperTools());
+  const result = await macReport(mac.usrBin);
+  expect(byId(result, "git")).toMatchObject({ status: "ok", found: join(mac.usrBin, "git") });
+  // Through the placeholder, which on a Mac with the tools runs their git.
+  expect((await mac.placeholderRuns()).sort()).toEqual(["config --get user.email", "config --get user.name"]);
+});
+
+test("the placeholder is git when xcode-select's link points at the developer tools", async () => {
+  const mac = await useFakeMac();
+  await symlink(await mac.installDeveloperTools(), mac.selectLink);
+  expect(byId(await macReport(mac.usrBin), "git")).toMatchObject({ status: "ok", found: join(mac.usrBin, "git") });
+});
+
+test("a developer directory without git does not make the placeholder git", async () => {
+  const mac = await useFakeMac();
+  const empty = await tempDir("osd-devdir-");
+  await symlink(empty, mac.selectLink);
+  expect(byId(await macReport(mac.usrBin), "git").status).toBe("warning");
+});
+
+test("a git before the placeholder on the PATH is git; one after it is not", async () => {
+  const mac = await useFakeMac();
+  const { bin } = await machine(["git"]);
+  expect(byId(await macReport(`${bin}:${mac.usrBin}`), "git")).toMatchObject({ status: "ok", found: join(bin, "git") });
+  expect(byId(await macReport(`${mac.usrBin}:${bin}`), "git")).toMatchObject({ status: "warning" });
+  expect(await mac.placeholderRuns()).toEqual([]);
+});
+
+test("off macOS the same path is simply git", async () => {
+  const mac = await useFakeMac();
+  useGitLookup({ platform: "linux", placeholder: join(mac.usrBin, "git") });
+  expect(byId(await macReport(mac.usrBin), "git").status).toBe("ok");
 });
 
 // 2.5 — the GitHub CLI.

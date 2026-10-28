@@ -36,6 +36,10 @@ const sameTasks = (a: TaskProgress | null, b: TaskProgress | null) => (a?.done ?
 const taskCounts = ({ awaitingTasks: _text, ...counts }: TaskProgress): TaskProgress => counts;
 const tasksOf = (c: ChangeSnapshot) => (c.tasks ? { tasks: { done: c.tasks.done, total: c.tasks.total } } : {});
 const openChanges = (repo: RepoSnapshot) => repo.changes.filter((c) => !c.archived).length;
+/** Active changes are one per name, archives one per name and date; `@` cannot occur in a change name. */
+const changeKey = (c: ChangeSnapshot) => (c.archived ? `${c.name}@${c.archived}` : c.name);
+/** Whether the change's leading copy is in a linked worktree `other` did not read (absent in older snapshots: none). */
+const ledFrom = (c: ChangeSnapshot, other: RepoSnapshot) => c.checkout !== undefined && !c.checkout.isMain && (other.unreadWorktrees?.includes(c.checkout.path) ?? false);
 
 export function diffSnapshots(previous: Snapshot, next: Snapshot, options: DiffOptions): ActivityEvent[] {
   const nowMs = options.now.getTime();
@@ -75,24 +79,37 @@ export function diffSnapshots(previous: Snapshot, next: Snapshot, options: DiffO
     // A failing scan keeps showing the previous changes; comparing them would say nothing (or something wrong).
     if (!repo.ok || !was.ok) continue;
 
-    const wasChanges = new Map(was.changes.map((c) => [c.name, c]));
+    // A change led from a worktree one side did not read is not compared: its absence there says nothing.
+    const skipped = new Set([...was.changes.filter((c) => ledFrom(c, repo)).map((c) => c.name), ...repo.changes.filter((c) => ledFrom(c, was)).map((c) => c.name)]);
+    const wasChanges = new Map(was.changes.map((c) => [changeKey(c), c]));
+    const wasActive = new Map(was.changes.filter((c) => !c.archived).map((c) => [c.name, c]));
+    const nowActive = new Set(repo.changes.filter((c) => !c.archived).map((c) => c.name));
     const seen = new Set<string>();
+    /** Names whose vanished active change is accounted for by its new archive. */
+    const archivedFrom = new Set<string>();
     for (const change of repo.changes) {
-      seen.add(change.name);
-      const old = wasChanges.get(change.name);
+      if (skipped.has(change.name)) continue;
+      seen.add(changeKey(change));
+      const old = wasChanges.get(changeKey(change));
       if (!old) {
+        const archivedActive = change.archived && !nowActive.has(change.name) && !archivedFrom.has(change.name) ? wasActive.get(change.name) : undefined;
         if (!change.archived) emit(repo, { kind: "change-created", change: change.name, to: change.column, ...tasksOf(change) }, change);
-        else if (nowMs - Date.parse(change.archived) <= RECENT_ARCHIVE_MS) emit(repo, { kind: "change-archived", change: change.name }, change);
+        else if (archivedActive) {
+          archivedFrom.add(change.name);
+          emit(repo, { kind: "change-archived", change: change.name, from: archivedActive.column }, change);
+        } else if (nowMs - Date.parse(change.archived) <= RECENT_ARCHIVE_MS) emit(repo, { kind: "change-archived", change: change.name }, change);
         continue;
       }
-      if (!old.archived && change.archived) emit(repo, { kind: "change-archived", change: change.name, from: old.column }, change);
-      else if (old.column !== change.column) emit(repo, { kind: "change-moved", change: change.name, from: old.column, to: change.column, ...tasksOf(change) }, change);
-      else if (!change.archived && change.tasks && old.tasks && !sameTasks(old.tasks, change.tasks)) {
+      // Same key: both active, or the same archive.
+      if (change.archived) continue;
+      if (old.column !== change.column) emit(repo, { kind: "change-moved", change: change.name, from: old.column, to: change.column, ...tasksOf(change) }, change);
+      else if (change.tasks && old.tasks && !sameTasks(old.tasks, change.tasks)) {
         emit(repo, { kind: "tasks-progress", change: change.name, column: change.column, from: taskCounts(old.tasks), to: taskCounts(change.tasks) }, change);
       }
     }
     for (const old of was.changes) {
-      if (!seen.has(old.name) && !old.archived) emit(repo, { kind: "change-removed", change: old.name, from: old.column });
+      if (old.archived || skipped.has(old.name) || seen.has(changeKey(old)) || archivedFrom.has(old.name)) continue;
+      emit(repo, { kind: "change-removed", change: old.name, from: old.column });
     }
   }
 

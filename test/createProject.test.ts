@@ -12,7 +12,7 @@ import { Scanner } from "../src/server/scanner.ts";
 import { SessionManager } from "../src/server/sessions/manager.ts";
 import type { AgentProfile, Config, CreateProjectResponse, RepoConfig, Snapshot } from "../src/shared/types.ts";
 import { changeSessions, DEFAULT_INTEGRATE_PROMPT, isProjectName, newProjectUnavailable } from "../src/shared/types.ts";
-import { tempDir, treeFingerprint, useTempHome } from "./helpers.ts";
+import { fakeMac, tempDir, treeFingerprint, useTempHome } from "./helpers.ts";
 import { fakeProfile, git, waitFor, watch } from "./sessionHelpers.ts";
 
 // Real processes in pseudo-terminals; slow CI runners need more than the 5 s default.
@@ -224,6 +224,22 @@ test("without git nothing is created", async () => {
   }
   expect(await readdir(h.root)).toEqual([]);
   expect(h.sessions.list()).toEqual([]);
+});
+
+test("on a Mac without the developer tools nothing is created and the placeholder never runs", async () => {
+  const h = await harness();
+  const mac = await fakeMac();
+  const realPath = process.env.PATH;
+  process.env.PATH = mac.usrBin;
+  try {
+    expect(await refusal(createProject(h, { root: h.root, name: "gamma" }))).toEqual({ status: 503, message: "git was not found on this machine" });
+  } finally {
+    process.env.PATH = realPath;
+    mac.restore();
+  }
+  expect(await readdir(h.root)).toEqual([]);
+  expect(h.sessions.list()).toEqual([]);
+  expect(await mac.placeholderRuns()).toEqual([]);
 });
 
 test("two concurrent requests for the same name: one succeeds, the other is refused, one agent starts", async () => {

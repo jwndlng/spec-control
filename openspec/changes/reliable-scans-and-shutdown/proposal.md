@@ -73,10 +73,13 @@ None.
 - `src/server/index.ts`: the shutdown awaits the sessions, then `activity.idle()`, then exits.
 - `src/server/homeMigration.ts`: the record written right after the rename and after each step; a `cache` step kind
   for the dropped snapshot so it is recorded too.
+- `src/server/environment.ts`: the `dashboard-home` check says when this start finished, or still has steps left of, a
+  migration an earlier start was stopped in.
 - Tests: `test/scanner.test.ts`, `test/api.test.ts` (scan endpoint), `test/newChangeByLabel.test.ts`
   (`createInRepos`), `test/importIssuesState.test.ts`, `test/terminalSessions.test.ts` (with
   `test/fixtures/fake-agent.ts` taught to ignore `SIGHUP` on request), `test/activityLog.test.ts`,
-  `test/homeMigration.test.ts`, `test/startupMigration.test.ts`.
+  `test/homeMigration.test.ts`, `test/startupMigration.test.ts`, `test/environment.test.ts`, and `test/shutdown.test.ts`
+  (the CLI stopped with `SIGTERM` while a session runs).
 - Specs: `openspec/specs/change-scanner/spec.md`, `openspec/specs/dashboard-api/spec.md`,
   `openspec/specs/agent-sessions/spec.md`, `openspec/specs/activity-feed/spec.md`.
 - No new dependency, no network, no new git subcommand, no write outside the home; invariant 1 and CLAUDE.md

@@ -36,6 +36,24 @@ test("Done in main while a worktree leads still counts; Done or archived only on
   expect(find(out, "x").blocked).toBe(true);
 });
 
+test("a reused name is not met by its old archive, and is met once the new change is done or archived", () => {
+  const old = change("add-billing-schema", "archived", { archived: "2026-09-01" });
+  const ui = change("add-billing-ui", "ready", deps("add-billing-schema"));
+  const waiting = resolveDependencies([change("add-billing-schema", "drafts", { created: "2026-10-01" }), old, ui]);
+  expect(states(find(waiting, "add-billing-ui"))).toEqual(["add-billing-schema:waiting"]);
+  expect(find(waiting, "add-billing-ui").blocked).toBe(true);
+
+  const done = resolveDependencies([change("add-billing-schema", "done", { created: "2026-10-01" }), old, ui]);
+  expect(states(find(done, "add-billing-ui"))).toEqual(["add-billing-schema:met"]);
+  expect(find(done, "add-billing-ui").blocked).toBeUndefined();
+
+  // done only on its branch still waits; an archive in main dated on or after its creation is the new change's
+  const onBranch = change("add-billing-schema", "done", { created: "2026-10-01", checkout: BRANCH("add-billing-schema"), otherCheckouts: [{ ...MAIN, column: STAGE_COLUMN.drafts }] });
+  expect(states(find(resolveDependencies([onBranch, old, ui]), "add-billing-ui"))).toEqual(["add-billing-schema:waiting"]);
+  const archivedAgain = change("add-billing-schema", "archived", { archived: "2026-10-05" });
+  expect(states(find(resolveDependencies([onBranch, archivedAgain, old, ui]), "add-billing-ui"))).toEqual(["add-billing-schema:met"]);
+});
+
 test("a folder without git has no checkout and is its own main checkout", () => {
   const out = resolveDependencies([change("a", "done", { checkout: undefined }), change("x", "ready", { checkout: undefined, ...deps("a") })]);
   expect(states(find(out, "x"))).toEqual(["a:met"]);
