@@ -141,6 +141,14 @@ test("a malformed or unknown set of repositories is refused and starts no gh", a
   expect(await gh.calls()).toEqual([]);
 });
 
+test("a body that is not JSON is refused with 400 and starts no gh", async () => {
+  await gh.forget();
+  const res = await fetch(`${base}/api/pull-requests/refresh`, { method: "POST", headers: { "content-type": "application/json" }, body: "{bad" });
+  expect(res.status).toBe(400);
+  expect(((await res.json()) as { error?: string }).error).toBeString();
+  expect(await gh.calls()).toEqual([]);
+});
+
 test("an unknown or disabled repository is refused with 404 and starts no gh", async () => {
   await gh.forget();
   expect((await post("/api/pull-requests/refresh", { repoId: "nope" })).status).toBe(404);
