@@ -7,7 +7,7 @@ import { realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { blockedReason } from "../../shared/dependencies.ts";
 import { availableActions, changeSessions, pastDraftingReason, isChangeless, isConsole, isIntegration, isProjectConsole, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type ChangeSnapshot, type RepoPullRequests, type RepoSnapshot, type Session, type SessionAction, type SessionWorktree, type Snapshot, type WorkStatus, type MergeAsked, type PromptResult, type PullRequest, type RepoConfig, type ShipResult, type AutoMergePromptResult, type StartResult } from "../../shared/types.ts";
-import { isProposalSession, proposalBranch, receivingSession, sessionBranch } from "../../shared/sessionBranch.ts";
+import { isEndedProposalSession, isProposalSession, proposalBranch, receivingSession, runningProposalSession, sessionBranch } from "../../shared/sessionBranch.ts";
 import { isBranchName, isCleaningUp } from "../cleanup.ts";
 import { isDismissing } from "../dismissChange.ts";
 import { canonicalPath, worktreesDir } from "../paths.ts";
@@ -59,6 +59,9 @@ export function worktreeName(action: SessionAction, change: string, { proposal =
 }
 
 export { sessionBranch };
+
+/** The steps that may end a running proposal session to start: never Draft, which goes into it, and never Fast-forward. */
+const ENDS_PROPOSAL: readonly SessionAction[] = ["implement", "validate", "archive"];
 
 const NOT_A_CHANGE = "this is the main console, which belongs to no change";
 const NOT_A_CHANGE_INTEGRATING = "this session is setting a repository up for OpenSpec, so it belongs to no change";
@@ -177,7 +180,7 @@ export class SessionManager {
    * `pullRequests` is the repository's cached pull-request list as the server holds it; only Resolve conflicts
    * (`resolveConflicts: true`) reads it, and nothing in the request can name a branch or a pull request instead.
    */
-  async open(input: { repoId?: unknown; change?: unknown; action?: unknown; carryOver?: unknown; removeDuplicate?: unknown; resolveConflicts?: unknown }, pullRequests?: RepoPullRequests): Promise<StartResult> {
+  async open(input: { repoId?: unknown; change?: unknown; action?: unknown; carryOver?: unknown; removeDuplicate?: unknown; resolveConflicts?: unknown; endProposal?: unknown }, pullRequests?: RepoPullRequests): Promise<StartResult> {
     const config = this.deps.getConfig();
     if (!config.agentSessions.enabled) throw new SessionError(403, "agent sessions are disabled");
     if (typeof input.change !== "string" || !CHANGE_NAME.test(input.change)) throw new SessionError(400, "invalid change name");
@@ -192,6 +195,10 @@ export class SessionManager {
     const removeDuplicate = input.removeDuplicate === true;
     if (removeDuplicate && action !== "archive") throw new SessionError(400, "only an archive session can remove a duplicate after archive");
     if (removeDuplicate && carryOver) throw new SessionError(400, "carry over and remove duplicate are separate sessions");
+    // Ending the proposal session first is only ever asked for explicitly, and only for the steps that follow a proposal.
+    if (input.endProposal !== undefined && typeof input.endProposal !== "boolean") throw new SessionError(400, "endProposal must be a boolean");
+    const endProposal = input.endProposal === true;
+    if (endProposal && !ENDS_PROPOSAL.includes(action)) throw new SessionError(400, `"${action}" does not end the proposal session`);
 
     const repo = config.repos.find((r) => r.id === input.repoId);
     if (!repo) throw new SessionError(404, "unknown repository");
@@ -222,8 +229,8 @@ export class SessionManager {
     // twice. `list()` is newest first, so a process that still holds two running sessions from before this rule
     // returns the one the user started last. In-place sessions need this as much as worktrees do: their working
     // directory is the repository folder itself, which no per-worktree rule would have kept a second agent out of.
-    // The one exception is a session drafting the proposal on its own branch: it takes only Draft, so implementing gets
-    // a session of its own next to it rather than continuing on the proposal's branch (ship-proposals-as-docs-prs).
+    // A session drafting the proposal on its own branch takes only Draft: every other action is refused while it runs,
+    // unless the request asks to end it first (one-console-per-change D1, D2).
     const existing = receivingSession(changeSessions(this.list()), repo.id, change, action);
     // Removing a duplicate starts fresh from the default branch: any open session for the change is refused instead.
     if (duplicate && this.list().some((s) => s.repoId === repo.id && s.change === change && OPEN_SESSION_STATES.includes(s.state))) {
@@ -254,6 +261,8 @@ export class SessionManager {
     let prompt = fixedPrompt() ?? openingPrompt(agent, action, change, { convention: repo.prTitleConvention, record });
     if (!prompt) throw new SessionError(400, `${agent.name} has no "${action}" prompt configured`);
     if (!Bun.which(agent.command[0])) throw new SessionError(503, `${agent.name} was not found (${agent.command[0]}); install it or change its command in Settings`);
+    // Every refusal above came first, so a refused request has ended nothing.
+    await this.endProposalFirst(repo.id, change, action, endProposal);
 
     // Decided once, now: switching docs auto-merge later never moves a session to another branch (D1).
     const proposal = action === "draft" && !inPlace && repo.agent?.autoMergeDocs === true;
@@ -306,6 +315,19 @@ export class SessionManager {
     if (session.state === "running") this.report(session, { kind: "session-started", action, agentName: session.agentName });
     for (const removed of await this.store.prune(this.list())) this.sessions.delete(removed);
     return { ...session, autoMerge };
+  }
+
+  /**
+   * A running proposal session keeps every other session of its change out (one-console-per-change D1). With the explicit
+   * ask it is ended as End session ends it — its worktree and branch kept whatever their state, because its pull request
+   * may still be open and its worktree is what the merge checks read (D2) — and the new session opens once it has ended.
+   */
+  private async endProposalFirst(repoId: string, change: string, action: SessionAction, endProposal: boolean): Promise<void> {
+    const proposal = runningProposalSession(changeSessions(this.list()), repoId, change);
+    if (!proposal) return;
+    if (!endProposal) throw new SessionError(409, `the proposal of ${change} is being drafted on ${proposal.branch} in a running session; end it first, or start "${action}" from its console`);
+    await this.close(proposal.id);
+    if (this.get(proposal.id).state === "running") throw new SessionError(409, `the proposal session on ${proposal.branch} did not end; nothing was started`);
   }
 
   /**
@@ -518,6 +540,11 @@ export class SessionManager {
     const { agent, config } = this.prepareAgainAnywhere(session);
     const running = this.runningInFolder(session.worktreePath).find((s) => s.id !== session.id);
     if (running) throw new SessionError(409, isProjectConsole(running) ? "the project's console is running in this folder; end it first" : "another session is running in this worktree");
+    // One running session per change: an ended one is not started again beside another (one-console-per-change D4).
+    if (session.state !== "running") {
+      const other = changeSessions(this.list()).find((s) => s.id !== session.id && s.repoId === session.repoId && s.change === session.change && s.state === "running");
+      if (other) throw new SessionError(409, `another session of ${session.change} is running on ${other.branch ?? "its folder"}; end it first`);
+    }
     const repo = config.repos.find((r) => r.id === session.repoId);
     if (!repo) throw new SessionError(409, "the repository is no longer configured");
     if (isCleaningUp(repo.id)) throw new SessionError(409, "a cleanup of this repository is running");
@@ -885,30 +912,50 @@ export class SessionManager {
     if (session.inPlace) throw new SessionError(400, "this session runs in a folder that is not a git repository — there is no pull request to merge");
     const { agent } = this.prepareAgainAnywhere(session);
     if (session.state !== "running" || !this.live.get(id)?.proc) throw new SessionError(409, "the session is not running; resume it to merge");
-    const pr = pullRequests.find((p) => p.state === "open" && p.head === session.branch);
+    // Its own branch's pull request first; else the proposal's, handed over once the proposal session ended (D3).
+    const own = pullRequests.find((p) => p.state === "open" && p.head === session.branch);
+    const handed = own ? undefined : await this.handedOverProposal(session);
+    const pr = own ?? pullRequests.find((p) => handed !== undefined && p.state === "open" && p.head === handed.branch);
     if (!pr) throw new SessionError(409, "this session's branch has no open pull request in the last pull-request list");
     const readiness = pullRequestReadiness(pr);
     if (!readiness?.ready) throw new SessionError(409, `pull request #${pr.number} is not ready to merge (${readiness ? readinessDetail(readiness) : "unknown"})`);
     if (!pr.headOid) throw new SessionError(409, `the pull-request list names no head commit for #${pr.number}; refresh it first`);
-    const prompt = mergePrompt(agent, session.change, { pr: pr.number, head: pr.headOid });
-    return this.sendMerge(session, prompt, { pr: pr.number, head: pr.headOid, by: "user" });
+    const prompt = mergePrompt(agent, session.change, { pr: pr.number, head: pr.headOid, proposal: handed !== undefined });
+    return this.sendMerge(handed ?? session, session, prompt, { pr: pr.number, head: pr.headOid, by: "user" });
   }
 
   /**
-   * Records the Merge prompt before anything is typed, then submits it and reports what came of it. The record is what
-   * keeps a second query from sending it again and keeps the board watching until the pull request merges or moves.
+   * The ended proposal session whose pull request `session` receives (one-console-per-change D3): `session` is the
+   * change's only running session, has a worktree of its own, and the proposal session's worktree still exists — the
+   * merge checks read it. The most recent one when there are several.
    */
-  private async sendMerge(session: ChangeSession, prompt: string, target: Pick<MergeAsked, "pr" | "head" | "by">): Promise<PromptResult> {
-    const asked: MergeAsked = { ...target, at: new Date().toISOString(), submitted: false };
-    session.mergeAsked = asked;
-    await this.touch(session);
-    const { submitted } = await this.submit(session.id, prompt).catch(() => ({ submitted: false }));
-    if (session.mergeAsked === asked) {
-      asked.submitted = submitted;
-      this.touchLater(session);
+  private async handedOverProposal(session: ChangeSession): Promise<ChangeSession | undefined> {
+    if (session.inPlace || session.adopted || isProposalSession(session)) return undefined;
+    const mine = changeSessions(this.list()).filter((s) => s.repoId === session.repoId && s.change === session.change);
+    const running = mine.filter((s) => s.state === "running" && this.live.get(s.id)?.proc);
+    if (running.length !== 1 || running[0].id !== session.id) return undefined;
+    for (const proposal of mine.filter(isEndedProposalSession)) {
+      if (await stat(proposal.worktreePath).catch(() => undefined)) return proposal;
     }
-    this.report(session, { kind: "session-merge", pr: target.pr, by: target.by, submitted });
-    return { ...session, submitted };
+    return undefined;
+  }
+
+  /**
+   * Records the Merge prompt on `recordOn` before anything is typed, then submits it to `sendTo` and reports what came of
+   * it. The record is what keeps a second query from sending it again and keeps the board watching until the pull
+   * request merges or moves. The two differ only for a proposal pull request handed to the change's running session.
+   */
+  private async sendMerge(recordOn: ChangeSession, sendTo: ChangeSession, prompt: string, target: Pick<MergeAsked, "pr" | "head" | "by">): Promise<PromptResult> {
+    const asked: MergeAsked = { ...target, at: new Date().toISOString(), submitted: false };
+    recordOn.mergeAsked = asked;
+    await this.touch(recordOn);
+    const { submitted } = await this.submit(sendTo.id, prompt).catch(() => ({ submitted: false }));
+    if (recordOn.mergeAsked === asked) {
+      asked.submitted = submitted;
+      this.touchLater(recordOn);
+    }
+    this.report(sendTo, { kind: "session-merge", pr: target.pr, by: target.by, submitted });
+    return { ...sendTo, submitted };
   }
 
   /**
@@ -926,9 +973,19 @@ export class SessionManager {
     };
     if (!enabled()) return;
     const askedFor = (session: ChangeSession, pr: PullRequest) => session.mergeAsked?.pr === pr.number && session.mergeAsked.head === pr.headOid;
-    for (const session of changeSessions(this.list())) {
+    const runs = (session: ChangeSession | undefined): session is ChangeSession => session?.state === "running" && this.live.get(session.id)?.proc !== undefined;
+    const sessions = changeSessions(this.list());
+    // The session the prompt goes to: the session itself while it runs; for an ended proposal session, the change's only
+    // running session, if it has a worktree of its own (one-console-per-change D3). Asked again after every await.
+    const receiver = (session: ChangeSession): ChangeSession | undefined => {
+      if (session.state === "running") return runs(session) ? session : undefined;
+      if (!isEndedProposalSession(session)) return undefined;
+      const running = changeSessions(this.list()).filter((s) => s.repoId === session.repoId && s.change === session.change && runs(s));
+      return running.length === 1 && !running[0].inPlace && !running[0].adopted ? running[0] : undefined;
+    };
+    for (const session of sessions) {
       if (session.repoId !== repoId || session.inPlace || session.adopted || !session.autoMergeAskedAt || session.autoEnded || session.action === "fastForward") continue;
-      if (session.state !== "running" || !this.live.get(session.id)?.proc || this.merging.has(session.id)) continue;
+      if (!receiver(session) || this.merging.has(session.id)) continue;
       const pr = pullRequests.find((p) => p.state === "open" && p.head === session.branch);
       if (!pr || !mergeReady(pr) || askedFor(session, pr)) continue;
       // Taken before the first await, so a second query settling meanwhile cannot send the same prompt again.
@@ -938,12 +995,14 @@ export class SessionManager {
         if (!now) continue;
         if (pr.base !== (await defaultBranch(now.repo.path))) continue;
         // GitHub's file list loses the source side of a rename: the worktree, at exactly that commit, has the last word.
+        // An ended proposal session's worktree is read just the same; a removed one fails here and counts as not holding.
         if ((await headCommit(session.worktreePath)) !== pr.headOid) continue;
         if (!(await shipsOnlyOpenSpec(session.worktreePath, await baseRef(now.repo.path)))) continue;
-        const agent = this.deps.getConfig().agentSessions.agents.find((a) => a.id === session.agentId);
-        if (!agent || !enabled() || session.state !== "running" || !this.live.get(session.id)?.proc || askedFor(session, pr)) continue;
-        const prompt = mergePrompt(agent, session.change, { pr: pr.number, head: pr.headOid as string });
-        await this.sendMerge(session, prompt, { pr: pr.number, head: pr.headOid as string, by: "dashboard" });
+        const to = receiver(session);
+        const agent = to && this.deps.getConfig().agentSessions.agents.find((a) => a.id === to.agentId);
+        if (!to || !agent || !enabled() || askedFor(session, pr)) continue;
+        const prompt = mergePrompt(agent, session.change, { pr: pr.number, head: pr.headOid as string, proposal: to !== session });
+        await this.sendMerge(session, to, prompt, { pr: pr.number, head: pr.headOid as string, by: "dashboard" });
       } finally {
         this.merging.delete(session.id);
       }

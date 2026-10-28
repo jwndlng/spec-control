@@ -86,9 +86,16 @@ function versionResponse(req: Request): Response | undefined {
   return undefined;
 }
 
+/** The refusal of a request addressed to a name other than loopback, under `/api/` as JSON and as plain text elsewhere. */
+function hostRefusalResponse(req: Request, pathname: string): Response | undefined {
+  const refusal = hostRefusal(req);
+  if (!refusal) return undefined;
+  return pathname.startsWith("/api/") ? json({ error: refusal }, 403) : new Response(refusal, { status: 403 });
+}
+
 /** What the server answers before the scanner and sessions are ready: its version, and "starting" for everything else. */
 export function startingFetchHandler(req: Request): Response {
-  return versionResponse(req) ?? new Response("Spec Control is starting", { status: 503, headers: { "retry-after": "1" } });
+  return hostRefusalResponse(req, new URL(req.url).pathname) ?? versionResponse(req) ?? new Response("Spec Control is starting", { status: 503, headers: { "retry-after": "1" } });
 }
 
 function enabledIds(config: Config): string {
@@ -389,7 +396,8 @@ async function readJson(req: Request): Promise<Record<string, unknown>> {
  */
 export function webSocketRefusal(req: Request): string | undefined {
   const url = new URL(req.url);
-  if (!LOOPBACK_HOSTS.has(url.hostname)) return "request must be addressed to a loopback host name";
+  const host = hostRefusal(req);
+  if (host) return host;
   if (req.headers.get("sec-fetch-site")?.toLowerCase() === "cross-site") return "cross-site requests are not allowed";
   const origin = req.headers.get("origin");
   const from = origin && URL.canParse(origin) ? new URL(origin) : undefined;
@@ -529,6 +537,8 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
       }
       if (req.method === "POST") {
         const body = await readJson(req);
+        // Ending the proposal session first is an explicit yes or no, never something merely truthy.
+        if (body.endProposal !== undefined && typeof body.endProposal !== "boolean") return json({ error: "endProposal must be a boolean" }, 400);
         // Resolve conflicts reads the repository's cached pull-request list — never a query — and nothing else does.
         return json(await sessions.open(body, body.resolveConflicts === true ? await cachedPullRequests(state, body.repoId) : undefined), 201);
       }
@@ -1115,6 +1125,17 @@ function lastGoodPullRequests(state: AppState, session: Session): readonly PullR
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 /**
+ * Every request, whatever its method or path, must be addressed to a loopback name: a page on another name that the
+ * attacker rebinds to 127.0.0.1 (DNS rebinding) is same-origin with its own requests and could read every answer.
+ * Bun builds `req.url` from the `Host` header, and `URL` lower-cases the name. The port is not compared: a rebound
+ * page necessarily uses ours. Returns the reason for a refusal, or undefined when the request may proceed.
+ */
+export function hostRefusal(req: Request): string | undefined {
+  if (!LOOPBACK_HOSTS.has(new URL(req.url).hostname)) return "request must be addressed to a loopback host name";
+  return undefined;
+}
+
+/**
  * Loopback binding does not stop a web page open in the same browser from posting to us, so every non-GET API
  * request must look like it came from our own UI (or a deliberate command-line client):
  * - JSON content type: anything else is sendable by a plain form or a no-preflight `fetch`; JSON forces a CORS
@@ -1126,7 +1147,8 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
  */
 export function crossSiteRefusal(req: Request): string | undefined {
   const url = new URL(req.url);
-  if (!LOOPBACK_HOSTS.has(url.hostname)) return "request must be addressed to a loopback host name";
+  const host = hostRefusal(req);
+  if (host) return host;
   const type = (req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
   if (type !== "application/json") return "content-type must be application/json";
   if (req.headers.get("sec-fetch-site")?.toLowerCase() === "cross-site") return "cross-site requests are not allowed";
@@ -1285,9 +1307,34 @@ async function postGithubCloneDismiss(state: AppState, req: Request): Promise<Re
   }
 }
 
-export function createFetchHandler({ state, indexHtml }: AppOptions): (req: Request, server?: ServerLike) => Promise<Response> {
+/**
+ * What escapes a route, as a response: the refusals routes throw (`readJson`'s malformed body among them), a path
+ * segment `decodeURIComponent` cannot decode, and anything else as a bare `500` with no internal detail.
+ */
+export function escapedErrorResponse(err: unknown): Response {
+  if (err instanceof SessionError || err instanceof TrackingError) return json({ error: err.message }, err.status);
+  if (err instanceof URIError) return json({ error: "malformed path" }, 400);
+  console.error(err);
+  return json({ error: "internal error" }, 500);
+}
+
+export function createFetchHandler(options: AppOptions): (req: Request, server?: ServerLike) => Promise<Response> {
+  const route = routeRequest(options);
   return async (req, server) => {
     const url = new URL(req.url);
+    // Before anything else: no route runs, no body is read and no process starts for a foreign name.
+    const refusal = hostRefusalResponse(req, url.pathname);
+    if (refusal) return refusal;
+    try {
+      return await route(req, url, server);
+    } catch (err) {
+      return escapedErrorResponse(err);
+    }
+  };
+}
+
+function routeRequest({ state, indexHtml }: AppOptions): (req: Request, url: URL, server?: ServerLike) => Promise<Response> {
+  return async (req, url, server) => {
     const { pathname } = url;
 
     if (pathname.startsWith("/api/")) {

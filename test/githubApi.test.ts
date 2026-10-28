@@ -107,6 +107,14 @@ test("an invalid owner is refused with 400 and starts no gh", async () => {
   expect(await gh.calls()).toEqual([]);
 });
 
+test("a body that is not JSON is refused with 400 and starts no gh", async () => {
+  await gh.forget();
+  const res = await fetch(`${base}/api/github/repos`, { method: "POST", headers: { "content-type": "application/json" }, body: "{bad" });
+  expect(res.status).toBe(400);
+  expect(((await res.json()) as { error?: string }).error).toBeString();
+  expect(await gh.calls()).toEqual([]);
+});
+
 test("without gh the listing is unavailable and starts no process", async () => {
   await gh.forget();
   process.env.PATH = shimDir;

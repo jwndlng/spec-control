@@ -178,10 +178,13 @@ bun test test/scanner.test.ts   # a single test file
    prove a scan, discovery and the endpoints' reads start no `gh` and no clone, and that a full refresh, an issue
    listing or a repository listing leaves every fixture repository byte-for-byte unchanged).
    Adding a path or a subcommand means changing that spec first.
-2. **Loopback only.** The server binds `127.0.0.1`; there is no auth because nothing else can reach it.
-2a. **Mutating API routes are same-origin only.** Every non-GET `/api/` request passes `crossSiteRefusal` in
+2. **Loopback only.** The server binds `127.0.0.1`; there is no auth because nothing else can reach it. Every request,
+   whatever its method or path — reads, the page, `/api/version` and the starting handler included — must also be
+   addressed to a loopback host name (`127.0.0.1`, `localhost`, `[::1]`): `hostRefusal` in `src/server/api.ts` answers
+   anything else `403` before any route runs, which is what stops a DNS-rebound page from reading the API.
+2a. **Mutating API routes are same-origin only.** Every non-GET `/api/` request also passes `crossSiteRefusal` in
    `src/server/api.ts` (JSON content type, loopback host, own origin); the terminal WebSocket has `webSocketRefusal`. Loopback binding alone does not stop a web page
-   in the same browser; do not add a mutating route that bypasses the guard.
+   in the same browser; do not add a route, of any method, that bypasses the host check or a mutating route that bypasses the guard.
 3. **Framework code only in its module; `@fission-ai/openspec` internals only through
    `src/server/frameworks/openspec/adapter.ts`.** A module only reads: where a write depends on a framework, the module
    supplies paths and contents and the writers of invariant 1 write, and only for a module `writablePaths` allows.
