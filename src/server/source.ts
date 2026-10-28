@@ -8,7 +8,8 @@ import type { LabelEntry } from "../shared/labels.ts";
 import { CHANGE_NAME_PATTERN, type DuplicateAfterArchive, type StaleLeftovers, type StrandedArchive, type Worktree } from "../shared/types.ts";
 import { type ActiveChange, findDuplicates, findStrandedArchives, type SessionHint, type StaleInput, staleLeftovers } from "./staleChanges.ts";
 import type { ChangeMetadata } from "./frameworks/framework.ts";
-import { checkoutStatus, currentBranch, defaultBranch, fetchInfo, hasCommitToBranchFrom, hasRemoteRefs, isGitRepo, lastCommitDate, localOnlyCommits, type ParsedStatus, statusPaths, subdirectory, worktrees } from "./git.ts";
+import { baseRef } from "./sessions/base.ts";
+import { changesTouchedSinceFork, checkoutStatus, currentBranch, defaultBranch, fetchInfo, hasCommitToBranchFrom, hasRemoteRefs, isGitRepo, lastCommitDate, localOnlyCommits, type ParsedStatus, statusPaths, subdirectory, worktrees } from "./git.ts";
 
 export const CHANGE_NAME = CHANGE_NAME_PATTERN;
 const ARCHIVE_PREFIX = /^(\d{4}-\d{2}-\d{2})-(.+)$/;
@@ -247,6 +248,13 @@ export interface RepoSource {
   lastActivity(absPath: string): Promise<string | undefined>;
   /** Modified and untracked files under `relRoot` (a framework's root, e.g. `openspec`), per git. Empty for non-git repositories or on failure. */
   dirtyFiles(relRoot: string): Promise<DirtyFile[]>;
+  /** The default branch as the repository locally knows it (`origin/HEAD`, else the main checkout's `HEAD`); undefined without one. */
+  baseRef(): Promise<string | undefined>;
+  /**
+   * The change directories of `relChangesDir` this checkout's `HEAD` changed since it forked from `base`, by name;
+   * undefined when git cannot tell (change-scanner: "Branch and worktree matching").
+   */
+  changesTouchedSinceFork(relChangesDir: string, base: string): Promise<Set<string> | undefined>;
 }
 
 async function listDirs(dir: string): Promise<string[]> {
@@ -431,6 +439,14 @@ export class LocalRepoSource implements RepoSource {
 
   lastActivity(absPath: string): Promise<string | undefined> {
     return lastCommitDate(this.path, relative(this.path, absPath));
+  }
+
+  baseRef(): Promise<string | undefined> {
+    return baseRef(this.path);
+  }
+
+  changesTouchedSinceFork(relChangesDir: string, base: string): Promise<Set<string> | undefined> {
+    return changesTouchedSinceFork(this.path, relChangesDir, base);
   }
 
   async dirtyFiles(relRoot: string): Promise<DirtyFile[]> {

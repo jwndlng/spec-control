@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-28-link-only-own-branch",
+    date: "2026-10-28",
+    title: "Cards no longer show another change's pull request",
+    summary:
+      "A change that is only carried along in another change's worktree no longer takes that worktree's branch, so its card shows its own pull request — not the other change's — and no longer offers **Resolve conflicts** for it. A worktree that holds work on the change, committed or not, still links it.",
+  },
+  {
     id: "2026-10-28-harden-session-lifecycle",
     date: "2026-10-28",
     title: "Safer agent session starts and ends",

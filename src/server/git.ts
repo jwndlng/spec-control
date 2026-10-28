@@ -158,6 +158,27 @@ async function readRepositoryKey(cwd: string): Promise<string | undefined> {
   }
 }
 
+/**
+ * Names of the directories directly inside `relChangesDir` (relative to `cwd`) in which a file differs between `HEAD`
+ * and the point where it forked from `base` — the changes a branch did something to, not the ones it merely carries.
+ * Undefined when git cannot tell.
+ */
+export async function changesTouchedSinceFork(cwd: string, relChangesDir: string, base: string): Promise<Set<string> | undefined> {
+  const prefix = await git(cwd, ["rev-parse", "--show-prefix"]);
+  if (prefix === undefined) return undefined;
+  const out = await git(cwd, ["diff", "--name-only", "-z", "--no-relative", "--no-renames", "--no-ext-diff", `${base}...HEAD`, "--", relChangesDir]);
+  if (out === undefined) return undefined;
+  // `--no-relative` names files from the top level; the pathspec was relative to `cwd`, which sits `prefix` below it.
+  const within = `${prefix.trim()}${relChangesDir.replace(/\/+$/, "")}/`;
+  const names = new Set<string>();
+  for (const file of out.split("\0")) {
+    if (!file.startsWith(within)) continue;
+    const name = file.slice(within.length).split("/")[0];
+    if (name && file.length > within.length + name.length) names.add(name);
+  }
+  return names;
+}
+
 /** Committer date (ISO 8601) of the last commit touching `relPath`, or undefined if none. */
 export async function lastCommitDate(cwd: string, relPath: string): Promise<string | undefined> {
   const out = (await git(cwd, ["log", "-1", "--format=%cI", "--", relPath]))?.trim();

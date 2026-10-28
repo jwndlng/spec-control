@@ -106,3 +106,11 @@ test("a running session on another branch than the pull request's head is not wh
   const running = session({ state: "running", branch: "feat/rotate-keys" });
   expect(conflictAction({ ...change, recorded: { branch: "fix/rotate-keys" } }, [tree({ sessionId: "s1" })], [running], lists(pr({ head: "fix/rotate-keys" })), NOW)).toBeUndefined();
 });
+
+test("another change's conflicting pull request is not offered for a copy carried along in its worktree (link-only-own-branch)", () => {
+  // `rotate-keys` leads from `add-login`'s worktree; the scanner gives it no `branchMatch`, so `#20` is not its own.
+  const merged = pr({ number: 10, head: "feat/rotate-keys", state: "merged", mergeable: undefined, mergedAt: "2026-10-22T08:00:00Z" });
+  const other = pr({ number: 20, head: "feat/add-login" });
+  expect(conflictAction(change, [], [], lists(merged, other), NOW)).toBeUndefined();
+  expect(conflictAction({ repoId: "demo", name: "add-login", branchMatch: "feat/add-login" }, [], [], lists(merged, other), NOW)?.signal.github?.head).toBe("feat/add-login");
+});

@@ -364,3 +364,62 @@ test("a leftover next to its archive in a folder without git is reported once, a
   // active changes of a folder without git still carry no checkout
   expect(byName(snap, "solo").map((c) => [c.column, c.checkout])).toEqual([["Drafts", undefined]]);
 });
+
+/**
+ * The reproduction of "Another change's worktree carries the change along": `rotate-keys` is `Implementing` in a main
+ * checkout that was not pulled and `Done` on `origin/main` (a local ref; no remote is ever contacted).
+ */
+async function unpulled(): Promise<string> {
+  const root = await repo();
+  await writeChange(root, "rotate-keys", { artifacts: [...ALL], tasks: "- [x] 1.1 a\n- [ ] 1.2 b\n" });
+  await git(root, "add", "-A");
+  await git(root, "commit", "-q", "-m", "rotate-keys");
+  await writeFile(join(root, "openspec", "changes", "rotate-keys", "tasks.md"), "- [x] 1.1 a\n- [x] 1.2 b\n");
+  await git(root, "commit", "-q", "-am", "rotate-keys done");
+  await git(root, "update-ref", "refs/remotes/origin/main", "HEAD");
+  await git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+  await git(root, "reset", "-q", "--hard", "HEAD~1");
+  return root;
+}
+
+async function worktreeFrom(root: string, name: string, branch: string, start: string): Promise<string> {
+  const path = join(root, ".claude", "worktrees", name);
+  await git(root, "worktree", "add", "-q", "-b", branch, path, start);
+  const listed = (await git(root, "worktree", "list", "--porcelain")).split("\n").filter((l) => l.startsWith("worktree ")).map((l) => l.slice(9));
+  return listed.find((p) => p.endsWith(`worktrees/${name}`)) ?? path;
+}
+
+test("a worktree made for another change does not give a carried copy its branch", async () => {
+  const root = await unpulled();
+  const login = await worktreeFrom(root, "add-login", "feat/add-login", "origin/main");
+  await writeChange(login, "add-login");
+
+  const snap = await scan(root);
+  const [rotate] = byName(snap, "rotate-keys");
+  expect([rotate.column, rotate.checkout?.path, rotate.branchMatch]).toEqual(["Done", login, undefined]);
+  expect(byName(snap, "add-login")[0].branchMatch).toBe("feat/add-login");
+
+  // the change's own worktree elsewhere is still found, even though the carried copy leads
+  await worktreeFrom(root, "rotate-keys", "feat/rotate-keys", "main");
+  const again = byName(await scan(root), "rotate-keys")[0];
+  expect([again.checkout?.path, again.branchMatch]).toEqual([login, "feat/rotate-keys"]);
+});
+
+test("a worktree that holds work on a change gives it its branch, uncommitted or committed since the fork", async () => {
+  const root = await unpulled();
+  const login = await worktreeFrom(root, "add-login", "feat/add-login", "origin/main");
+  await writeFile(join(login, "openspec", "changes", "rotate-keys", "tasks.md"), "- [x] 1.1 a\n- [x] 1.2 b\n\nnote\n");
+  expect(byName(await scan(root), "rotate-keys")[0].branchMatch).toBe("feat/add-login");
+  await rm(login, { recursive: true, force: true });
+  await git(root, "worktree", "prune");
+
+  const keys = await worktreeFrom(root, "keys", "wip/keys", "origin/main");
+  expect(byName(await scan(root), "rotate-keys")[0].branchMatch).toBeUndefined();
+  await writeFile(join(keys, "openspec", "changes", "rotate-keys", "tasks.md"), "- [x] 1.1 a\n- [x] 1.2 b\n- [x] 1.3 c\n");
+  await git(keys, "commit", "-q", "-am", "more keys");
+  const source = new LocalRepoSource(keys);
+  expect([...((await source.changesTouchedSinceFork("openspec/changes", "origin/main")) ?? [])]).toEqual(["rotate-keys"]);
+  expect(await source.changesTouchedSinceFork("openspec/changes", "no-such-ref")).toBeUndefined();
+  const [rotate] = byName(await scan(root), "rotate-keys");
+  expect([rotate.checkout?.path, rotate.branchMatch]).toEqual([keys, "wip/keys"]);
+});
