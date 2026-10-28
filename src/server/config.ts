@@ -447,6 +447,14 @@ export async function saveConfig(config: Config): Promise<Config> {
   return valid;
 }
 
+/**
+ * The revision of a config: a short hash of its saved JSON, sent as `ETag` and checked against `If-Match`. Equal
+ * configs have the same revision, so it needs no counter and survives a restart.
+ */
+export function configRevision(config: Config): string {
+  return `"${createHash("sha1").update(JSON.stringify(config)).digest("hex").slice(0, 16)}"`;
+}
+
 /** The tail of the queue of config writes; a failed write must not stop the ones after it. */
 let pendingWrite: Promise<unknown> = Promise.resolve();
 

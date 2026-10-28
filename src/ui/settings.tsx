@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { Config, DiscoveredRepo, DiscoverResult, IntegratableRepo, Snapshot, UpdateStatus } from "../shared/types.ts";
 import { isReleaseVersion } from "../shared/versions.ts";
 import { AgentSettings } from "./agentSettings.tsx";
-import { api, ApiError } from "./api.ts";
+import { api, ApiError, ConfigConflictError, revisionOf } from "./api.ts";
 import { EnvironmentPanel } from "./environment.tsx";
 import { environmentAttention, environmentCount, type EnvironmentState } from "./environmentState.ts";
 import { type NavSection, SectionList, SectionNav, type SectionPage, useSectionNav } from "./sectionNav.tsx";
@@ -39,6 +39,8 @@ interface Props {
 
 export function Settings({ config, snapshot, onSaved, onRescan, environment, onRecheckEnvironment, update: updateStatus, onUpdate }: Props) {
   const [draft, setDraft] = useState<Config | null>(config);
+  // The saved config the draft was seeded from: its revision goes with a save, and what differs from it is the edit.
+  const [base, setBase] = useState<Config | null>(config);
   const [dirty, setDirty] = useState(false);
   const [newRoot, setNewRoot] = useState("");
   const [newIgnore, setNewIgnore] = useState("");
@@ -49,12 +51,15 @@ export function Settings({ config, snapshot, onSaved, onRescan, environment, onR
   const discoverSeq = useRef(0);
   const [discoverErrors, setDiscoverErrors] = useState<DiscoverResult["errors"]>([]);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ kind: "ok" | "danger"; text: string; issues?: string[] } | null>(null);
+  const [message, setMessage] = useState<{ kind: "ok" | "warn" | "danger"; text: string; issues?: string[] } | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateError, setUpdateError] = useState<string>();
 
   useEffect(() => {
-    if (config && !dirty) setDraft(config);
+    if (config && !dirty) {
+      setDraft(config);
+      setBase(config);
+    }
   }, [config, dirty]);
 
   // Defined before the early return below: the effect that calls it also runs for a render that returned early
@@ -136,8 +141,32 @@ export function Settings({ config, snapshot, onSaved, onRescan, environment, onR
   const save = async () => {
     setSaving(true);
     try {
-      const saved = await api.saveConfig(withLatestRepos(draft, config));
+      // Sent with the revision the draft was seeded from. Saved elsewhere since: the edits are moved onto the current
+      // config and saved at once when nobody else changed the same settings; otherwise the user decides.
+      let seed = base ?? draft;
+      let edited = draft;
+      let next = withLatestRepos(draft, config);
+      let saved: Config | undefined;
+      for (let attempt = 0; !saved; attempt++) {
+        try {
+          saved = await api.saveConfig(next, revisionOf(seed));
+        } catch (err) {
+          if (!(err instanceof ConfigConflictError)) throw err;
+          const rebased = rebaseDraft(edited, seed, err.config);
+          onSaved(err.config);
+          if (rebased.conflicts.length > 0 || attempt > 0) {
+            setDraft(rebased.config);
+            setBase(err.config);
+            setMessage({ kind: "warn", text: "Settings were changed elsewhere while this page was open. Your edits are shown over the newer values; save again to keep them." });
+            return;
+          }
+          seed = err.config;
+          edited = rebased.config;
+          next = rebased.config;
+        }
+      }
       setDraft(saved);
+      setBase(saved);
       setDirty(false);
       setMessage({ kind: "ok", text: "Saved." });
       onSaved(saved);
@@ -315,6 +344,40 @@ export function withLatestRepos(draft: Config, latest: Config | null): Config {
     return { ...repo, agent };
   });
   return { ...draft, repos };
+}
+
+/** Equal as JSON, whatever the order of object keys. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null || Array.isArray(a) !== Array.isArray(b)) return false;
+  const x = a as Record<string, unknown>;
+  const y = b as Record<string, unknown>;
+  const keys = new Set([...Object.keys(x), ...Object.keys(y)].filter((k) => x[k] !== undefined || y[k] !== undefined));
+  return [...keys].every((k) => sameValue(x[k], y[k]));
+}
+
+/**
+ * Settings' draft moved onto a config saved elsewhere since the draft was seeded from `base`: every top-level setting
+ * the user edited (where the draft differs from `base`) keeps the draft's value, every other one takes `current`'s, the
+ * repositories come from `current` as `withLatestRepos` takes them and `setup` stays the server's. `conflicts` names
+ * the edited settings that were also changed elsewhere, to something else; when there are none the result can be
+ * saved without asking.
+ */
+export function rebaseDraft(draft: Config, base: Config, current: Config): { config: Config; conflicts: string[] } {
+  const d = draft as unknown as Record<string, unknown>;
+  const b = base as unknown as Record<string, unknown>;
+  const c = current as unknown as Record<string, unknown>;
+  const next: Record<string, unknown> = {};
+  const conflicts: string[] = [];
+  for (const key of new Set([...Object.keys(c), ...Object.keys(d)])) {
+    if (key === "repos" || key === "setup") continue;
+    const edited = !sameValue(d[key], b[key]);
+    const value = edited ? d[key] : c[key];
+    if (edited && !sameValue(b[key], c[key]) && !sameValue(d[key], c[key])) conflicts.push(key);
+    if (value !== undefined) next[key] = value;
+  }
+  if (current.setup !== undefined) next.setup = current.setup;
+  return { config: withLatestRepos({ ...(next as unknown as Config), repos: current.repos }, current), conflicts };
 }
 
 /** The Workspace roots section's answer to "what did discovery find": counts and the way to Projects, never a list. */

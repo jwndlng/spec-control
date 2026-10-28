@@ -6,7 +6,7 @@ Every event the dashboard records SHALL appear in `activity.jsonl` exactly once,
 
 #### Scenario: Compaction between two recordings
 - **WHEN** the log holds 5 000 lines and two events are recorded one right after the other, so that writing the first one triggers a compaction
-- **THEN** the file holds 2 000 entries, each id once, and both new events are among them
+- **THEN** the file holds the 2 000 newest entries up to the first new event, followed by the second one — 2 001 lines, each id once, both new events among them
 
 #### Scenario: After a restart
 - **WHEN** the dashboard is restarted after such a compaction

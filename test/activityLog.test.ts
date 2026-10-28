@@ -81,6 +81,30 @@ test("the log is bounded: compacted to the newest entries beyond the limit, and 
   expect((await readFile(path, "utf8")).trim().split("\n")).toHaveLength(KEEP_ENTRIES);
 });
 
+test("a compaction between two recordings writes each event once, also after a restart", async () => {
+  const path = file("compact-race");
+  const log = new ActivityLog(path, clock);
+  await log.load();
+  const batch = (n: number, offset: number) => Array.from({ length: n }, (_, i) => moved(T0 + (offset + i) * 1000, `c${offset + i}`, "Specs", "Ready"));
+  await log.append(batch(COMPACT_ABOVE_LINES, 0));
+  const [first, second] = batch(2, COMPACT_ABOVE_LINES);
+  // Not waiting in between: the first one's write compacts while the second is already recorded in memory.
+  const writes = [log.append([first]), log.append([second])];
+  // Shown at once, before either write has finished.
+  expect(log.page({ limit: 2 }).events.map((e) => e.id)).toEqual([second.id, first.id]);
+  await Promise.all(writes);
+  const ids = (await readFile(path, "utf8")).trim().split("\n").map((l) => JSON.parse(l).id as string);
+  // The compaction kept the newest entries up to the first event; the second was appended after it, once.
+  expect(ids).toHaveLength(KEEP_ENTRIES + 1);
+  expect(new Set(ids).size).toBe(ids.length);
+  expect(ids.slice(-2)).toEqual([first.id, second.id]);
+
+  const restarted = new ActivityLog(path, clock);
+  await restarted.load();
+  const shown = restarted.page({ limit: 10 }).events.map((e) => e.id);
+  expect(shown.filter((id) => id === first.id || id === second.id)).toEqual([second.id, first.id]);
+});
+
 test("paging has no duplicates and no gaps; filters apply; newestId ignores them", async () => {
   const log = new ActivityLog(file("paging"), clock);
   await log.load();

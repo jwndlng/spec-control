@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ConfigValidationError, defaultAgentSessions, defaultConfig, loadConfig, newRepoConfig, repoId, saveConfig, updateConfig, validateConfig, validateIgnorePaths } from "../src/server/config.ts";
+import { ConfigValidationError, configRevision, defaultAgentSessions, defaultConfig, loadConfig, newRepoConfig, repoId, saveConfig, updateConfig, validateConfig, validateIgnorePaths } from "../src/server/config.ts";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE, CODEX_PROFILE, DEFAULT_SHORTCUTS, FORMER_PROMPTS } from "../src/shared/agentDefaults.ts";
 import type { PromptKey } from "../src/shared/types.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
@@ -575,4 +575,12 @@ test("editor command: an argument list with an optional {path}; empty is none; o
   const { editor: _, ...withoutEditor } = defaultConfig().agentSessions;
   expect(validateConfig({ ...defaultConfig(), agentSessions: withoutEditor })).toEqual(validateConfig(defaultConfig()));
   expect("editor" in validateConfig(defaultConfig()).agentSessions).toBe(false);
+});
+
+test("a config's revision depends on its content only: equal configs share one, any change gives a new one", () => {
+  const config = defaultConfig();
+  expect(configRevision(config)).toBe(configRevision(structuredClone(config)));
+  expect(configRevision({ ...config, pollIntervalSeconds: 90 })).not.toBe(configRevision(config));
+  expect(configRevision({ ...config, labelColors: { bug: 3 } })).not.toBe(configRevision(config));
+  expect(configRevision(config)).toMatch(/^"[0-9a-f]{16}"$/);
 });

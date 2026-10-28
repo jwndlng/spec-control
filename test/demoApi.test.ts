@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { revisionOf } from "../src/ui/api.ts";
 import { createDemoApi } from "../src/ui/demo/demoApi.ts";
 import { DEMO_ROOT } from "../src/ui/demo/sampleData.ts";
 import { candidateBranches } from "../src/shared/pullRequestLink.ts";
@@ -26,7 +27,7 @@ test("saving a config with a repository disabled removes it from the state, for 
   const { api } = demo();
   const config = await api.config();
   const [first] = config.repos;
-  await api.saveConfig({ ...config, repos: config.repos.map((r) => (r.id === first.id ? { ...r, enabled: false } : r)) });
+  await api.saveConfig({ ...config, repos: config.repos.map((r) => (r.id === first.id ? { ...r, enabled: false } : r)) }, revisionOf(config));
   expect((await api.state()).repos.map((r) => r.id)).not.toContain(first.id);
   // What a reload does: a fresh instance has the original sample again.
   expect((await demo().api.state()).repos.map((r) => r.id)).toContain(first.id);
@@ -35,7 +36,7 @@ test("saving a config with a repository disabled removes it from the state, for 
 test("renaming a repository shows on the board", async () => {
   const { api } = demo();
   const config = await api.config();
-  await api.saveConfig({ ...config, repos: config.repos.map((r, i) => (i === 0 ? { ...r, name: "renamed" } : r)) });
+  await api.saveConfig({ ...config, repos: config.repos.map((r, i) => (i === 0 ? { ...r, name: "renamed" } : r)) }, revisionOf(config));
   expect((await api.state()).repos[0].name).toBe("renamed");
 });
 
@@ -47,7 +48,7 @@ test("discovery offers only untracked candidates, and an enabled one appears as 
   expect(found.candidates.every((c) => !config.repos.some((r) => r.id === c.id))).toBe(true);
 
   const [picked] = found.candidates;
-  await api.saveConfig({ ...config, repos: [...config.repos, { ...picked, enabled: true }] });
+  await api.saveConfig({ ...config, repos: [...config.repos, { ...picked, enabled: true }] }, revisionOf(config));
   expect((await api.discover()).candidates.map((c) => c.id)).not.toContain(picked.id);
   expect((await api.state()).repos.find((r) => r.id === picked.id)?.changes).toEqual([]);
 });
@@ -301,7 +302,7 @@ test("the demo's environment report passes and needs no process, file or connect
 test("switching agent sessions off in the demo turns the checks it makes unnecessary into not-needed", async () => {
   const { api } = demo();
   const config = await api.config();
-  await api.saveConfig({ ...config, agentSessions: { ...config.agentSessions, enabled: false } });
+  await api.saveConfig({ ...config, agentSessions: { ...config.agentSessions, enabled: false } }, revisionOf(config));
   const report = await api.environment();
   for (const id of ["git-identity", "agent:demo-agent", "github-cli"]) {
     const check = report.checks.find((c) => c.id === id);
@@ -423,7 +424,7 @@ test("setup is done in the demo, and Run setup again works on the page's own con
   // The sample workspace is configured, so nothing is suggested until the visitor removes it.
   expect(setup.suggestedRoots).toEqual([]);
   const config = await api.config();
-  await api.saveConfig({ ...config, scanRoots: [] });
+  await api.saveConfig({ ...config, scanRoots: [] }, revisionOf(config));
   expect((await api.setup()).suggestedRoots).toEqual(config.scanRoots);
   expect((await api.markSetupDone()).setup).toBeUndefined();
 });

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import { ANTIGRAVITY_PROFILE, CLAUDE_PROFILE, CODEX_PROFILE } from "../src/shared/agentDefaults.ts";
 import type { AgentAvailability, Config, EnvironmentReport, GithubClone, RepoConfig } from "../src/shared/types.ts";
+import { ConfigConflictError, rememberRevision } from "../src/ui/api.ts";
 import { NEW_AGENT_PROMPTS } from "../src/ui/sessionState.ts";
 import {
   type AgentsChoice,
@@ -10,6 +11,7 @@ import {
   agentsSave,
   allInPlace,
   consoleSave,
+  type FreshSaveDeps,
   customAgentProblem,
   customAgentRef,
   doneCards,
@@ -28,6 +30,7 @@ import {
   workspaceRootReady,
   preselectedAgent,
   projectSettingsSave,
+  saveFresh,
   SETUP_STEPS,
   settingValue,
   setupSummary,
@@ -493,4 +496,52 @@ test("continuing with a configured root and nothing entered, checked or listed s
   const result = await continueWorkspaceStep(workspaceInput(), h.deps);
   expect(result.outcome).toBe("next");
   expect(h.calls).toEqual([]);
+});
+
+// ---- saves made from a fresh copy, against a configuration saved elsewhere meanwhile ----
+
+/** A backend whose config has a revision per save; `meanwhile` lands just before the wizard's next save. */
+function revisionHarness(meanwhile: ((config: Config) => Config)[] = []) {
+  let config: Config = { ...defaultConfig() };
+  let revision = 1;
+  const sent: (string | undefined)[] = [];
+  const copy = () => rememberRevision(structuredClone(config), `"r${revision}"`);
+  const deps: FreshSaveDeps = {
+    config: async () => copy(),
+    saveConfig: async (next, rev) => {
+      sent.push(rev);
+      const change = meanwhile.shift();
+      if (change) {
+        config = change(config);
+        revision++;
+      }
+      if (rev !== `"r${revision}"`) throw new ConfigConflictError("changed elsewhere", copy());
+      config = next;
+      revision++;
+      return copy();
+    },
+  };
+  return { deps, sent, config: () => config };
+}
+
+test("a setup save refused because the config changed meanwhile is computed again from the current one and saved", async () => {
+  const h = revisionHarness([(c) => ({ ...c, labelColors: { client: 290 } })]);
+  const { saved, fresh } = await saveFresh(h.deps, (c) => ({ ...c, scanRoots: [...c.scanRoots, "/w/acme"] }));
+  expect(h.sent).toEqual(['"r1"', '"r2"']);
+  expect(saved?.scanRoots).toEqual(["/w/acme"]);
+  expect(h.config().labelColors).toEqual({ client: 290 });
+  expect(fresh.labelColors).toEqual({ client: 290 });
+});
+
+test("a setup save is tried once more only: a second refusal is reported", async () => {
+  const h = revisionHarness([(c) => ({ ...c, pollIntervalSeconds: 90 }), (c) => ({ ...c, pollIntervalSeconds: 120 })]);
+  await expect(saveFresh(h.deps, (c) => ({ ...c, scanRoots: ["/w/acme"] }))).rejects.toBeInstanceOf(ConfigConflictError);
+  expect(h.sent).toHaveLength(2);
+  expect(h.config().scanRoots).toEqual([]);
+});
+
+test("nothing to save sends nothing", async () => {
+  const h = revisionHarness();
+  expect((await saveFresh(h.deps, () => undefined)).saved).toBeUndefined();
+  expect(h.sent).toEqual([]);
 });

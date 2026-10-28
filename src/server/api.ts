@@ -12,7 +12,7 @@ import { changeDirFor, listArtifactFiles, readArtifactFile } from "./artifacts.t
 import { consoleFolderProblem } from "./sessions/consoleFolder.ts";
 import { createWorkspaceFolder, type FolderPickerContext, FolderPickerBusyError, folderPickerContext, markSetupDone, pickFolder, setupState } from "./setup.ts";
 import { NewFolderError } from "./newFolder.ts";
-import { ConfigValidationError, newRepoConfig, repoId, updateConfig, validateConfig, validateIgnorePaths, validateScanRoots } from "./config.ts";
+import { ConfigValidationError, configRevision, newRepoConfig, repoId, updateConfig, validateConfig, validateIgnorePaths, validateScanRoots } from "./config.ts";
 import { createChange } from "./createChange.ts";
 import { createProject, CreateProjectError } from "./createProject.ts";
 import { dismissChange, DismissError, isDismissableName, previewDismiss } from "./dismissChange.ts";
@@ -77,6 +77,11 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
 }
 
+/** A response whose body is the saved config, with its revision as `ETag` so a later `PUT` can name it in `If-Match`. */
+function configJson(config: Config): Response {
+  return new Response(JSON.stringify(config), { headers: { ...JSON_HEADERS, etag: configRevision(config) } });
+}
+
 /**
  * `GET /api/version`: what a program on the port has to answer to be taken for a Spec Control (the desktop app asks
  * before it starts or attaches to a server). Reads nothing and starts nothing, so it is safe to answer while starting.
@@ -112,10 +117,22 @@ async function putConfig(state: AppState, req: Request): Promise<Response> {
   // Checked on save only (loading must survive a folder deleted since); opening the console checks it again.
   const consoleProblem = next.agentSessions.consoleDir ? consoleFolderProblem(next.agentSessions.consoleDir, next) : undefined;
   if (consoleProblem) return json({ error: `invalid config: agentSessions.consoleDir: ${consoleProblem}`, issues: [`agentSessions.consoleDir: ${consoleProblem}`] }, 400);
+  // Compared inside the serialised write, against the config the previous write left: a client that saw an older
+  // revision would undo whatever was saved since, so it gets the current config back to rebase on. No `If-Match`
+  // (a command-line client) applies the body as before.
+  const ifMatch = req.headers.get("if-match");
+  let stale: Config | undefined;
   // `setup` is the server's, not the client's: a Settings tab holding an older copy can neither end nor restart setup.
-  const { previous, saved } = await updateConfig(state, (current) => ({ ...next, setup: current.setup }));
+  const { previous, saved } = await updateConfig(state, (current) => {
+    if (ifMatch !== null && ifMatch !== configRevision(current)) {
+      stale = current;
+      return undefined;
+    }
+    return { ...next, setup: current.setup };
+  });
+  if (stale) return new Response(JSON.stringify({ error: "the configuration was changed elsewhere since it was read", config: stale }), { status: 412, headers: { ...JSON_HEADERS, etag: configRevision(stale) } });
   afterConfigChange(state, previous);
-  return json(saved);
+  return configJson(saved);
 }
 
 /** What every config write starts: a fresh `origin` lookup, and a scan when the interval or the enabled set changed. */
@@ -174,7 +191,7 @@ async function postTrackRepo(state: AppState, req: Request): Promise<Response> {
     return { ...current, repos: [...current.repos, named].sort((x, y) => x.path.localeCompare(y.path)) };
   });
   afterConfigChange(state, previous);
-  return json(saved);
+  return configJson(saved);
 }
 
 /** Enable and Disable of a configured repository; its name and everything else stay. */
@@ -186,7 +203,7 @@ async function postRepoEnabled(state: AppState, req: Request, id: string): Promi
     return { ...current, repos: current.repos.map((r) => (r.id === id ? { ...r, enabled } : r)) };
   });
   afterConfigChange(state, previous);
-  return json(saved);
+  return configJson(saved);
 }
 
 /** Ignore on the projects overview: one more ignore path. Configured repositories are untouched, as ever. */
@@ -197,7 +214,7 @@ async function postIgnorePath(state: AppState, req: Request): Promise<Response> 
     current.ignorePaths.includes(path) ? undefined : { ...current, ignorePaths: [...current.ignorePaths, path] },
   );
   afterConfigChange(state, previous);
-  return json(saved);
+  return configJson(saved);
 }
 
 /**
@@ -212,7 +229,7 @@ async function updateRepo(state: AppState, id: string, change: (repo: RepoConfig
     return next === undefined ? undefined : { ...current, repos: current.repos.map((r) => (r.id === id ? next : r)) };
   });
   afterConfigChange(state, previous);
-  return json(saved);
+  return configJson(saved);
 }
 
 /** Rename on the projects overview. Display only: the id, the path and every other setting stay. */
@@ -295,7 +312,7 @@ async function postLabelColor(state: AppState, req: Request): Promise<Response> 
     return Object.keys(colors).length ? { ...rest, labelColors: colors } : rest;
   });
   afterConfigChange(state, previous);
-  return json(saved);
+  return configJson(saved);
 }
 
 /** "Don't show this warning again" in the Fast-forward dialog, and its way back: one setting, saved at once. */
@@ -304,7 +321,7 @@ async function postFastForwardWarning(state: AppState, req: Request): Promise<Re
   if (typeof show !== "boolean") return json({ error: "show must be true or false" }, 400);
   const { previous, saved } = await updateConfig(state, (current) => ({ ...current, agentSessions: { ...current.agentSessions, confirmFastForward: show } }));
   afterConfigChange(state, previous);
-  return json(saved);
+  return configJson(saved);
 }
 
 /** Forget on the overview: only a repository the user disabled, so a stale tab cannot drop one still managed. */
@@ -316,7 +333,7 @@ async function postRepoForget(state: AppState, id: string): Promise<Response> {
     return { ...current, repos: current.repos.filter((r) => r.id !== id) };
   });
   afterConfigChange(state, previous);
-  return json(saved);
+  return configJson(saved);
 }
 
 class TrackingError extends Error {
@@ -1322,7 +1339,7 @@ export function createFetchHandler({ state, indexHtml }: AppOptions): (req: Requ
         const saved = await markSetupDone(state);
         // Automatic fetch waited for setup to end; arm it now rather than at the next scan.
         state.autoFetcher?.plan();
-        return json(saved);
+        return configJson(saved);
       }
       // A POST because it starts a process (the system's folder dialog); the body is never read.
       if (req.method === "POST" && pathname === "/api/setup/folder") return postSetupFolder(state);
@@ -1333,7 +1350,7 @@ export function createFetchHandler({ state, indexHtml }: AppOptions): (req: Requ
       if (req.method === "GET" && pathname === "/api/github/clones") return json({ clones: state.githubClones?.list() ?? [], gitAvailable: whichOnPath("git") !== undefined });
       if (req.method === "POST" && pathname === "/api/github/clones/cancel") return postGithubCloneCancel(state, req);
       if (req.method === "POST" && pathname === "/api/github/clones/dismiss") return postGithubCloneDismiss(state, req);
-      if (req.method === "GET" && pathname === "/api/config") return json(state.config);
+      if (req.method === "GET" && pathname === "/api/config") return configJson(state.config);
       if (req.method === "PUT" && pathname === "/api/config") return putConfig(state, req);
       if (req.method === "POST" && pathname === "/api/discover") return postDiscover(state, req);
       if (req.method === "POST" && pathname === "/api/repos/track") return tracking(() => postTrackRepo(state, req));
