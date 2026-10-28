@@ -12,7 +12,7 @@ import { cdCommand } from "./format.ts";
 import { inPlaceReason } from "./inPlaceText.ts";
 import { NOT_SUBMITTED_NOTICE, shortcutHint, shortcutMessage, visibleShortcuts } from "./quickReplies.ts";
 import { usePullRequests } from "./pullRequests.tsx";
-import { autoEndedText, autoMergeNotice, conflictAction, consoleSteps, handedOverProposal, mergeControl, mergeNotice, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, sessionsEnabledFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
+import { autoEndedText, autoMergeNotice, conflictAction, consoleSteps, handedOverProposal, mergeControl, mergeNotice, oneAtATime, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, sessionsEnabledFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
 import { ConflictBadge, OpenInEditor, SessionBadgeView, SessionControls, useSessionUi } from "./sessions.tsx";
 
 export function Copy({ text, label }: { text: string; label: string }) {
@@ -259,6 +259,8 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   const ui = useSessionUi();
   const prs = usePullRequests();
   const [error, setError] = useState<string>();
+  const inFlight = useRef(false);
+  const [acting, setActing] = useState(false);
   // An agent that was started again (Resume, Ship — from here or from the end-session dialog) gets a fresh terminal view.
   const generation = useTerminalGeneration(session);
 
@@ -293,15 +295,17 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   // Nothing has ever run for this change: the tab says so and offers the openings, which is why it exists at all.
   const untouched = !session && !tree;
 
-  const act = async (fn: () => Promise<unknown>) => {
-    try {
-      setError(undefined);
-      await fn();
-      await ui.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
+  // One header action at a time: a double-click on Ship or Resume would otherwise start two agents in one worktree.
+  const act = (fn: () => Promise<unknown>) =>
+    oneAtATime(inFlight, setActing)(async () => {
+      try {
+        setError(undefined);
+        await fn();
+        await ui.refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    });
 
   const path = session?.worktreePath ?? tree?.path;
   // The session's own folder from its record, or a worktree without one by name: never a path from here.
@@ -339,6 +343,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
             <button
               type="button"
               class="btn sm primary"
+              disabled={acting}
               title={
                 session.state === "running"
                   ? `Sends ${session.agentName} a prompt asking it to commit, push and open a pull request`
@@ -357,6 +362,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
             <button
               type="button"
               class="btn sm"
+              disabled={acting}
               title={
                 session.state === "running"
                   ? `Sends ${session.agentName} a prompt asking it to bring the branch up to date and resolve the conflicts. The dashboard merges nothing itself.`
@@ -376,7 +382,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
             <button
               type="button"
               class="btn sm"
-              disabled={!merge.enabled}
+              disabled={!merge.enabled || acting}
               title={merge.title}
               onClick={() =>
                 act(async () => {
@@ -392,6 +398,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
             <button
               type="button"
               class="btn sm"
+              disabled={acting}
               title="Start the agent again in the same worktree, continuing its latest conversation"
               onClick={() => act(() => api.resumeSession(session.id))}
             >
@@ -409,7 +416,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
                   key: "merge",
                   label: "⤵ Merge",
                   title: merge.title,
-                  disabled: !merge.enabled,
+                  disabled: !merge.enabled || acting,
                   onActivate: () =>
                     act(async () => {
                       const result = await api.mergeSession(session.id);
@@ -423,6 +430,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
                     : {
                       key: "resolveConflicts",
                       label: "⚠ Resolve conflicts",
+                      disabled: acting,
                       title: `Sends ${session.agentName} a prompt asking it to bring the branch up to date and resolve the conflicts. The dashboard merges nothing itself.`,
                       onActivate: () =>
                         act(async () => {
@@ -441,7 +449,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
             </button>
           )}
           {session && session.state !== "running" && (
-            <button type="button" class="btn sm ghost" title="Delete this session's record and stored output" onClick={() => act(() => api.deleteSession(session.id))}>
+            <button type="button" class="btn sm ghost" disabled={acting} title="Delete this session's record and stored output" onClick={() => act(() => api.deleteSession(session.id))}>
               Delete record
             </button>
           )}

@@ -6,7 +6,7 @@ import type { PullResolve, PullResult } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { Modal } from "./modal.tsx";
 import type { ActionDescription } from "./projectDetails.ts";
-import { blockingNote, type FetchNoteInput, fetchNote, pullOutcome, resolveSummary } from "./pullState.ts";
+import { blockingNote, type FetchNoteInput, fetchNote, pullOutcome, resolveSummary, shownPullResult } from "./pullState.ts";
 
 type PullState = "running" | PullResult;
 
@@ -166,6 +166,9 @@ export function PullButton({ repoId, repoName, variant = "board", description }:
   const state = ui.states[repoId];
   const running = state === "running";
   const result = state && state !== "running" ? state : undefined;
+  // The last finished outcome, which the open list keeps showing while Resolve and pull runs.
+  const last = useRef<PullResult>();
+  if (result) last.current = result;
   const outcome = result ? pullOutcome(result) : undefined;
   // A refusal over uncommitted files has more to say than a tooltip can: the badge becomes the way in.
   const blocked = result?.blocking !== undefined || result?.resolved !== undefined;
@@ -202,12 +205,32 @@ export function PullButton({ repoId, repoName, variant = "board", description }:
           {outcome.label}
         </span>
       )}
-      {open && result && (
-        <Modal label={`Blocked pull for ${repoName ?? repoId}`} title="Blocked pull" subtitle={<span class="mono">{repoName ?? repoId}</span>} onClose={() => setOpen(false)}>
-          <PullBlockedList result={result} running={running} onResolve={(claim) => void ui.resolve(repoId, claim)} />
-        </Modal>
-      )}
+      {open && <BlockedPullModal repoId={repoId} repoName={repoName} result={shownPullResult(state, last.current)} running={running} onClose={() => setOpen(false)} onResolve={(claim) => void ui.resolve(repoId, claim)} />}
     </span>
+  );
+}
+
+/** The Blocked pull list in its modal; nothing until there is an outcome to show. Hook-free, so it can be asserted on. */
+export function BlockedPullModal({
+  repoId,
+  repoName,
+  result,
+  running,
+  onClose,
+  onResolve,
+}: {
+  repoId: string;
+  repoName?: string;
+  result: PullResult | undefined;
+  running: boolean;
+  onClose: () => void;
+  onResolve: (claim: PullResolve) => void;
+}) {
+  if (!result) return null;
+  return (
+    <Modal label={`Blocked pull for ${repoName ?? repoId}`} title="Blocked pull" subtitle={<span class="mono">{repoName ?? repoId}</span>} onClose={onClose}>
+      <PullBlockedList result={result} running={running} onResolve={onResolve} />
+    </Modal>
   );
 }
 
