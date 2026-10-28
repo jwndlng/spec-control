@@ -7,6 +7,7 @@ import { dismissChange, DismissError, isDismissableName, isDismissing, previewDi
 import { scanRepo } from "../src/server/scanner.ts";
 import type { RepoConfig, RepoSnapshot } from "../src/shared/types.ts";
 import { tempDir, treeFingerprint, useTempHome } from "./helpers.ts";
+import { hookLog, writeHooks } from "./hookHelpers.ts";
 import { git, harness, tempGitRepo, tempPlainRepo, type Harness } from "./sessionHelpers.ts";
 
 setDefaultTimeout(30_000);
@@ -257,4 +258,24 @@ test("a change directory replaced by a file is not treated as a change", async (
   await writeFile(dir, "not a directory\n");
   expect((await refused(previewDismiss(r.repo, await r.scan(), "add-health-endpoint"))).status).toBe(404);
   expect(await readFile(dir, "utf8")).toBe("not a directory\n");
+});
+
+test("the user's global hooks folder never runs for the staging `git add --all`", async () => {
+  const r = await gitRepo();
+  const base = await tempDir("osd-hooks-");
+  const log = join(base, "hook-log.txt");
+  await writeHooks(join(base, "hooks"), log);
+  await writeFile(join(base, "gitconfig"), `[core]\n\thooksPath = ${join(base, "hooks")}\n`);
+  const saved = process.env.GIT_CONFIG_GLOBAL;
+  process.env.GIT_CONFIG_GLOBAL = join(base, "gitconfig");
+  try {
+    const scanned = await r.scan();
+    const p = await previewDismiss(r.repo, scanned, "structured-logs");
+    expect(await dismissChange(r.repo, scanned, "structured-logs", p.fingerprint)).toEqual({ name: "structured-logs", staged: true });
+    expect(stagedNames(r).length).toBe(p.files.length);
+    expect(await hookLog(log)).toEqual([]);
+  } finally {
+    if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = saved;
+  }
 });

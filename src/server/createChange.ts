@@ -8,6 +8,7 @@ import { openSpec } from "./frameworks/openspec/index.ts";
 import { writablePaths } from "./frameworks/registry.ts";
 import { githubRepoFromRemote } from "./gh.ts";
 import { originUrl } from "./git.ts";
+import { gitWrite } from "./gitWrite.ts";
 import { CHANGE_NAME, LocalRepoSource } from "./source.ts";
 
 export type CreateChangeResult =
@@ -47,35 +48,6 @@ export function validateDependsOn(name: string, dependsOn: unknown): { ok: true;
 }
 
 /**
- * The one writing git command creating a change may run. Deliberately not `git.ts`'s runner: that module is read-only
- * by contract. No shell, no prompt, no stdin; a missing git, a non-zero exit or a timeout all resolve to `false` —
- * never a throw, because by the time this runs the change already exists on disk.
- */
-async function git(cwd: string, args: string[], timeoutMs = GIT_TIMEOUT_MS): Promise<boolean> {
-  let timedOut = false;
-  try {
-    const proc = Bun.spawn(["git", ...args], {
-      cwd,
-      stdout: "ignore",
-      stderr: "ignore",
-      stdin: "ignore",
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
-    });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      proc.kill();
-    }, timeoutMs);
-    try {
-      return (await proc.exited) === 0 && !timedOut;
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Stages the new change directory — and only it — so git tracks the change from the moment it exists. The path
  * goes after `--` and is the directory, not `.` or `-A`: whatever else the user has modified or left untracked stays
  * out of the index. Best-effort: `false` means the change is on disk but untracked.
@@ -83,7 +55,9 @@ async function git(cwd: string, args: string[], timeoutMs = GIT_TIMEOUT_MS): Pro
 export async function stageChangeDir(repoPath: string, name: string, timeoutMs = GIT_TIMEOUT_MS, framework: SpecFramework = openSpec): Promise<boolean> {
   const layout = writablePaths(framework);
   if (!layout || !CHANGE_NAME.test(name)) return false;
-  return git(repoPath, ["add", "--", `${layout.changesDir}/${name}/`], timeoutMs);
+  // The one writing git command creating a change runs: no hooks, no prompt, no stdin (`gitWrite`). A missing git, a
+  // non-zero exit or a timeout all resolve to `false` — never a throw, because by now the change exists on disk.
+  return (await gitWrite(repoPath, ["add", "--", `${layout.changesDir}/${name}/`], { timeoutMs })).ok;
 }
 
 /** Today in the server's local time zone as `YYYY-MM-DD`; matches what `openspec new change` records. */

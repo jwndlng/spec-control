@@ -58,11 +58,12 @@ bun test test/scanner.test.ts   # a single test file
    shows merged the pull request of a session whose prompt carried the Docs auto-merge instruction, in a project that
    still has Docs auto-merge on (the opt-in is the confirmation; same checks, same command, the branch kept, no fetch,
    no new git or `gh` subcommand, `SessionManager.endMergedAutoMerge`); the **pull action** — `git fetch` of the repository's own
-   remote, then a fast-forward-only `git merge` of the main checkout's upstream, with hooks disabled, never a merge
-   commit, rebase, stash, reset, force or branch switch, and only fetching when the checkout is off its default branch,
+   remote with `--no-prune --no-prune-tags`, then a fast-forward-only `git merge --no-autostash` of the main checkout's
+   upstream with `submodule.recurse=false`, never a merge commit, rebase, stash, reset, force or branch switch, one at a
+   time per git repository (keyed by its git common directory, so projects sharing a repository share the lock), and only fetching when the checkout is off its default branch,
    has no upstream, has diverged or has overlapping local edits — and, when a fast-forward is refused because
    uncommitted files would be overwritten, listing those blocking files and, only when every one of them is a **change
-   leftover** (inside `openspec/changes/<name>/`, not in the current commit, only added locally, an ordinary file, and
+   leftover** (inside the project's own `openspec/changes/<name>/`, every path read from the top level, not in the current commit, only added locally, an ordinary file, and
    present in the incoming commit) and only after the user confirmed **Resolve and pull** and the whole classification
    was re-proved without fetching again, copying every leftover that differs under
    `~/.spec-control/pull-backups/`, removing exactly those files from the working tree and, for the staged ones,
@@ -73,7 +74,7 @@ bun test test/scanner.test.ts   # a single test file
    setup is still pending (`setup: "pending"`, so the setup wizard's projects wait for the user's choice), exactly the
    pull action's `git fetch` and nothing after it, on that interval (`fetchRepository` in `src/server/pull.ts`, scheduled by `src/server/autoFetch.ts`): remote-tracking
    refs, `FETCH_HEAD` and objects only, never a fast-forward, merge, prune or anything in a working tree or index, never
-   overlapping a pull of the same project or itself, and never in the demo — the per-project setting, which the user can
+   overlapping a pull or fetch of the same git repository, and never in the demo — the per-project setting, which the user can
    switch off, is what allows it; and the
    **create-change action** — a new `openspec/changes/<name>/` directory
    with the schema marker `.openspec.yaml`, when the user typed one, `prompt.md`, when the user picked any
@@ -113,7 +114,13 @@ bun test test/scanner.test.ts   # a single test file
    `~/.spec-control/worktrees/`, which rewrites only that worktree's record in the repository and its `.git` file and is
    retried on later starts until it succeeds (`src/server/homeMigration.ts` through `repairMovedWorktree` in
    `src/server/sessions/worktree.ts`). Those six modules and the home migration are the only places that write to a
-   tracked repository. Apart from the pull action, the
+   tracked repository, and every writing git command they run goes through `gitWrite` (`src/server/gitWrite.ts`): `-c
+   core.hooksPath=` an empty folder under `~/.spec-control/` and automatic maintenance off, so no hook of the
+   repository, of the user's global hooks folder or of a template ever runs (`test/gitWrite.test.ts` fails on a writing
+   subcommand spawned anywhere else; `git init` and `git clone` keep their own invocations, the clone with the same
+   folder). Merge checks (`contentIsInBase`) and the pull's blocking files name paths from the repository's top level, so
+   a project in a subfolder is judged exactly like one at the top level; cleanup, branch deletion and stale cleanup hold
+   one lock per git repository, like the pull. Apart from the pull action, the
    automatic fetch and those two `git add`s, the main checkout's index and files are never touched and no remote is ever
    contacted; the main
    checkout's branch is never changed by anything; and the pull action runs only on the user's explicit request — never

@@ -8,6 +8,8 @@ import { branchBackupsDir, worktreesDir } from "../src/server/paths.ts";
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
 import type { BranchDeletePreview, RepoConfig } from "../src/shared/types.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
+import { hookLog, installRepoHooks } from "./hookHelpers.ts";
+import { commitFiles, monorepo } from "./monorepoHelpers.ts";
 import { git, tempGitRepo } from "./sessionHelpers.ts";
 
 setDefaultTimeout(30_000);
@@ -259,4 +261,28 @@ test("the deletion holds the repository's cleanup lock while it runs", async () 
   await pending;
   expect(isCleaningUp(r.repo.id)).toBe(false);
   expect((await stat(r.path)).isDirectory()).toBe(true);
+});
+
+test("in a subfolder project, a worktree on an unmerged branch is previewed as not merged", async () => {
+  const m = await monorepo();
+  const repo = newRepoConfig(m.project(), true);
+  const wt = join(await realpath(await tempDir("osd-wt-")), "rotate-keys");
+  git(m.top, "worktree", "add", "-q", "-b", "feat/rotate-keys", wt, "main");
+  await commitFiles(wt, { "packages/tools/src/keys.ts": "export const keys = 2;\n" });
+  const p = await previewBranchDelete(repo, wt);
+  expect(p.notInBase).toBe(1);
+  expect(p.merged).toBe(false);
+});
+
+test("hooks do not run when a branch is deleted with its worktree", async () => {
+  const r = await repoWithOrigin();
+  const wt = await userWorktree(r, "fix/parser");
+  await commit(wt, "p.txt", "1");
+  await writeFile(join(wt, "notes.txt"), "uncommitted\n");
+  const log = await installRepoHooks(r.path);
+  const p = await previewBranchDelete(r.repo, wt);
+  expect(await deleteBranch(r.repo, request(p))).toMatchObject({ outcome: "deleted", branch: "fix/parser" });
+  expect(existsSync(wt)).toBe(false);
+  expect(branches(r.path)).not.toContain("refs/heads/fix/parser");
+  expect(await hookLog(log)).toEqual([]);
 });

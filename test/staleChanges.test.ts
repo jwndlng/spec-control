@@ -1,18 +1,22 @@
 // Stale changes (openspec/specs/stale-changes): stranded archives and archived-and-merged leftovers, both found by the
 // scan from a change's exact branches. Real temp git repositories, no network.
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { cp, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { applyStaleCleanup, previewStaleCleanup, type StaleScope } from "../src/server/cleanup.ts";
 import { newRepoConfig } from "../src/server/config.ts";
 import { OPENSPEC_PATHS } from "../src/server/frameworks/registry.ts";
 import { worktreesDir } from "../src/server/paths.ts";
 import { scanRepo } from "../src/server/scanner.ts";
 import { LocalRepoSource } from "../src/server/source.ts";
-import type { RepoSnapshot } from "../src/shared/types.ts";
+import type { RepoConfig, RepoSnapshot } from "../src/shared/types.ts";
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
 import { archiveDate, changeBranches, findDuplicates, findStrandedArchives, parseRecordedBranches, type SessionHint, staleLeftovers } from "../src/server/staleChanges.ts";
 import { parseWorktrees } from "../src/server/git.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
+import { hookLog, installRepoHooks } from "./hookHelpers.ts";
+import { commitFiles, type Monorepo, monorepo } from "./monorepoHelpers.ts";
 import { git, tempGitRepo } from "./sessionHelpers.ts";
 
 setDefaultTimeout(30_000);
@@ -461,4 +465,90 @@ test("the scan marks the archived card as a duplicate and keeps its column, stag
   const unmarked = await scanRepo(newRepoConfig(repo, true), Object.assign(new LocalRepoSource(repo), { duplicates: undefined }));
   expect(unmarked.changes.some((c) => c.duplicate)).toBe(false);
   expect(board(scan)).toEqual(board(unmarked));
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// A project in a subfolder of its repository (stale-changes: "A leftover's merge check works from a project in a
+// subfolder"), and hooks during a stale cleanup.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** `archivedSetup` for the project at `packages/tools` of a monorepo: paths in its worktree start with `packages/tools/`. */
+async function archivedSubfolderSetup(): Promise<{ m: Monorepo; tools: string; config: RepoConfig; wt: string }> {
+  const m = await monorepo();
+  const tools = m.project();
+  const config = newRepoConfig(tools, true);
+  const wt = join(worktreesDir(), config.id, CHANGE);
+  await mkdir(join(worktreesDir(), config.id), { recursive: true });
+  await ensureWorktree(tools, wt, `feat/${CHANGE}`);
+  await archive(tools);
+  git(tools, "push", "-q", "origin", "main");
+  return { m, tools, config, wt: await realpath(wt) };
+}
+
+const staleScope = async (config: RepoConfig): Promise<StaleScope> => ({ scanned: await scanRepo(config), hints: [], runningPaths: new Set() });
+
+test("in a subfolder project, unmerged work keeps the worktree and its branch, and a crafted confirmation removes neither", async () => {
+  const { m, tools, config, wt } = await archivedSubfolderSetup();
+  const commit = await commitFiles(wt, { "packages/tools/src/keys.ts": "export const keys = 2;\n" });
+  const stale = await leftovers(tools);
+  expect(stale?.leftovers).toEqual([]);
+  expect(stale?.kept).toEqual([{ kind: "worktree", id: wt, reason: "it holds 1 commit(s) the default branch lacks" }]);
+
+  const result = await applyStaleCleanup(config, await staleScope(config), CHANGE, {
+    worktrees: [{ path: wt, branch: `feat/${CHANGE}`, commit, uncommitted: [] }],
+    branches: [{ name: `feat/${CHANGE}`, commit }],
+    mainCheckout: null,
+    acknowledged: true,
+  });
+  expect(result.items.map((i) => [i.kind, i.outcome])).toEqual([
+    ["worktree", "kept"],
+    ["branch", "kept"],
+  ]);
+  expect(existsSync(wt)).toBe(true);
+  expect(git(m.top, "rev-parse", `refs/heads/feat/${CHANGE}`)).toBe(commit);
+});
+
+test("in a subfolder project, squash-merged work is a stale leftover, exactly as at the top level", async () => {
+  const { m, tools, wt } = await archivedSubfolderSetup();
+  await commitFiles(wt, { "packages/tools/src/keys.ts": "export const keys = 2;\n" });
+  git(m.top, "merge", "-q", "--squash", `feat/${CHANGE}`);
+  git(m.top, "commit", "-q", "-m", "squash");
+  git(m.top, "push", "-q", "origin", "main");
+  const stale = await leftovers(tools);
+  expect(stale?.kept).toEqual([]);
+  expect(stale?.leftovers).toMatchObject([{ kind: "worktree", path: wt, branch: `feat/${CHANGE}` }]);
+});
+
+test("in a subfolder project, a rename whose source the default branch still holds is not merged", async () => {
+  const { m, tools, wt } = await archivedSubfolderSetup();
+  git(wt, "mv", "packages/tools/src/keys.ts", "packages/tools/src/secrets.ts");
+  git(wt, "commit", "-q", "-m", "rename");
+  await commitFiles(m.top, { "packages/tools/src/secrets.ts": "export const keys = 1;\n" }, "copy");
+  git(m.top, "push", "-q", "origin", "main");
+  const stale = await leftovers(tools);
+  expect(stale?.leftovers).toEqual([]);
+  expect(stale?.kept).toMatchObject([{ kind: "worktree", id: wt }]);
+});
+
+test("hooks do not run during a stale cleanup", async () => {
+  const { repo, repoId, wt } = await archivedSetup();
+  git(repo, "branch", `chore/archive-${CHANGE}`);
+  const config = { ...newRepoConfig(repo, true), id: repoId };
+  const log = await installRepoHooks(repo);
+  const scope = await staleScope(config);
+  const preview = await previewStaleCleanup(config, scope, CHANGE);
+  const found = preview.stale?.leftovers ?? [];
+  expect(found.map((l) => l.kind).sort()).toEqual(["branch", "worktree"]);
+  const result = await applyStaleCleanup(config, scope, CHANGE, {
+    worktrees: found.flatMap((l) => (l.kind === "worktree" ? [{ path: l.path, branch: l.branch ?? null, commit: l.commit, uncommitted: l.uncommitted }] : [])),
+    branches: found.flatMap((l) => (l.kind === "branch" ? [{ name: l.name, commit: l.commit }] : [])),
+    mainCheckout: null,
+    acknowledged: true,
+  });
+  expect(result.items.map((i) => [i.kind, i.outcome]).sort()).toEqual([
+    ["branch", "deleted"],
+    ["worktree", "deleted"],
+  ]);
+  expect(existsSync(wt)).toBe(false);
+  expect(await hookLog(log)).toEqual([]);
 });
