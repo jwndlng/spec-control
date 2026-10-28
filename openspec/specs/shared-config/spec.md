@@ -2,7 +2,9 @@
 
 ## Purpose
 Defines the shared OpenSpec config: named profiles of agent guidance (`context` and per-artifact `rules`) kept in the dashboard, the managed-section format they take in a repository's `openspec/config.yaml`, how the profiles a repository carries are derived from that file, and the explicit, previewed apply that is the dashboard's only write to a tracked repository.
+
 ## Requirements
+
 ### Requirement: Shared OpenSpec config profiles are kept in the dashboard
 The dashboard SHALL store an ordered list of shared config profiles. Each profile SHALL have a stable id (a lower-case slug matching `^[a-z0-9][a-z0-9-]{0,62}$`, unique among profiles), a display name, a `context` text and `rules` (a map from artifact id to an ordered list of rule texts). Profiles SHALL be stored in the dashboard's own home directory, written atomically, and MUST NOT be stored in any tracked repository. Saving SHALL validate ids and names, that every artifact id matches `^[A-Za-z0-9._-]+$`, that every rule is a non-empty single-line string, and that no `context` contains either marker string, `spec-control:shared` or the former `openspec-dashboard:shared`; an invalid body SHALL be rejected without changing what is stored. Saving MUST NOT write to any tracked repository and SHALL trigger a rescan. While no profile exists, no shared-config information SHALL be shown anywhere.
 
@@ -147,3 +149,38 @@ Apply SHALL refuse a repository, without writing to it and without failing the o
 #### Scenario: File changed after preview
 - **WHEN** a repository's config is edited on disk between preview and apply
 - **THEN** the apply is computed from the file as it is at write time
+
+### Requirement: Apply writes exactly what was previewed
+Confirming Apply in the preview SHALL apply exactly the repositories and profile sets that preview was produced for, as
+they were when the user opened it — never the grid's selection or the snapshot's state at the moment of the click. A
+scan, a poll or any other change to the snapshot while the preview is open SHALL NOT add a repository to the apply,
+remove one from it or change the profiles one is to carry. Closing the preview SHALL discard it; a changed selection
+SHALL need a new preview before anything can be applied.
+
+The preview SHALL carry, per repository it would write, a **digest** of the file text it showed and the text it would
+write. Apply SHALL send that digest back with each repository, and the server SHALL, after re-reading the file and
+computing the result afresh, write a repository only when the digest of what it read and what it would write equals the
+digest sent; otherwise that repository SHALL be reported `refused` with a reason saying the file or the profiles
+changed since the preview, nothing SHALL be written to it, and the other repositories SHALL still be applied
+independently. A repository sent without a digest SHALL be refused the same way. The digest SHALL be computed by the
+server only and SHALL NOT be a way to send file content: the server never writes text it received.
+
+#### Scenario: A poll while the preview is open
+- **WHEN** the user ticks `base` for `alpha-infra` and opens the preview, which lists only `alpha-infra`, and a poll then reports `demo-ops`'s `base` section `outdated` before the user confirms
+- **THEN** Apply sends only `alpha-infra`, only `alpha-infra`'s `openspec/config.yaml` is written, and `demo-ops`'s file is byte-for-byte unchanged
+
+#### Scenario: A repository added while the preview is open
+- **WHEN** a new repository is tracked while the preview is open and its grid row would count as pending
+- **THEN** Apply does not include it
+
+#### Scenario: The file changed after the preview
+- **WHEN** `alpha-infra`'s `openspec/config.yaml` is edited after the preview was shown and the user then confirms Apply
+- **THEN** `alpha-infra` is reported `refused` with a reason saying it changed since the preview, its file keeps the edited content, and the preview has to be opened again to apply it
+
+#### Scenario: The profiles were saved after the preview
+- **WHEN** the `base` profile is saved with new context in another tab after the preview was shown, and the user confirms Apply
+- **THEN** every repository whose result would now differ from the preview is refused, and none of them is written
+
+#### Scenario: Unchanged file and profiles
+- **WHEN** nothing changed between the preview and the confirmation
+- **THEN** every previewed repository is `written` or `unchanged` exactly as the preview showed
