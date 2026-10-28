@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { needsAttention, pageEvents } from "../src/shared/activity.ts";
 import type { ActivityEvent } from "../src/shared/types.ts";
-import { ACTIVITY_METRICS_KEY, ACTIVITY_METRICS_VIEW_KEY, axisTicks, barShare, busiestHour, chartGroups, heatStep, hourLabel, loadMetricsView, saveMetricsView, collapseDay, DAY_SHOWN, dayKey, dayLabel, loadMetricsHidden, REPOS_SHOWN, saveMetricsHidden, visibleRepos, describe, groupByDay, isBusyDay, kindsFor, parseActivityFilters, serializeActivityFilters, timeOfDay, tone, unseenLabel, visibleFigures } from "../src/ui/activityState.ts";
+import { ACTIVITY_METRICS_KEY, ACTIVITY_METRICS_VIEW_KEY, axisTicks, barShare, busiestHour, chartGroups, heatStep, hourLabel, loadMetricsView, saveMetricsView, collapseDay, DAY_SHOWN, dayKey, dayLabel, loadMetricsHidden, REPOS_SHOWN, saveMetricsHidden, visibleRepos, describe, groupByDay, isBusyDay, kindsFor, latestOnly, parseActivityFilters, serializeActivityFilters, timeOfDay, tone, unseenLabel, visibleFigures } from "../src/ui/activityState.ts";
 
 let n = 0;
 const base = (at: Date) => ({ v: 1 as const, id: `id${String(n++).padStart(4, "0")}`, at: at.toISOString(), detectedAt: at.toISOString(), repoId: "r1", repoName: "demo-ops" });
@@ -237,4 +237,100 @@ test("the chart or table choice is remembered; storage that refuses shows the ch
   stubStorage({ throws: true });
   expect(loadMetricsView()).toBe("chart");
   expect(() => saveMetricsView("table")).not.toThrow();
+});
+
+/** The feed's request handling as `activity.tsx` wires it, with answers the test resolves in any order. */
+function feedModel() {
+  const requests = latestOnly();
+  const shown: { events: string[]; newestId?: string; wanted: number; seen: (string | undefined)[]; error?: string } = { events: [], wanted: 50, seen: [] };
+  const deferred = () => {
+    let settle!: (page: { events: string[]; newestId?: string } | Error) => void;
+    const answer = new Promise<{ events: string[]; newestId?: string } | Error>((r) => {
+      settle = r;
+    });
+    return { answer, settle };
+  };
+  return {
+    shown,
+    setFilters: () => {
+      shown.wanted = 50;
+      requests.supersede();
+    },
+    load: () => {
+      const mine = requests.begin();
+      const { answer, settle } = deferred();
+      const done = answer.then((page) => {
+        if (!requests.current(mine)) return;
+        if (page instanceof Error) shown.error = page.message;
+        else {
+          shown.events = page.events;
+          shown.newestId = page.newestId;
+          shown.seen.push(page.newestId);
+        }
+      });
+      return { settle, done };
+    },
+    loadOlder: () => {
+      const mine = requests.latest();
+      const { answer, settle } = deferred();
+      const done = answer.then((page) => {
+        if (!requests.current(mine) || page instanceof Error) return;
+        shown.wanted += page.events.length;
+        shown.events = [...shown.events, ...page.events];
+      });
+      return { settle, done };
+    },
+  };
+}
+
+test("feed: a slow answer for the old filter changes nothing, its error included", async () => {
+  const feed = feedModel();
+  const all = feed.load();
+  feed.setFilters(); // the user selects demo-ops
+  const demoOps = feed.load();
+  demoOps.settle({ events: ["demo-ops:2", "demo-ops:1"], newestId: "demo-ops:2" });
+  await demoOps.done;
+  all.settle({ events: ["alpha-infra:9", "demo-ops:2"], newestId: "alpha-infra:9" });
+  await all.done;
+  expect(feed.shown.events).toEqual(["demo-ops:2", "demo-ops:1"]);
+
+  const failing = feedModel();
+  const late = failing.load();
+  const fresh = failing.load();
+  fresh.settle({ events: ["a"], newestId: "a" });
+  late.settle(new Error("timeout"));
+  await Promise.all([late.done, fresh.done]);
+  expect([failing.shown.events, failing.shown.error]).toEqual([["a"], undefined]);
+});
+
+test("feed: Load older across a filter change is not appended and asks for nothing more later", async () => {
+  const feed = feedModel();
+  const first = feed.load();
+  first.settle({ events: ["e3", "e2"], newestId: "e3" });
+  await first.done;
+  const older = feed.loadOlder();
+  feed.setFilters(); // the user switches the group to Sessions
+  const sessions = feed.load();
+  sessions.settle({ events: ["s1"], newestId: "s1" });
+  await sessions.done;
+  older.settle({ events: ["e1", "e0"] });
+  await older.done;
+  expect([feed.shown.events, feed.shown.wanted]).toEqual([["s1"], 50]);
+
+  // without a change in between it is appended, and a reload keeps asking for it
+  const more = feed.loadOlder();
+  more.settle({ events: ["s0"] });
+  await more.done;
+  expect([feed.shown.events, feed.shown.wanted]).toEqual([["s1", "s0"], 51]);
+});
+
+test("feed: only the shown answer's newest entry is reported as seen", async () => {
+  const feed = feedModel();
+  const slow = feed.load();
+  const fresh = feed.load();
+  fresh.settle({ events: ["e5"], newestId: "e5" });
+  await fresh.done;
+  slow.settle({ events: ["e7", "e5"], newestId: "e7" }); // names a newer entry, but was superseded
+  await slow.done;
+  expect(feed.shown.seen).toEqual(["e5"]);
 });

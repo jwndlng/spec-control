@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import type { RepoSharedConfig, SharedProfile } from "../src/shared/types.ts";
+import type { RepoSharedConfig, SharedConfigPreview, SharedProfile } from "../src/shared/types.ts";
 import { foldDiff, lineDiff } from "../src/ui/lineDiff.ts";
-import { carriedIds, type GridRow, isPending, pendingAssignments, profileIdFrom, summarize, utf8Bytes } from "../src/ui/sharedConfigState.ts";
+import { carriedIds, type GridRow, isPending, pendingAssignments, profileIdFrom, summarize, utf8Bytes, withDigests } from "../src/ui/sharedConfigState.ts";
 
 const profile = (id: string, name = id): SharedProfile => ({ id, name, context: "x", rules: {} });
 const PROFILES = [profile("base", "Base"), profile("security", "Security")];
@@ -63,4 +63,27 @@ test("summaries for the overview", () => {
   expect(summarize(carrying(["base", "in-sync"], ["security", "in-sync"]), PROFILES)).toEqual({ text: "Base, Security", level: "ok" });
   expect(summarize(carrying(["base", "outdated"], ["gone", "orphaned"]), PROFILES)).toEqual({ text: "Base (outdated), gone (orphaned)", level: "warning" });
   expect(summarize({ unreadable: true, applied: [] }, PROFILES)).toEqual({ text: "config unreadable", level: "danger" });
+});
+
+test("a poll while the preview is open: Apply still sends exactly what was previewed, with its digests", () => {
+  const previewFor = (repoId: string, refusal?: string): SharedConfigPreview => ({ repoId, current: { unreadable: false, applied: [] }, before: "a", after: "b", digest: `digest-${repoId}`, refusal });
+  // the user ticks base for alpha-infra and opens the preview
+  const atPreview: GridRow[] = [
+    { repoId: "alpha", name: "alpha-infra", current: carrying(), selected: ["base"] },
+    { repoId: "demo", name: "demo-ops", current: carrying(["base", "in-sync"]), selected: ["base"] },
+  ];
+  const assignments = pendingAssignments(atPreview, PROFILES);
+  expect(assignments).toEqual([{ repoId: "alpha", profileIds: ["base"] }]);
+  const previews = [previewFor("alpha")];
+  // a poll then reports demo-ops's base section outdated, and a new repository is tracked: the live grid now wants more
+  const afterPoll: GridRow[] = [atPreview[0], { ...atPreview[1], current: carrying(["base", "outdated"]) }, { repoId: "new", name: "new-repo", current: carrying(), selected: ["base"] }];
+  expect(pendingAssignments(afterPoll, PROFILES).map((a) => a.repoId)).toEqual(["alpha", "demo", "new"]);
+  // what Apply sends comes from the preview alone
+  expect(withDigests(assignments, previews)).toEqual([{ repoId: "alpha", profileIds: ["base"], digest: "digest-alpha" }]);
+});
+
+test("withDigests leaves out what the preview refused or never covered", () => {
+  const preview = (repoId: string, refusal?: string): SharedConfigPreview => ({ repoId, current: { unreadable: false, applied: [] }, before: "", after: "", digest: `d-${repoId}`, refusal });
+  const assignments = [{ repoId: "a", profileIds: ["base"] }, { repoId: "b", profileIds: [] }, { repoId: "c", profileIds: ["security"] }];
+  expect(withDigests(assignments, [preview("a"), preview("b", "invalid YAML")])).toEqual([{ repoId: "a", profileIds: ["base"], digest: "d-a" }]);
 });

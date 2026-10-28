@@ -1153,6 +1153,8 @@ export interface RepoSharedConfig {
 export interface SharedConfigAssignment {
   repoId: string;
   profileIds: string[];
+  /** The `digest` of this repository's preview; apply refuses a repository without one or with a different one. */
+  digest?: string;
 }
 
 export interface SharedConfigPreview {
@@ -1162,6 +1164,8 @@ export interface SharedConfigPreview {
   before: string;
   /** What apply would write; equals `before` when nothing would change or apply would refuse. */
   after: string;
+  /** Server-computed digest of `before` and `after`; apply writes only while the fresh one equals it. */
+  digest: string;
   /** Why apply would not write to this repository. */
   refusal?: string;
 }

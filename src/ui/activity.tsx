@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { RETENTION_DAYS } from "../shared/activity.ts";
 import type { ActivityEvent, ActivityMetrics, ActivitySummary, Snapshot } from "../shared/types.ts";
 import { MetricsPanels, SummaryTiles } from "./activityCharts.tsx";
-import { browserTimeZone, collapseDay, describe, EMPTY_ACTIVITY_FILTERS, GROUP_LABELS, GROUP_ORDER, groupByDay, isBusyDay, kindsFor, loadMetricsHidden, loadMetricsView, parseActivityFilters, saveMetricsHidden, saveMetricsView, serializeActivityFilters, timeOfDay, tone, visibleFigures, type ActivityFilters } from "./activityState.ts";
+import { browserTimeZone, collapseDay, describe, EMPTY_ACTIVITY_FILTERS, GROUP_LABELS, GROUP_ORDER, groupByDay, isBusyDay, kindsFor, loadMetricsHidden, latestOnly, loadMetricsView, parseActivityFilters, saveMetricsHidden, saveMetricsView, serializeActivityFilters, timeOfDay, tone, visibleFigures, type ActivityFilters } from "./activityState.ts";
 import { api } from "./api.ts";
 import { assignRepoHues } from "./repoGroups.ts";
 import { FilterTagList, RepoMenu } from "./boardFilters.tsx";
@@ -38,10 +38,13 @@ export function Activity({ snapshot, onSeen }: { snapshot: Snapshot | null; onSe
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   // How many entries the user has asked for so far, so a refresh keeps what "Load older" brought in.
   const wanted = useRef(PAGE);
+  // Only the answer to the latest request is shown: a slower earlier one, or a late older page, is dropped.
+  const [requests] = useState(latestOnly);
 
   const setFilters = (patch: Partial<ActivityFilters>) => {
     const next = { ...filters, ...patch };
     wanted.current = PAGE;
+    requests.supersede();
     setExpanded(new Set());
     setReposExpanded(false);
     setFiltersState(next);
@@ -52,8 +55,10 @@ export function Activity({ snapshot, onSeen }: { snapshot: Snapshot | null; onSe
   const query = useMemo(() => ({ repos: filters.repos, kinds: kindsFor(filters.groups), tz: browserTimeZone() }), [filters]);
 
   const load = useCallback(async () => {
+    const mine = requests.begin();
     try {
       const page = await api.activity({ ...query, limit: Math.min(500, wanted.current) });
+      if (!requests.current(mine)) return;
       setEvents(page.events);
       setNextBefore(page.nextBefore);
       setSummary(page.summary);
@@ -61,9 +66,9 @@ export function Activity({ snapshot, onSeen }: { snapshot: Snapshot | null; onSe
       setError(undefined);
       onSeen(page.newestId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (requests.current(mine)) setError(err instanceof Error ? err.message : String(err));
     }
-  }, [query, onSeen]);
+  }, [query, onSeen, requests]);
 
   // Reload with the filters, and whenever a scan produced a new snapshot (that is when new activity can exist).
   // biome-ignore lint/correctness/useExhaustiveDependencies: generatedAt is the refresh signal, not an input
@@ -73,14 +78,17 @@ export function Activity({ snapshot, onSeen }: { snapshot: Snapshot | null; onSe
 
   const loadOlder = async () => {
     if (!nextBefore || !events) return;
+    // Appended only to the list it was asked for: a reload or a filter change since then drops the page.
+    const mine = requests.latest();
     setLoadingOlder(true);
     try {
       const page = await api.activity({ ...query, limit: PAGE, before: nextBefore });
+      if (!requests.current(mine)) return;
       wanted.current += page.events.length;
       setEvents([...events, ...page.events]);
       setNextBefore(page.nextBefore);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (requests.current(mine)) setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoadingOlder(false);
     }

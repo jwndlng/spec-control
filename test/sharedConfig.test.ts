@@ -7,6 +7,7 @@ import { newRepoConfig } from "../src/server/config.ts";
 import {
   applyShared,
   applyTo,
+  CHANGED_SINCE_PREVIEW,
   contextBegin,
   contextEnd,
   FORMER_MARKER,
@@ -20,7 +21,7 @@ import {
   saveSharedConfig,
   validateSharedConfig,
 } from "../src/server/sharedConfig.ts";
-import type { SharedConfig, SharedProfile } from "../src/shared/types.ts";
+import type { RepoConfig, SharedConfig, SharedProfile } from "../src/shared/types.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
 
 // What `openspec init` writes: both keys exist only as commented examples.
@@ -251,17 +252,22 @@ async function repoWith(config: string | undefined): Promise<{ root: string; fil
   return { root, file };
 }
 
+/** Apply as the UI does: with the digest of a preview taken just before. */
+async function previewThenApply(repo: RepoConfig, profileIds: string[], shared: SharedConfig = SHARED) {
+  return applyTo(repo, shared, profileIds, (await previewFor(repo, shared, profileIds)).digest);
+}
+
 test("applyTo: writes once, then reports unchanged without touching the file; keeps the mode; leaves no temp file", async () => {
   const { root, file } = await repoWith(WITH_LOCAL);
   await chmod(file, 0o640);
   const repo = newRepoConfig(root, true);
-  expect(await applyTo(repo, SHARED, ["security", "base"])).toEqual({ repoId: repo.id, result: "written" });
+  expect(await previewThenApply(repo, ["security", "base"])).toEqual({ repoId: repo.id, result: "written" });
   expect((await stat(file)).mode & 0o777).toBe(0o640);
   expect((await readdir(join(root, "openspec"))).sort()).toEqual(["changes", "config.yaml"]); // readdir order is platform-dependent
 
   const past = new Date("2026-01-01T00:00:00Z");
   await utimes(file, past, past);
-  expect(await applyTo(repo, SHARED, ["base", "security"])).toEqual({ repoId: repo.id, result: "unchanged" });
+  expect(await previewThenApply(repo, ["base", "security"])).toEqual({ repoId: repo.id, result: "unchanged" });
   expect((await stat(file)).mtimeMs).toBe(past.getTime());
 
   // OpenSpec's own reader accepts the result and sees shared + local
@@ -281,7 +287,7 @@ test("previewFor and applyTo refuse what must not be touched, and never write th
     const preview = await previewFor(repo, SHARED, ["base"]);
     expect(preview.current.unreadable).toBe(true);
     expect(preview.refusal).toBeDefined();
-    const result = await applyTo(repo, SHARED, ["base"]);
+    const result = await previewThenApply(repo, ["base"]);
     expect([result.result, result.reason !== undefined]).toEqual(["refused", true]);
     expect(await readFile(file, "utf8").catch(() => undefined)).toBe(root === missing.root ? undefined : "schema: [unclosed");
     await rm(root, { recursive: true, force: true });
@@ -292,7 +298,42 @@ test("previewFor and applyTo refuse what must not be touched, and never write th
   expect([preview.current, preview.refusal, preview.before]).toEqual([{ unreadable: false, applied: [] }, undefined, SCAFFOLD]);
   expect(preview.after).toContain(contextBegin("base"));
   expect((await previewFor(repo, SHARED, ["base", "nope"])).refusal).toBe("unknown profile: nope");
-  expect((await applyTo(repo, SHARED, ["nope"])).result).toBe("refused");
+  expect((await previewThenApply(repo, ["nope"])).result).toBe("refused");
   expect(await readFile(healthy.file, "utf8")).toBe(SCAFFOLD); // previewing and refused applies wrote nothing
   await rm(healthy.root, { recursive: true, force: true });
+});
+
+test("previewFor: the digest covers the file and the result", async () => {
+  const { root, file } = await repoWith(SCAFFOLD);
+  const repo = newRepoConfig(root, true);
+  const first = await previewFor(repo, SHARED, ["base"]);
+  expect(first.digest).toMatch(/^[0-9a-f]{64}$/);
+  expect((await previewFor(repo, SHARED, ["base"])).digest).toBe(first.digest);
+  expect((await previewFor(repo, SHARED, ["base", "security"])).digest).not.toBe(first.digest);
+  expect((await previewFor(repo, { profiles: [{ ...BASE, context: "Changed." }, SECURITY] }, ["base"])).digest).not.toBe(first.digest);
+  await writeFile(file, `${SCAFFOLD}# edited\n`);
+  expect((await previewFor(repo, SHARED, ["base"])).digest).not.toBe(first.digest);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("applyTo: refuses a missing digest, a file changed after the preview and profiles saved after it, and writes nothing", async () => {
+  const { root, file } = await repoWith(SCAFFOLD);
+  const repo = newRepoConfig(root, true);
+  expect(await applyTo(repo, SHARED, ["base"], undefined)).toEqual({ repoId: repo.id, result: "refused", reason: CHANGED_SINCE_PREVIEW });
+  expect(await readFile(file, "utf8")).toBe(SCAFFOLD);
+
+  const preview = await previewFor(repo, SHARED, ["base"]);
+  const edited = `${SCAFFOLD}profile: strict # edited after the preview\n`;
+  await writeFile(file, edited);
+  expect(await applyTo(repo, SHARED, ["base"], preview.digest)).toEqual({ repoId: repo.id, result: "refused", reason: CHANGED_SINCE_PREVIEW });
+  expect(await readFile(file, "utf8")).toBe(edited);
+
+  const again = await previewFor(repo, SHARED, ["base"]);
+  const resaved = { profiles: [{ ...BASE, context: "Saved in another tab." }, SECURITY] };
+  expect(await applyTo(repo, resaved, ["base"], again.digest)).toEqual({ repoId: repo.id, result: "refused", reason: CHANGED_SINCE_PREVIEW });
+  expect(await readFile(file, "utf8")).toBe(edited);
+
+  expect(await applyTo(repo, SHARED, ["base"], again.digest)).toEqual({ repoId: repo.id, result: "written" });
+  expect(await readFile(file, "utf8")).toBe(again.after);
+  await rm(root, { recursive: true, force: true });
 });
