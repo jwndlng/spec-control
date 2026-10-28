@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-28-apply-what-was-previewed",
+    date: "2026-10-28",
+    title: "Shared config applies exactly what you previewed",
+    summary:
+      "**Apply** in the shared-config preview now writes only the repositories and profiles the preview showed. If a repository's `openspec/config.yaml` or the profiles changed after you opened it, that repository is refused with **changed since the preview** — preview again to see the new diff.",
+  },
+  {
     id: "2026-10-27-one-console-per-change",
     date: "2026-10-27",
     title: "One console per change, the proposal's included",

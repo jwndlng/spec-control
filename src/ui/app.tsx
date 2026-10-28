@@ -4,7 +4,7 @@ import type { Config, Snapshot, UpdateStatus } from "../shared/types.ts";
 import { Activity } from "./activity.tsx";
 import { loadSeen, saveSeen, unseenLabel } from "./activityState.ts";
 import { api } from "./api.ts";
-import { AUTO_REFRESH_OPTIONS, type AutoRefreshInterval, createRefreshLoop, intervalMs, loadInterval, parseInterval, performRefresh, saveInterval } from "./autoRefresh.ts";
+import { AUTO_REFRESH_OPTIONS, type AutoRefreshInterval, createRefreshLoop, intervalMs, loadInterval, newerSnapshot, parseInterval, performRefresh, saveInterval } from "./autoRefresh.ts";
 import { ChangeDetail } from "./changeDetail.tsx";
 import { ConsoleButton, ConsoleOverlay } from "./console.tsx";
 import { IntegrationOverlay } from "./integrate.tsx";
@@ -121,9 +121,11 @@ export function App() {
   const loadState = useCallback(async () => {
     try {
       const next = await api.state();
-      generatedAt.current = next.generatedAt;
-      setSnapshot(next);
-      setError(null);
+      if (newerSnapshot(generatedAt.current, next.generatedAt)) {
+        generatedAt.current = next.generatedAt;
+        setSnapshot(next);
+        setError(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -220,6 +222,7 @@ export function App() {
         waitForScan: manual,
         delay: (ms) => new Promise((r) => setTimeout(r, ms)),
         onSnapshot: (next) => {
+          if (!newerSnapshot(generatedAt.current, next.generatedAt)) return;
           generatedAt.current = next.generatedAt;
           setSnapshot(next);
         },

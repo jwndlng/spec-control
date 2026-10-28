@@ -161,6 +161,19 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
     return { desired: profiles.filter((p) => profileIds.includes(p.id)) };
   };
 
+  // Stands in for the server's sha256: the demo only needs a preview's digest to change when its texts do.
+  const demoDigest = (before: string, after: string): string => {
+    let hash = 0x811c9dc5;
+    for (const ch of `${before}\0${after}`) hash = Math.imul(hash ^ ch.charCodeAt(0), 0x01000193) >>> 0;
+    return hash.toString(16).padStart(8, "0");
+  };
+  const sharedPreview = (repoId: string, profileIds: string[]): SharedConfigPreview => {
+    const before = renderConfig(carried.get(repoId) ?? []);
+    const { desired, refusal } = desiredFor(repoId, profileIds);
+    const after = desired ? renderConfig(desired) : before;
+    return { repoId, current: sharedState(repoId), before, after, digest: demoDigest(before, after), refusal };
+  };
+
   // What the visitor dismissed: gone from the board until a reload. Keyed by repository id and change name.
   const dismissed = new Set<string>();
   const dismissKey = (repoId: string, name: string) => `${repoId}\0${name}`;
@@ -681,16 +694,13 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
     },
     previewSharedConfig: (assignments) =>
       reply({
-        previews: assignments.map(({ repoId, profileIds }): SharedConfigPreview => {
-          const before = renderConfig(carried.get(repoId) ?? []);
-          const { desired, refusal } = desiredFor(repoId, profileIds);
-          return { repoId, current: sharedState(repoId), before, after: desired ? renderConfig(desired) : before, refusal };
-        }),
+        previews: assignments.map(({ repoId, profileIds }) => sharedPreview(repoId, profileIds)),
       }),
     applySharedConfig: (assignments) => {
-      const results = assignments.map(({ repoId, profileIds }): SharedConfigApplyResult => {
+      const results = assignments.map(({ repoId, profileIds, digest }): SharedConfigApplyResult => {
         const { desired, refusal } = desiredFor(repoId, profileIds);
         if (!desired) return { repoId, result: "refused", reason: refusal };
+        if (digest !== sharedPreview(repoId, profileIds).digest) return { repoId, result: "refused", reason: "the file or the profiles changed since the preview; preview again" };
         const unchanged = renderConfig(desired) === renderConfig(carried.get(repoId) ?? []);
         carried.set(repoId, structuredClone(desired));
         return { repoId, result: unchanged ? "unchanged" : "written" };

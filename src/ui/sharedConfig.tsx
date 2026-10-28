@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import type { Config, SharedConfig, SharedConfigApplyResult, SharedConfigPreview, SharedProfile, Snapshot } from "../shared/types.ts";
+import type { Config, SharedConfig, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, SharedProfile, Snapshot } from "../shared/types.ts";
 import { ApiError, api } from "./api.ts";
 import { foldDiff, lineDiff } from "./lineDiff.ts";
-import { carriedIds, type GridRow, isPending, pendingAssignments, profileIdFrom, utf8Bytes } from "./sharedConfigState.ts";
+import { carriedIds, type GridRow, isPending, pendingAssignments, profileIdFrom, utf8Bytes, withDigests } from "./sharedConfigState.ts";
 
 const MAX_CONTEXT_BYTES = 50 * 1024;
 const FALLBACK_ARTIFACTS = ["proposal", "design", "specs", "tasks"];
@@ -29,7 +29,13 @@ function Diff({ before, after }: { before: string; after: string }) {
   );
 }
 
-function PreviewDialog({ previews, names, onApply, onClose }: { previews: SharedConfigPreview[]; names: Map<string, string>; onApply: () => Promise<SharedConfigApplyResult[]>; onClose: () => void }) {
+/** The assignments a preview was produced for, kept with it: Apply sends these, never what the grid shows by then. */
+interface Previewed {
+  assignments: SharedConfigAssignment[];
+  previews: SharedConfigPreview[];
+}
+
+function PreviewDialog({ previewed: { assignments, previews }, names, onApply, onClose }: { previewed: Previewed; names: Map<string, string>; onApply: (assignments: SharedConfigAssignment[]) => Promise<SharedConfigApplyResult[]>; onClose: () => void }) {
   const [results, setResults] = useState<SharedConfigApplyResult[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +45,7 @@ function PreviewDialog({ previews, names, onApply, onClose }: { previews: Shared
   const apply = async () => {
     setBusy(true);
     try {
-      setResults(await onApply());
+      setResults(await onApply(withDigests(assignments, previews)));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -166,7 +172,7 @@ export function SharedConfigPanel({ config, snapshot, onApplied }: { config: Con
   const [activeId, setActiveId] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [selection, setSelection] = useState<Record<string, string[]>>({});
-  const [previews, setPreviews] = useState<SharedConfigPreview[] | null>(null);
+  const [previewed, setPreviewed] = useState<Previewed | null>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "danger"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -242,7 +248,8 @@ export function SharedConfigPanel({ config, snapshot, onApplied }: { config: Con
   const preview = async () => {
     setBusy(true);
     try {
-      setPreviews((await api.previewSharedConfig(pending)).previews);
+      const assignments = pending;
+      setPreviewed({ assignments, previews: (await api.previewSharedConfig(assignments)).previews });
     } catch (err) {
       setMessage({ kind: "danger", text: String(err) });
     } finally {
@@ -250,8 +257,8 @@ export function SharedConfigPanel({ config, snapshot, onApplied }: { config: Con
     }
   };
 
-  const apply = async () => {
-    const { results } = await api.applySharedConfig(pending);
+  const apply = async (assignments: SharedConfigAssignment[]) => {
+    const { results } = await api.applySharedConfig(assignments);
     setSelection({});
     onApplied();
     return results;
@@ -380,7 +387,7 @@ export function SharedConfigPanel({ config, snapshot, onApplied }: { config: Con
         </>
       )}
 
-      {previews && <PreviewDialog previews={previews} names={names} onApply={apply} onClose={() => setPreviews(null)} />}
+      {previewed && <PreviewDialog previewed={previewed} names={names} onApply={apply} onClose={() => setPreviewed(null)} />}
     </section>
   );
 }

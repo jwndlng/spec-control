@@ -7,6 +7,7 @@ import {
   intervalLabel,
   intervalMs,
   loadInterval,
+  newerSnapshot,
   parseInterval,
   performRefresh,
   REFRESH_POLL_MS,
@@ -512,4 +513,25 @@ test("auto-refresh drives many refreshes and never contacts a remote", async () 
   expect(calls.filter((c) => c === "scan")).toHaveLength(10);
   expect(calls).not.toContain("pull");
   expect(calls).not.toContain("pullAll");
+});
+
+// ---- Snapshots only move forward ----
+
+test("a slow poll after Refresh: the older snapshot is discarded, the refreshed one stays", () => {
+  const beforeRefresh = "2026-10-28T09:00:00.000Z";
+  const refreshed = "2026-10-28T09:00:04.000Z";
+  let shown: string | undefined;
+  const take = (next: string) => {
+    if (newerSnapshot(shown, next)) shown = next;
+  };
+  take(beforeRefresh); // initial load
+  take(refreshed); // the refresh's new scan
+  take(beforeRefresh); // the poll that was in flight answers late
+  expect(shown).toBe(refreshed);
+});
+
+test("same snapshot again is taken, and anything is taken when nothing is shown", () => {
+  expect(newerSnapshot("2026-10-28T09:00:00.000Z", "2026-10-28T09:00:00.000Z")).toBe(true);
+  expect(newerSnapshot(undefined, "2026-10-28T09:00:00.000Z")).toBe(true);
+  expect(newerSnapshot("2026-10-28T09:00:01.000Z", "2026-10-28T09:00:00.999Z")).toBe(false);
 });
