@@ -14,9 +14,9 @@
 
 ## 3. Board and detail view
 
-- [~] 3.1 Replace the card's `Validate` badge with the **Needs you** badge (`N need you`), its tooltip and accessible name listing the tasks' text plus `and N more`; activating it opens the detail view on the tasks artifact — you: in `bun run dev` (or the demo's `verify-rate-limit-headers` card), check the badge looks right in light and dark, its tooltip shows one task per line, and clicking it opens the change on its tasks
+- [x] 3.1 Replace the card's `Validate` badge with the **Needs you** badge (`N need you`), its tooltip and accessible name listing the tasks' text plus `and N more`; activating it opens the detail view on the tasks artifact — you: in `bun run dev` (or the demo's `verify-rate-limit-headers` card), check the badge looks right in light and dark, its tooltip shows one task per line, and clicking it opens the change on its tasks
 - [x] 3.2 Meter label and accessible text: `13 + 2 need you / 15 Tasks`, "two need the user"
-- [~] 3.3 Tasks view: `N tasks need you` and the list of those tasks above the checklist — you: open that change's tasks and check the note and list read well above the checklist
+- [x] 3.3 Tasks view: `N tasks need you` and the list of those tasks above the checklist — you: open that change's tasks and check the note and list read well above the checklist
 - [x] 3.4 Tests for the badge, the meter text and the tasks view; demo data in `src/ui/demo/sampleData.ts` carries `awaitingTasks`
 
 ## 4. Docs

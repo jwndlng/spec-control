@@ -22,6 +22,13 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
       "**Apply** in the shared-config preview now writes only the repositories and profiles the preview showed. If a repository's `openspec/config.yaml` or the profiles changed after you opened it, that repository is refused with **changed since the preview** — preview again to see the new diff.",
   },
   {
+    id: "2026-10-28-desktop-window-fixes",
+    date: "2026-10-28",
+    title: "Links between a change's files, and a steadier macOS app",
+    summary:
+      "A link in an artifact to another file of the same change — `[design](./design.md)` in a proposal — now opens that file in the change's view. In the macOS app, Retry after a port change moves the window to the new port, a link that asks for a new tab opens in your browser instead of replacing the window, and quitting never leaves the server it started running.",
+  },
+  {
     id: "2026-10-28-long-prompts-reach-the-agent",
     date: "2026-10-28",
     title: "Long prompts reach a running agent intact",

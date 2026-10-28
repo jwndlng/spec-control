@@ -7,9 +7,9 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { appHome, configuredPortFor, portHome } from "./logic/home.ts";
-import { appOrigin, eventUrl, externalTarget, type LastOpened, navigationEvent, navigationRules, shouldOpen } from "./logic/links.ts";
+import { appOrigin, eventUrl, externalTarget, type LastOpened, type LinkTarget, navigationEvent, navigationRules, newWindowTarget, shouldOpen, windowForPort } from "./logic/links.ts";
 import { acquireLock } from "./logic/lock.ts";
-import { countRunning, quitPlan, quitQuestion, stopServer } from "./logic/quit.ts";
+import { countRunning, quitPlan, quitQuestion, stopOwned, stopServer } from "./logic/quit.ts";
 import { loginShellPath } from "./logic/shellPath.ts";
 import { decideStart, listeningPort, probeVersion, waitForServer } from "./logic/start.ts";
 
@@ -48,6 +48,8 @@ let child: ReturnType<typeof Bun.spawn> | undefined;
 /** The last lines the server printed, shown when it fails to start or stops by itself. */
 let output: string[] = [];
 let mainWindow: BrowserWindow | undefined;
+/** The port the window's navigation rules and page were set up for; Retry can find the server on another one. */
+let windowPort = 0;
 let lastUrl: string | undefined;
 /** The last link handed to the browser, so one click reported as two events opens it once. */
 let lastOpened: LastOpened | undefined;
@@ -78,20 +80,25 @@ function openExternally(url: string): void {
   Utils.openExternal(url);
 }
 
-/** A link the page asked to follow: the server's own pages stay in the window, web and mail links go to the browser. */
-function follow(url: string | undefined, inWindow: boolean): void {
-  if (!url) return;
-  const target = externalTarget(url, port);
-  if (target.kind === "external") {
-    const now = Date.now();
-    if (!shouldOpen(target.url, now, lastOpened)) return;
-    lastOpened = { url: target.url, at: now };
-    openExternally(target.url);
-  } else if (target.kind === "internal" && !inWindow) mainWindow?.webview.loadURL(url);
+/** A link the page asked to follow outside the window: web and mail links go to the browser, nothing replaces the page. */
+function follow(target: LinkTarget | undefined): void {
+  if (target?.kind !== "external") return;
+  const now = Date.now();
+  if (!shouldOpen(target.url, now, lastOpened)) return;
+  lastOpened = { url: target.url, at: now };
+  openExternally(target.url);
 }
 
 function showWindow(title: string): void {
   if (mainWindow) {
+    // Retry on a changed port: the old origin is now just another origin, and Reload must not go back to it.
+    const move = windowForPort({ windowPort, port });
+    if (move.reload) {
+      windowPort = port;
+      lastUrl = undefined;
+      mainWindow.webview.setNavigationRules(move.rules);
+      mainWindow.webview.loadURL(move.url);
+    }
     mainWindow.setTitle(title);
     mainWindow.show();
     mainWindow.activate();
@@ -99,13 +106,17 @@ function showWindow(title: string): void {
   }
   const win = new BrowserWindow({ title, url: `${appOrigin(port)}/`, frame: { width: 1360, height: 860 } });
   win.webview.setNavigationRules(navigationRules(port));
+  windowPort = port;
   // A blocked navigation is a link to another origin: it opens in the browser and the window stays where it is.
   win.webview.on("will-navigate", (event: unknown) => {
     const navigation = navigationEvent((event as ElectrobunEvent).data);
-    if (navigation?.allowed === false) follow(navigation.url, true);
+    if (navigation?.allowed === false) follow(externalTarget(navigation.url, port));
   });
-  // `target="_blank"` and `window.open` never open a window of their own.
-  win.webview.on("new-window-open", (event: unknown) => follow(eventUrl((event as ElectrobunEvent).data), false));
+  // `target="_blank"` and `window.open` never open a window of their own, and never replace this one's page either.
+  win.webview.on("new-window-open", (event: unknown) => {
+    const url = eventUrl((event as ElectrobunEvent).data);
+    if (url) follow(newWindowTarget(url, port));
+  });
   for (const name of ["did-navigate", "did-navigate-in-page"]) {
     win.webview.on(name, (event: unknown) => {
       const url = eventUrl((event as ElectrobunEvent).data);
@@ -130,7 +141,7 @@ function windowTitle(attached: { version: string } | undefined): string {
 async function retryOrQuit(title: string, message: string): Promise<void> {
   const { response } = await Utils.showMessageBox({ type: "warning", title, message, buttons: ["Retry", "Quit"], defaultId: 0, cancelId: 1 });
   if (response === 0) await start();
-  else finalQuit();
+  else await finalQuit();
 }
 
 async function startServer(): Promise<void> {
@@ -160,7 +171,9 @@ async function startServer(): Promise<void> {
         void retryOrQuit("Spec Control stopped", `The server stopped unexpectedly.\n\n${output.join("\n")}`);
       }
     });
-    if ((await takeLock()) === "held") return finalQuit(); // the server has moved the pre-rename home by now
+    // The server has moved the pre-rename home by now. Another instance took the lock meanwhile: it treats this server
+    // as started elsewhere and would never stop it, so finalQuit stops it first.
+    if ((await takeLock()) === "held") return finalQuit();
     showWindow(windowTitle(undefined));
     return;
   }
@@ -191,8 +204,15 @@ async function start(): Promise<void> {
   await startServer();
 }
 
-function finalQuit(): void {
+/** Every exit ends here: a server the app started is stopped like Quit stops it, one it attached to is left alone. */
+async function finalQuit(): Promise<void> {
   quitting = true;
+  const owned = child;
+  child = undefined;
+  if (owned) {
+    stopping = true;
+    await stopOwned(owned);
+  }
   void (releaseLock?.() ?? Promise.resolve()).finally(() => Utils.quit(0));
 }
 
@@ -220,8 +240,9 @@ async function requestQuit(): Promise<void> {
     if (owned && plan.kind !== "exit") {
       stopping = true;
       await stopServer(owned);
+      if (child === owned) child = undefined;
     }
-    finalQuit();
+    await finalQuit();
   } finally {
     quitInFlight = false;
   }
