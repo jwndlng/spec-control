@@ -10,19 +10,20 @@ under **Features** too, and the version resolver, which bumps minor for any `fea
 right. That breaks two requirements of `release-publishing`: "Pull requests are labelled from their title" (labelled
 from *the* type in the title) and "A draft release is kept current" (grouped and versioned from those labels).
 
-Confidence is medium on one point: the "adds only" behaviour is what release-drafter's autolabeler is documented and
-known to do, but it was not re-read from the pinned v7.10.0 source while writing this proposal (no copy of it is on
-this machine and nothing beyond this repository was fetched). Task 1.1 confirms it before anything is changed; if the
-pinned version does remove stale labels, the change shrinks to the spec scenario and a test pull request.
+Task 1.1 read the pinned v7.10.0 source: by default the autolabeler only adds
+(`packages/gh-actions/src/autolabeler/runner.ts`, lines 80–92), but it has an opt-in `sync-labels` setting
+(`packages/autolabeler/src/config/config.schema.ts`, lines 24–29) that removes every label one of its rules names and
+the current run did not select (`runner.ts`, lines 57–78 and 93–106). This repository never set it. So the change
+turns that setting on instead of adding a script.
 
 ## What Changes
 
-- **The label job also removes type labels the title no longer has.** After the autolabeler, a step in the same job
-  removes from the pull request every Conventional Commit type label (`feat`, `fix`, `docs`, `chore`, `refactor`,
-  `test`, `style`, `ci`, `build`, `perf`) other than the one its current title's type names. It uses the `gh` CLI the
-  runner already has, with the job's own token, the pull request number and title taken from the event payload through
-  environment variables (never interpolated into the script), and checks out nothing.
-- **Other labels stay.** `major`, `dependencies` and every other label that is not a type label are never removed. A
+- **The label job also removes type labels the title no longer has.** `.github/release-drafter.yml` sets
+  `sync-labels: true`, so the autolabeler removes from the pull request every Conventional Commit type label (`feat`,
+  `fix`, `docs`, `chore`, `refactor`, `test`, `style`, `ci`, `build`, `perf`) other than the one its current title's
+  type names. The job is unchanged: no new step, no script, no checkout.
+- **Other labels stay.** `major`, `dependencies` and every other label that no autolabeler rule names are never
+  removed. A
   type label added by hand that disagrees with the title is removed: the title is what is squash-merged, so it decides
   the type.
 - **Permissions and pinning are unchanged.** The job keeps `pull-requests: write` alone, the autolabeler stays pinned to
@@ -32,8 +33,7 @@ pinned version does remove stale labels, the change shrinks to the spec scenario
 
 ## Impact
 
-- `.github/workflows/pr-title.yml` — one step added to the `label` job.
-- `.github/release-drafter.yml` — the comment above `autolabeler:` notes that stale type labels are removed by the
-  workflow; the rules are unchanged.
+- `.github/release-drafter.yml` — `sync-labels: true` with a comment above `autolabeler:`; the rules are unchanged.
+- `.github/workflows/pr-title.yml` — the comment on the `label` job only.
 - Specs: `release-publishing` (MODIFIED "Pull requests are labelled from their title").
 - No source, test or CLAUDE.md change. No in-flight change or open pull request touches `.github/`.

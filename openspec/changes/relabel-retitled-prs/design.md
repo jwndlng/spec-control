@@ -4,38 +4,41 @@
 
 `pr-title.yml` runs on `pull_request_target` (opened, edited, reopened, synchronize) with two jobs: the title check,
 read-only, and `label`, the only job with a write scope, which runs the pinned autolabeler and checks out nothing. The
-draft release (`draft-release.yml`, on push to `main`) sorts and versions merged pull requests by these labels.
+autolabeler reads `.github/release-drafter.yml` from the default branch. The draft release (`draft-release.yml`, on
+push to `main`) reads the same file and sorts and versions merged pull requests by these labels.
 
 ## Decisions
 
-### D1. Remove stale type labels in a `gh` step, not with another action
+### D1. Turn on the autolabeler's own `sync-labels`, not a script
 
-A `run` step after the autolabeler, using the preinstalled `gh` with `GH_TOKEN: ${{ github.token }}`. Inputs come from
-the event payload through `env:` — `PR_NUMBER`, `PR_TITLE`, `PR_LABELS` (`toJSON` of the label names) and
-`GITHUB_REPOSITORY` — so a title is never spliced into the script. The step extracts the type with the same pattern the
-autolabeler rules use (`^([a-z]+)(\(.+\))?!?:`, case-insensitive, lowercased), and for each label in `PR_LABELS` that
-is one of the ten type names and is not that type, calls `gh api -X DELETE
-repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/<name>`, treating a 404 (already gone) as success.
+The pinned v7.10.0 autolabeler has a `sync-labels` setting, off by default
+(`packages/autolabeler/src/config/config.schema.ts`, lines 24–29). With it on, the runner lists the labels the pull
+request carries now, and removes each one that some rule in the config names and that this run did not select,
+comparing names case-insensitively (`packages/gh-actions/src/autolabeler/runner.ts`, lines 57–78 and 93–106).
+`.github/release-drafter.yml` sets `sync-labels: true`.
 
-Rejected: `actions/github-script` (a new third-party pin for ten lines of shell); a labeler that syncs labels (the
-`actions/labeler` sync option works on changed files, not titles); dropping the autolabeler for a script that both adds
-and removes (keeps the change smaller and the rules in one config).
+That is exactly the requirement: the config's rules name the ten type labels and nothing else, so only those can be
+removed. Because it reads the current labels rather than the event payload, a label added between the event and the job
+is handled too.
 
-### D2. The payload's labels are the ones to check
+Rejected: a `gh api -X DELETE` step after the autolabeler (the original plan, written before the source was read). It
+would duplicate the setting with ten lines of shell, a second copy of the type list and an environment-variable dance
+to keep the title out of the script. `actions/github-script` was rejected for the same reason, and for adding a new
+third-party pin.
 
-The payload lists the labels as they were when the event fired. The autolabeler only adds the current type, which this
-step keeps, so reading the payload rather than re-listing labels is enough; a label someone adds by hand between the
-event and the step is handled on the next event.
+### D2. The drafter ignores the new key
+
+`draft-release.yml` reads the same file, and its schema (`packages/core/src/config/config.schema.ts`) is a zod `object`,
+which drops unknown keys. It already ignores `autolabeler:` the same way, so `sync-labels` changes nothing there.
 
 ### D3. Type labels belong to the title
 
 A type label that disagrees with the title is removed even if a person added it, because the title is squash-merged and
-is what the release notes print. Labels that are not type names — `major`, Dependabot's `dependencies` and
-`github_actions`, anything else — are never touched. A title with no recognised type (which the title check already
-fails) ends with no type label.
+is what the release notes print. Labels that no rule names — `major`, Dependabot's `dependencies` and
+`github_actions`, anything else — are never touched. The config has no fallback rule, so a title with no recognised
+type (which the title check already fails) ends with no type label.
 
-### D4. Keep the type list in one place where possible
+### D4. Effective only after merge
 
-The ten type names appear in the title check's `types`, in `release-drafter.yml` and now in the step. The step reads
-them from a single `TYPES` variable with a comment pointing at the other two; generating them from one file is not
-worth a checkout in a job that must not check out.
+The autolabeler fetches its config from the default branch, so the pull request that adds `sync-labels` is labelled
+under the old rules. The test pull request of task 3.1 has to be opened after this change is merged.
