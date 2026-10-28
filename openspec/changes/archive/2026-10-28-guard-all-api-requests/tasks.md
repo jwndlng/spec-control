@@ -9,9 +9,9 @@
 ## 2. Malformed requests
 
 - [x] 2.1 Wrap the routing of `createFetchHandler` in one `try`/`catch` mapping `SessionError`/`TrackingError` to their status, `URIError` to `400` and anything else to `500 { error: "internal error" }`; verify with `test/pullRequestsApi.test.ts` and `test/githubApi.test.ts` (a body that is not JSON is `400` and starts no `gh`) and a new `test/malformedRequests.test.ts` (`%E0` as `<id>` or `<name>` on every parameterised route is `400` and has no side effect)
-- [~] 2.2 Add an `error` handler to `Bun.serve` in `src/server/index.ts` returning the same `500` body; verify by review and `bun run check`
+- [x] 2.2 Add an `error` handler to `Bun.serve` in `src/server/index.ts` returning the same `500` body; verify by review and `bun run check`
 
 ## 3. Documentation and verification
 
-- [~] 3.1 Update `CLAUDE.md` invariants 2 and 2a: every request, not only a mutating one, must be addressed to a loopback host name; verify by review
+- [x] 3.1 Update `CLAUDE.md` invariants 2 and 2a: every request, not only a mutating one, must be addressed to a loopback host name; verify by review
 - [x] 3.2 Run `bun run check` and `bun run build`, then check with `curl -H 'Host: attacker.example:4711' http://127.0.0.1:4711/api/config` against `dist/spec-control` that the answer is `403`
