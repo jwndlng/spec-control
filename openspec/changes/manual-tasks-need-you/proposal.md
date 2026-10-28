@@ -57,8 +57,8 @@ None.
 - `agent-sessions`: the meaning of `- [~]` in the preset prompts covers tasks only the user can carry out, and the
   agent adds what the user has to do to the task's line; the former Implement and Validate prompts upgrade.
 - `change-scanner`: `- [~]` means "needs the user"; the scan reports `awaitingTasks`, bounded.
-- `kanban-board`: the card's **Needs you** badge with the tasks' text replaces the `Validate` badge; the progress label
-  says "need you".
+- `kanban-board`: the card's **Needs you** badge with the tasks' text replaces the `Validate` badge and is the one badge
+  that navigates (to the change's tasks); the progress label says "need you".
 - `change-detail`: the tasks view says `N tasks need you` and lists them above the checklist.
 
 ## Impact

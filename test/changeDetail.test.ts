@@ -7,6 +7,7 @@ import {
   ArtifactTabs,
   absoluteFilePath,
   artifactLabel,
+  awaitingTaskTexts,
   ChangeNotFound,
   closeOnEscape,
   DetailHeader,
@@ -258,13 +259,25 @@ test("tasks artifact: the three checkbox states render distinctly, none of them 
     expect(Object.keys(box.props).filter((k) => k.startsWith("on"))).toEqual([]);
   }
   // The awaiting item is marked as such, and reads as its own words: the marker is not left in the text.
-  const items = byTag(view, "li");
+  const items = byTag(view, "li").filter((li) => String(li.props.class ?? "").startsWith("task"));
   expect(items.map((li) => li.props.class)).toEqual(["task", "task awaiting", "task"]);
   expect(textOf(items[1])).toBe("1.2 check it in the browser");
-  // And the view says in words how many await validation.
-  expect(textOf(view)).toContain("1 + 1 awaiting / 3");
-  expect(textOf(view)).toContain("1 task awaits your validation");
-  expect(textOf(FileContent({ state: { status: "ok", path: "tasks.md", text: "- [x] a\n- [ ] b\n" }, raw: false, isTasks: true, rendered: renderMarkdown("- [x] a\n- [ ] b\n") }))).not.toContain("await");
+  // And the view says in words how many need the user, and lists them first.
+  expect(textOf(view)).toContain("1 + 1 need you / 3");
+  expect(textOf(view)).toContain("1 task needs you");
+  expect(byTag(view, "ul").filter((ul) => ul.props.class === "needs-you-list").map((ul) => byTag(ul, "li").map(textOf))).toEqual([["1.2 check it in the browser"]]);
+  expect(textOf(FileContent({ state: { status: "ok", path: "tasks.md", text: "- [x] a\n- [ ] b\n" }, raw: false, isTasks: true, rendered: renderMarkdown("- [x] a\n- [ ] b\n") }))).not.toContain("need you");
+});
+
+test("tasks artifact: the tasks that need the user are listed above the checklist, in file order, as text", () => {
+  const text = ["- [x] 1.1 Add the client", "- [~] 1.2 Add the API token — you: set `API_TOKEN`", "- [ ] 1.3 open", "  * [ ~ ] 1.4 Check <b>it</b> on a phone", ""].join("\n");
+  expect(awaitingTaskTexts(text)).toEqual(["1.2 Add the API token — you: set `API_TOKEN`", "1.4 Check <b>it</b> on a phone"]);
+  expect(awaitingTaskTexts("- [x] a\n- [ ] b")).toEqual([]);
+  const view = FileContent({ state: { status: "ok", path: "tasks.md", text }, raw: false, isTasks: true, rendered: renderMarkdown(text) });
+  expect(textOf(view)).toContain("2 tasks need you");
+  // Above the checklist: the note comes before the first checkbox.
+  const all = textOf(view);
+  expect(all.indexOf("2 tasks need you")).toBeLessThan(all.indexOf("1.1 Add the client"));
 });
 
 test("raw shows the source verbatim instead of the rendering", () => {

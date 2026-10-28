@@ -77,8 +77,13 @@ features:
 }
 
 function tasks(c: ChangeSnapshot): string {
-  const { done, total } = c.tasks ?? { done: 0, total: 0 };
-  const lines = Array.from({ length: total }, (_, i) => `- [${i < done ? "x" : " "}] ${Math.floor(i / 5) + 1}.${(i % 5) + 1} Step ${i + 1} of ${words(c.name)}`);
+  const { done, total, awaitingTasks = [] } = c.tasks ?? { done: 0, total: 0 };
+  // The `- [~]` tasks follow the ticked ones, worded as the scan reports them, so the card and this file agree.
+  const lines = Array.from({ length: total }, (_, i) => {
+    const awaiting = awaitingTasks[i - done];
+    if (i >= done && awaiting) return `- [~] ${awaiting}`;
+    return `- [${i < done ? "x" : " "}] ${Math.floor(i / 5) + 1}.${(i % 5) + 1} Step ${i + 1} of ${words(c.name)}`;
+  });
   const out: string[] = ["# Tasks", ""];
   lines.forEach((line, i) => {
     if (i % 5 === 0) out.push(`## ${i / 5 + 1}. Part ${i / 5 + 1}`, "");

@@ -118,7 +118,7 @@ export const TRANSCRIPTS: Record<TranscriptName, Step[]> = {
   validate: [
     ...header("/opsx:apply {change} — walk me through the tasks left to validate"),
     { out: tool("Read openspec/changes/{change}/tasks.md"), after: 900 },
-    { out: say("Two tasks are marked as awaiting you. Taking them one at a time."), after: 1400 },
+    { out: say("Two tasks need you. Taking them one at a time: what to check or do, and what I can help with."), after: 1400 },
     { out: line(), after: 400 },
     { out: say("2.4: the refusal carries a retry hint. Send two bursts to the demo endpoint and check the second one names the wait in whole seconds."), after: 2200 },
     { ask: `${YELLOW}?${OFF} Did that check pass? ${DIM}(yes / no)${OFF} `, after: 900 },

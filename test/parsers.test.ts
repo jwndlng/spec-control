@@ -12,25 +12,54 @@ test("task progress counts mixed list markers", () => {
 
 test("task progress counts tasks awaiting validation apart from done ones", () => {
   const md = ["## 1. Build", "- [x] 1.1 a", "- [~] 1.2 b", "- [ ] 1.3 c", "* [~] d", "2) [X] e"].join("\n");
-  expect(parseTaskProgress(md)).toEqual({ done: 2, awaiting: 2, total: 5 });
+  expect(parseTaskProgress(md)).toEqual({ done: 2, awaiting: 2, awaitingTasks: ["1.2 b", "d"], total: 5 });
   // `[~]` is never folded into `done`: nobody has confirmed it yet.
-  expect(parseTaskProgress("- [x] a\n- [~] b")).toEqual({ done: 1, awaiting: 1, total: 2 });
+  expect(parseTaskProgress("- [x] a\n- [~] b")).toEqual({ done: 1, awaiting: 1, awaitingTasks: ["b"], total: 2 });
   const thirteenAndTwo = [...Array(13).fill("- [x] done"), ...Array(2).fill("- [~] check it")].join("\n");
-  expect(parseTaskProgress(thirteenAndTwo)).toEqual({ done: 13, awaiting: 2, total: 15 });
+  expect(parseTaskProgress(thirteenAndTwo)).toEqual({ done: 13, awaiting: 2, awaitingTasks: ["check it", "check it"], total: 15 });
+});
+
+test("task progress reports what the user has to do: the `[~]` tasks' text, in file order, as plain text", () => {
+  const md = [
+    "- [x] 1.1 Add the client",
+    "- [~] 1.2 Add the API token to the deployment secrets — you: set API_TOKEN in the alpha-infra project   ",
+    "- [ ] 1.3 Wire it up",
+    "  * [~]   1.4 Check the retry on a <b>slow</b> network",
+  ].join("\n");
+  expect(parseTaskProgress(md)).toEqual({
+    done: 1,
+    awaiting: 2,
+    awaitingTasks: ["1.2 Add the API token to the deployment secrets — you: set API_TOKEN in the alpha-infra project", "1.4 Check the retry on a <b>slow</b> network"],
+    total: 4,
+  });
+});
+
+test("task progress: the awaiting list is bounded, `awaiting` stays the full count", () => {
+  const long = "x".repeat(500);
+  const md = [`- [~] ${long}`, ...Array.from({ length: 11 }, (_, i) => `- [~] task ${i + 2}`)].join("\n");
+  const progress = parseTaskProgress(md);
+  expect([progress.done, progress.awaiting, progress.total]).toEqual([0, 12, 12]);
+  expect(progress.awaitingTasks).toHaveLength(10);
+  expect(Array.from(progress.awaitingTasks![0])).toHaveLength(200);
+  expect(progress.awaitingTasks![0].endsWith("…")).toBe(true);
+  expect(progress.awaitingTasks!.slice(1)).toEqual(Array.from({ length: 9 }, (_, i) => `task ${i + 2}`));
+  // Exactly 200 characters is not shortened.
+  expect(parseTaskProgress(`- [~] ${"y".repeat(200)}`).awaitingTasks).toEqual(["y".repeat(200)]);
 });
 
 test("task progress: spacing inside the brackets does not matter, an unknown marker is open", () => {
-  expect(parseTaskProgress("- [ x] a\n- [x ] b\n- [ ~] c\n- [~ ] d")).toEqual({ done: 2, awaiting: 2, total: 4 });
+  expect(parseTaskProgress("- [ x] a\n- [x ] b\n- [ ~] c\n- [~ ] d")).toEqual({ done: 2, awaiting: 2, awaitingTasks: ["c", "d"], total: 4 });
   // Markers OpenSpec assigns no meaning to count as tasks, never as done.
   expect(parseTaskProgress("- [-] a\n- [?] b")).toEqual({ done: 0, awaiting: 0, total: 2 });
   expect(parseTaskProgress("- [] a")).toEqual({ done: 0, awaiting: 0, total: 1 });
 });
 
-test("task progress: a file without the awaiting marker counts exactly as before", () => {
+test("task progress: a file without the awaiting marker counts exactly as before, with no awaiting list", () => {
   const md = ["## 1. Setup", "- [x] 1.1 a", "- [ ] 1.2 b", "* [X] c", "1. [ ] d", "+ [x] e", "prose"].join("\n");
   const { done, total } = parseTaskProgress(md);
   expect({ done, total }).toEqual({ done: 3, total: 5 });
   expect(parseTaskProgress(md).awaiting).toBe(0);
+  expect("awaitingTasks" in parseTaskProgress(md)).toBe(false);
 });
 
 test("worktree porcelain parsing: main first, detached kept, flags read", () => {

@@ -58,6 +58,19 @@ export function taskProgress(markdown: string): TaskProgress {
   };
 }
 
+/**
+ * The text of every `- [~]` task in file order, as the scanner reads it but unbounded: the view has the whole file.
+ * Plain text, rendered as text — what the user has to check or do, shown before the checklist.
+ */
+export function awaitingTaskTexts(markdown: string): string[] {
+  const texts: string[] = [];
+  for (const line of markdown.split(/\r?\n/)) {
+    const match = /^\s*(?:[-*+]|\d+[.)])\s+\[\s*~\s*\]/.exec(line);
+    if (match) texts.push(line.slice(match[0].length).trim());
+  }
+  return texts;
+}
+
 export function absoluteFilePath(changeDir: string, file: string): string {
   return `${changeDir.replace(/\/+$/, "")}/${file}`;
 }
@@ -449,16 +462,26 @@ export function FileContent({ state, raw, isTasks, rendered, filePath }: { state
     );
   }
   const progress = isTasks ? taskProgress(state.text) : undefined;
+  const needsYou = progress && (progress.awaiting ?? 0) > 0 ? awaitingTaskTexts(state.text) : [];
   return (
     <>
       {progress && progress.total > 0 && (
         <div class="detail-meter wide">
           <Meter done={progress.done} total={progress.total} awaiting={progress.awaiting} />
-          {(progress.awaiting ?? 0) > 0 && (
-            <p class="awaiting-note">
-              {progress.awaiting} {progress.awaiting === 1 ? "task awaits" : "tasks await"} your validation. Only you can tick those off — start <strong>Validate</strong> on
-              the card, or tell your agent in a session.
-            </p>
+          {needsYou.length > 0 && (
+            <div class="awaiting-note" role="note">
+              <p>
+                <strong>
+                  {needsYou.length} {needsYou.length === 1 ? "task needs" : "tasks need"} you
+                </strong>{" "}
+                — each is something to check or do that only you can. Confirm them with <strong>Validate</strong> on the card, or when archiving.
+              </p>
+              <ul class="needs-you-list">
+                {needsYou.map((text) => (
+                  <li>{text}</li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       )}

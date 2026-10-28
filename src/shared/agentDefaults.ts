@@ -4,11 +4,21 @@ import type { AgentProfile, AgentSessionsConfig, InstructionStep, PromptKey, Sho
 // `- [~]` task marker, which OpenSpec itself does not define — see the agent-sessions spec. The meaning is written once
 // here; each preset only says how its agent invokes the OpenSpec workflow (`<invocation> — <tail>`).
 
-/** Leaves a task only the user can judge as `- [~]` rather than claiming a verification nobody did. */
-const IMPLEMENT_TAIL = "when a task can only be verified by me, do the work and then leave it as `- [~]` instead of `- [x]`, so I can confirm it.";
+/**
+ * Leaves a task only the user can verify or carry out as `- [~]` — rather than claiming a verification nobody did, or
+ * leaving it open, which would keep the change in `Implementing` with nothing left for the agent — and says on the
+ * task's own line what the user has to do, which the card then shows.
+ */
+const IMPLEMENT_TAIL =
+  "when a task can only be verified or carried out by me (a secret to enter, an account to sign in to, a check on a real device), do every part of it you can, then leave it as `- [~]` instead of `- [x]` or `- [ ]`, and add to its line what exactly I have to check or do.";
 
 /** Walks the user through the `- [~]` tasks; what the user does not confirm stays as it is. */
-const VALIDATE_TAIL = "take its `- [~]` tasks one at a time, tell me exactly what to check, and tick off only the ones I confirm, leaving the rest as `- [~]`.";
+const VALIDATE_TAIL =
+  "take its `- [~]` tasks one at a time, tell me exactly what to check or do, help with what you can, and tick off only the ones I confirm as done, leaving the rest as `- [~]`.";
+
+/** The Implement and Validate tails before they covered tasks only the user can carry out; a saved verbatim copy upgrades. */
+const PREVIOUS_IMPLEMENT_TAIL = "when a task can only be verified by me, do the work and then leave it as `- [~]` instead of `- [x]`, so I can confirm it.";
+const PREVIOUS_VALIDATE_TAIL = "take its `- [~]` tasks one at a time, tell me exactly what to check, and tick off only the ones I confirm, leaving the rest as `- [~]`.";
 
 /**
  * Syncs the delta specs first instead of stopping at the archive workflow's "sync now?" question, and commits the whole
@@ -106,7 +116,8 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
   {
     profile: CLAUDE_PROFILE,
     formerPrompts: {
-      implement: ["/opsx:apply {change}"],
+      implement: ["/opsx:apply {change}", `/opsx:apply {change} — ${PREVIOUS_IMPLEMENT_TAIL}`],
+      validate: [`/opsx:apply {change} — ${PREVIOUS_VALIDATE_TAIL}`],
       archive: [
         "/opsx:archive {change}",
         "/opsx:archive {change} — sync the delta specs into openspec/specs first without asking me whether to sync, then archive; if they are already in sync, archive right away.",
@@ -117,13 +128,21 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
   },
   {
     profile: CODEX_PROFILE,
-    formerPrompts: { archive: [`Use the openspec-archive-change skill to archive the OpenSpec change {change} — ${PREVIOUS_ARCHIVE_TAIL}`] },
+    formerPrompts: {
+      implement: [`Use the openspec-apply-change skill on the OpenSpec change {change} — ${PREVIOUS_IMPLEMENT_TAIL}`],
+      validate: [`Use the openspec-apply-change skill on the OpenSpec change {change} — ${PREVIOUS_VALIDATE_TAIL}`],
+      archive: [`Use the openspec-archive-change skill to archive the OpenSpec change {change} — ${PREVIOUS_ARCHIVE_TAIL}`],
+    },
     install: CODEX_INSTALL,
   },
   // `agy -i {prompt}` left a console with `agy -i`, an option without its value.
   {
     profile: ANTIGRAVITY_PROFILE,
-    formerPrompts: { archive: [`/opsx-archive {change} — ${PREVIOUS_ARCHIVE_TAIL}`] },
+    formerPrompts: {
+      implement: [`/opsx-apply {change} — ${PREVIOUS_IMPLEMENT_TAIL}`],
+      validate: [`/opsx-apply {change} — ${PREVIOUS_VALIDATE_TAIL}`],
+      archive: [`/opsx-archive {change} — ${PREVIOUS_ARCHIVE_TAIL}`],
+    },
     formerCommands: [["agy", "-i", "{prompt}"]],
     install: ANTIGRAVITY_INSTALL,
   },
