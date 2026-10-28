@@ -15,11 +15,25 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
-    id: "2026-10-27-long-prompts-reach-the-agent",
-    date: "2026-10-27",
+    id: "2026-10-28-long-prompts-reach-the-agent",
+    date: "2026-10-28",
     title: "Long prompts reach a running agent intact",
     summary:
       "**Archive**, **Ship** and **Merge** sent to a running agent no longer turn into `[Pasted text #1]` followed by a fragment of the prompt when the prompt is long. The text is typed in small pieces, so the agent shows it as typed and it is submitted as usual.",
+  },
+  {
+    id: "2026-10-27-open-in-editor",
+    date: "2026-10-27",
+    title: "Open an agent's worktree in your editor",
+    summary:
+      "**Open in editor**, beside **Copy cd** in a change's Console tab and in Open work, opens the folder the agent works in with one click — VS Code's `code` by default, or any editor you set as the **Editor command** under Settings → Agent sessions.",
+  },
+  {
+    id: "2026-10-27-manual-tasks-need-you",
+    date: "2026-10-27",
+    title: "See which tasks need you, and what to do",
+    summary:
+      "A task only you can check or carry out — a secret to enter, a sign-in, a test on a real device — is now left as `- [~]` with what to do on its line, so the change still reaches **Done**. Its card shows a **Needs you** badge listing those tasks; it opens the change's tasks, where they come first.",
   },
   {
     id: "2026-10-24-remove-duplicate-archived-changes",

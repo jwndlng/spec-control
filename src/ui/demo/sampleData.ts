@@ -39,8 +39,8 @@ interface SampleChange {
   written?: Written;
   /** [done, total]; implies every artifact is written unless `written` says otherwise. */
   tasks?: [number, number];
-  /** Of `total`, how many are `- [~]`: finished by the agent, awaiting the user. Never part of `done`. */
-  awaiting?: number;
+  /** The `- [~]` tasks after the `done` ones, each line's text: what only the user can check or do. Never part of `done`. */
+  awaiting?: string[];
   /** Age of the last activity in days. */
   age: number;
   synced?: boolean;
@@ -207,7 +207,15 @@ const REPOS: SampleRepo[] = [
       { name: "idempotency-keys", written: "proposal", age: 9, issue: { number: 214, title: "Support idempotency keys on POST endpoints" } },
       { name: "deprecate-v1-auth", tasks: [12, 12], age: 3, branch: "chore/deprecate-v1-auth" },
       // Code-complete, two checks only a person can make: `Done`, sub-state `validate`.
-      { name: "verify-rate-limit-headers", tasks: [11, 13], awaiting: 2, age: 0.5 },
+      {
+        name: "verify-rate-limit-headers",
+        tasks: [11, 13],
+        awaiting: [
+          "3.2 Check the RateLimit headers against staging — you: call /v1/ping twice and compare RateLimit-Remaining",
+          "3.3 Add the staging API key to the CI secrets — you: set RATE_LIMIT_KEY in the repository settings",
+        ],
+        age: 0.5,
+      },
       { name: "openapi-examples", tasks: [8, 8], age: 6, synced: true },
       { name: "graphql-gateway-spike", written: "none", age: 0.3 },
     ],
@@ -398,7 +406,7 @@ export function buildSample(now: number): Sample {
       const input = {
         archived: false,
         artifacts: artifacts(written),
-        tasks: c.tasks ? { done: c.tasks[0], awaiting: c.awaiting ?? 0, total: c.tasks[1] } : null,
+        tasks: c.tasks ? { done: c.tasks[0], awaiting: c.awaiting?.length ?? 0, ...(c.awaiting?.length ? { awaitingTasks: c.awaiting } : {}), total: c.tasks[1] } : null,
       };
       return {
         repoId: r.id,

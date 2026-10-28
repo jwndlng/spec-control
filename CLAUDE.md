@@ -128,7 +128,10 @@ bun test test/scanner.test.ts   # a single test file
    refused when it is, or lies inside, a tracked repository — with no worktree, no branch and no git command. And for a
    **project console** (`openProjectConsole`, `src/server/sessions/manager.ts`, `POST /api/repos/<id>/console`): the
    project's agent, without a prompt, in place in a tracked repository's own folder — for a git repository its main
-   checkout — with no worktree, no branch and no git command by the dashboard. Outside every tracked
+   checkout — with no worktree, no branch and no git command by the dashboard. The same holds for the user's **editor** started with **Open in editor**
+   (`src/server/sessions/editor.ts`): offered only where agent sessions apply and only for a change's session or session
+   worktree, started without a shell, detached and left alone, on a folder the server took from its own session records
+   or session worktree list — what the editor changes is the user's doing. Outside every tracked
    repository, the dashboard writes beyond its home in exactly three places, each on the user's confirmation and each
    one new folder checked by `src/server/newFolder.ts` before it exists and made with a non-recursive (exclusive)
    `mkdir`, refused in or below a tracked repository, an ignore path or the dashboard home. **Creating a new project**

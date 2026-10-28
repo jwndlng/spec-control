@@ -131,10 +131,10 @@ export function CopyRefButton({ project, change }: { project: string; change: st
 /** What a progress bar counts: ticked tasks, or written artifacts while a change is in `Drafts`. */
 export type MeterUnit = "tasks" | "artifacts";
 
-/** Colour is never the only cue: the awaiting count is named in words, here and in the visible value. */
+/** Colour is never the only cue: the count of tasks that need the user is named in words, here and in the visible value. */
 export function meterText(done: number, total: number, unit: MeterUnit, awaiting = 0): string {
   if (unit === "artifacts") return `${done} of ${total} artifacts written`;
-  if (awaiting > 0) return `${done} of ${total} tasks complete, ${awaiting} awaiting validation, ${total - done - awaiting} open`;
+  if (awaiting > 0) return `${done} of ${total} tasks complete, ${awaiting} ${awaiting === 1 ? "needs" : "need"} the user, ${total - done - awaiting} open`;
   return `${done} of ${total} tasks complete`;
 }
 
@@ -151,7 +151,7 @@ export function Meter({ done, total, awaiting = 0, unit = "tasks", showUnit = fa
         {awaiting > 0 && <div class="awaiting" style={{ width: `${awaitingPct}%` }} />}
       </div>
       <span class={`value ${showUnit ? "unit" : ""}`} aria-hidden="true">
-        {awaiting > 0 ? `${done} + ${awaiting} awaiting / ${total}` : `${done}/${total}`}
+        {awaiting > 0 ? `${done} + ${awaiting} need you / ${total}` : `${done}/${total}`}
         {showUnit && (unit === "artifacts" ? " Artifacts" : " Tasks")}
       </span>
     </div>
@@ -165,21 +165,44 @@ export function cardProgress(card: Pick<Card, "stage" | "artifacts" | "tasks">):
   return { ...card.tasks, unit: "tasks" };
 }
 
-/** Where a card leads: its change's detail view, remembering the board (`from`) it sits on. */
-export function cardLink(card: Pick<Card, "repoId" | "name">, from: string): { path: string; query: string } {
-  return { path: changePath(card.repoId, card.name), query: serializeDetailQuery({ raw: false, from }) };
+/** Where a card leads: its change's detail view, remembering the board (`from`) it sits on — on one artifact if named. */
+export function cardLink(card: Pick<Card, "repoId" | "name">, from: string, artifact?: string): { path: string; query: string } {
+  return { path: changePath(card.repoId, card.name), query: serializeDetailQuery({ raw: false, from, artifact }) };
 }
 
 /**
- * Only **Show details** navigates: the card itself and its change name are plain content, so clicking anywhere else on
- * a card does nothing. It is an anchor, so ⌘/middle-click opens the detail view in a new tab. `working` — an agent is
+ * The **Needs you** badge's tooltip and accessible name: how many tasks need the user and, one per line, what each is,
+ * as the scan reports them — `and N more` for those it does not list. Plain text; the caller renders it as text.
+ */
+export function needsYouText(tasks: Pick<NonNullable<Card["tasks"]>, "awaiting" | "awaitingTasks">): string {
+  const count = tasks.awaiting ?? 0;
+  const listed = tasks.awaitingTasks ?? [];
+  const head = `${count} ${count === 1 ? "task needs" : "tasks need"} you — something to check or do that only you can`;
+  const more = count > listed.length && listed.length > 0 ? [`and ${count - listed.length} more`] : [];
+  return [listed.length > 0 ? `${head}:` : head, ...listed.map((t) => `• ${t}`), ...more].join("\n");
+}
+
+/** Opens the change's detail view on its tasks, where the same tasks are listed first. */
+function NeedsYouBadge({ card, tasks, from }: { card: Card; tasks: NonNullable<Card["tasks"]>; from: string }) {
+  const link = cardLink(card, from, "tasks");
+  const text = needsYouText(tasks);
+  return (
+    <a class="badge warning needs-you" href={href(link.path, undefined, link.query)} onClick={(e) => followInApp(e, link.path, link.query)} title={text} aria-label={text}>
+      {tasks.awaiting} need you
+    </a>
+  );
+}
+
+/**
+ * Only **Show details** and the **Needs you** badge navigate: the card itself and its change name are plain content, so
+ * clicking anywhere else on a card does nothing. Both are anchors, so ⌘/middle-click opens the detail view in a new tab. `working` — an agent is
  * working on the change, or its pull request is not ready yet — shows on the whole card, tinted and, while something is
  * still in progress, with its name swept; the caller decides it (`cardWorkingState`), so the card stays hook-free.
  */
 export function ChangeCard({ card, now, from, working, running = false, merging, stale }: { card: Card; now: number; from: string; working?: CardWorkingState; running?: boolean; merging?: string; stale?: StaleReason }) {
   const noTasks = card.warnings?.includes("tasks file has no tasks");
-  // The work is finished, a person still has to confirm it — `warning`, not `success`; never on an archived change.
-  const validating = !card.archived && (card.tasks?.awaiting ?? 0) > 0;
+  // What is left is the user's — to check or to do — so `warning`, not `success`; never on an archived change.
+  const needsYou = !card.archived && card.tasks && (card.tasks.awaiting ?? 0) > 0 ? card.tasks : undefined;
   const progress = cardProgress(card);
   const link = cardLink(card, from);
   // In the starter's place; a running session's badge takes it instead, as it takes every starter's.
@@ -203,11 +226,7 @@ export function ChangeCard({ card, now, from, working, running = false, merging,
       </div>
       {progress && <Meter {...progress} showUnit />}
       <div class="meta">
-        {validating && (
-          <span class="badge warning" title={`${card.tasks?.awaiting} ${card.tasks?.awaiting === 1 ? "task awaits" : "tasks await"} your confirmation`}>
-            Validate
-          </span>
-        )}
+        {needsYou && <NeedsYouBadge card={card} tasks={needsYou} from={from} />}
         {noTasks && <span class="badge warning">no tasks</span>}
         {/* Marked, never moved (stale-changes spec): the reason is in the title; the detail offers what to do. */}
         {stale && (

@@ -1,6 +1,6 @@
 import type { ActivityQuery } from "../shared/activity.ts";
 import type { RepoAgentPatch } from "../shared/repoSettings.ts";
-import type { GithubClone, GithubClonesResponse, GithubRepoList, KeepAwakeStatus } from "../shared/types.ts";
+import type { EditorAvailability, EditorStarted, GithubClone, GithubClonesResponse, GithubRepoList, KeepAwakeStatus } from "../shared/types.ts";
 import type { ActivityPage, AutoMergePromptResult, BranchDeletePreview, BranchDeleteRequest, BranchDeleteResult, ConsoleSession, ProjectConsoleLike, CleanupPreview, CleanupResult, CleanupSelection, ChangeIssueRef, CreateChangeResponse, DismissPreview, DismissResult, EnvironmentReport, EnvironmentView, FolderPickResult, PromptResult, PullRequestsResponse, PullResolve, PullResult, RepoIssues, SetupState, ShipResult, StaleCleanupPreview, StaleCleanupRequest, StaleCleanupResult, StartResult, UpdateStatus, WorkStatus } from "../shared/types.ts";
 import type { AgentAvailability, AutoFetchSeconds, ArtifactFileContent, ChangeArtifacts, Config, CreateProjectResponse, DiscoverResult, IntegrationSession, PrTitleConvention, RepoConfig, ScanTriggerResult, Session, SessionAction, SessionWorktree, SharedConfig, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Snapshot } from "../shared/types.ts";
 import { socketOrigin } from "./url.ts";
@@ -175,7 +175,7 @@ export interface Api {
   applySharedConfig(assignments: SharedConfigAssignment[]): Promise<{ results: SharedConfigApplyResult[] }>;
 
   /** Agent sessions (optional feature): an agent CLI in a terminal, one per change. */
-  sessions(): Promise<{ sessions: Session[]; agents: AgentAvailability[]; presets: AgentAvailability[]; worktrees: SessionWorktree[]; keepAwake?: KeepAwakeStatus }>;
+  sessions(): Promise<{ sessions: Session[]; agents: AgentAvailability[]; presets: AgentAvailability[]; worktrees: SessionWorktree[]; editor?: EditorAvailability; keepAwake?: KeepAwakeStatus }>;
   /**
    * `carryOver` starts the archive session that carries a stranded archive over and `removeDuplicate` the one that
    * removes a duplicate after archive (stale-changes spec); `resolveConflicts`
@@ -207,6 +207,10 @@ export interface Api {
   resolveConflicts(id: string): Promise<PromptResult>;
   /** Asks the session's agent to merge its ready pull request; the server takes the number and head commit from its own list. */
   mergeSession(id: string): Promise<PromptResult>;
+  /** Starts the user's editor on a change session's folder; `ApiError` with the server's reason when refused. */
+  openEditor(sessionId: string): Promise<EditorStarted>;
+  /** Starts the user's editor on a session worktree, named by repository and worktree name, never by path. */
+  openWorktreeEditor(repoId: string, name: string): Promise<EditorStarted>;
   /** For a worktree whose session record is gone; refused unless that is safe. */
   removeWorktree(repoId: string, name: string): Promise<{ removable: boolean; reason?: string }>;
   /** Ends the agent if it is running; removes the worktree only when asked and safe. */
@@ -333,7 +337,7 @@ export const httpApi: Api = {
   saveSharedConfig: (config) => call<SharedConfig>("/api/shared-config", { method: "PUT", body: JSON.stringify(config) }),
   previewSharedConfig: (assignments) => call<{ previews: SharedConfigPreview[] }>("/api/shared-config/preview", { method: "POST", body: JSON.stringify({ assignments }) }),
   applySharedConfig: (assignments) => call<{ results: SharedConfigApplyResult[] }>("/api/shared-config/apply", { method: "POST", body: JSON.stringify({ assignments }) }),
-  sessions: () => call<{ sessions: Session[]; agents: AgentAvailability[]; presets: AgentAvailability[]; worktrees: SessionWorktree[]; keepAwake?: KeepAwakeStatus }>("/api/sessions"),
+  sessions: () => call<{ sessions: Session[]; agents: AgentAvailability[]; presets: AgentAvailability[]; worktrees: SessionWorktree[]; editor?: EditorAvailability; keepAwake?: KeepAwakeStatus }>("/api/sessions"),
   openSession: (repoId, change, action, options) => call<StartResult>("/api/sessions", { method: "POST", body: JSON.stringify({ repoId, change, action, ...(options?.carryOver ? { carryOver: true } : {}), ...(options?.removeDuplicate ? { removeDuplicate: true } : {}), ...(options?.resolveConflicts ? { resolveConflicts: true } : {}) }) }),
   openConsole: () => call<ConsoleSession>("/api/console", { method: "POST" }),
   openProjectConsole: (repoId) => call<ProjectConsoleLike>(`/api/repos/${encodeURIComponent(repoId)}/console`, { method: "POST" }),
@@ -343,6 +347,8 @@ export const httpApi: Api = {
   shipSession: (id) => call<ShipResult>(`/api/sessions/${id}/ship`, { method: "POST" }),
   resolveConflicts: (id) => call<PromptResult>(`/api/sessions/${id}/resolve-conflicts`, { method: "POST" }),
   mergeSession: (id) => call<PromptResult>(`/api/sessions/${id}/merge`, { method: "POST" }),
+  openEditor: (id) => call<EditorStarted>(`/api/sessions/${id}/editor`, { method: "POST" }),
+  openWorktreeEditor: (repoId, name) => call<EditorStarted>("/api/worktrees/editor", { method: "POST", body: JSON.stringify({ repoId, name }) }),
   removeWorktree: (repoId, name) => call("/api/worktrees/remove", { method: "POST", body: JSON.stringify({ repoId, name }) }),
   closeSession: (id, removeWorktree) => call(`/api/sessions/${id}/close`, { method: "POST", body: JSON.stringify({ removeWorktree }) }),
   deleteSession: (id) => call<{ deleted: boolean }>(`/api/sessions/${id}`, { method: "DELETE" }),
@@ -443,6 +449,8 @@ export const api: Api = {
   shipSession: (...args) => current.shipSession(...args),
   resolveConflicts: (...args) => current.resolveConflicts(...args),
   mergeSession: (...args) => current.mergeSession(...args),
+  openEditor: (...args) => current.openEditor(...args),
+  openWorktreeEditor: (...args) => current.openWorktreeEditor(...args),
   removeWorktree: (...args) => current.removeWorktree(...args),
   closeSession: (...args) => current.closeSession(...args),
   deleteSession: (...args) => current.deleteSession(...args),

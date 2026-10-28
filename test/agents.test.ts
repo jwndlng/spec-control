@@ -63,14 +63,17 @@ test("the preconfigured prompts carry what `- [~]` means, each on one line", () 
   // Integrate is the one prompt that must not name a change, because it runs in a folder, not a change.
   expect(DEFAULT_INTEGRATE_PROMPT).not.toContain("\n");
   expect(DEFAULT_INTEGRATE_PROMPT).not.toContain("{change}");
-  // Implement: do the work, then leave what only the user can judge for the user.
+  // Implement: do every part it can, then leave what only the user can verify or carry out for the user, saying what.
   expect(prompts.implement).toMatch(/^\/opsx:apply \{change\}/);
-  expect(prompts.implement).toMatch(/only be verified by me/);
-  expect(prompts.implement).toMatch(/`- \[~\]` instead of `- \[x\]`/);
-  // Validate: one task at a time, tick off only what the user confirms.
+  expect(prompts.implement).toMatch(/only be verified or carried out by me/);
+  expect(prompts.implement).toMatch(/do every part of it you can/);
+  expect(prompts.implement).toMatch(/`- \[~\]` instead of `- \[x\]` or `- \[ \]`/);
+  expect(prompts.implement).toMatch(/add to its line what exactly I have to check or do/);
+  // Validate: one task at a time, help where it can, tick off only what the user confirms.
   expect(prompts.validate).toMatch(/`- \[~\]` tasks one at a time/);
-  expect(prompts.validate).toMatch(/tell me exactly what to check/);
-  expect(prompts.validate).toMatch(/tick off only the ones I confirm/);
+  expect(prompts.validate).toMatch(/tell me exactly what to check or do/);
+  expect(prompts.validate).toMatch(/help with what you can/);
+  expect(prompts.validate).toMatch(/tick off only the ones I confirm as done/);
   // Both new texts survive the prompt rules, and reach the agent as one argument.
   const config = validateConfig(withAgents([CLAUDE_PROFILE])).agentSessions.agents[0].prompts;
   expect(config).toEqual(prompts);
@@ -736,6 +739,22 @@ test("every preset's Archive prompt asks for the whole move to be committed; the
     expect(validateConfig(withAgents([agent], profile.id)).agentSessions.agents[0].prompts.archive).toBe(archive);
     const edited = { ...profile, prompts: { archive: `${previous} Then stop.` } };
     expect(validateConfig(withAgents([edited], profile.id)).agentSessions.agents[0].prompts.archive).toBe(`${previous} Then stop.`);
+  }
+});
+
+test("every preset's Implement and Validate prompts cover tasks only the user can carry out; the previous texts upgrade, edited ones stay", () => {
+  for (const { profile, formerPrompts } of AGENT_PRESETS) {
+    for (const key of ["implement", "validate"] as const) {
+      const current = profile.prompts[key] ?? "";
+      expect([profile.id, key, /check or do/.test(current)]).toEqual([profile.id, key, true]);
+      // The text that only spoke of verifying, verbatim, is one of the preset's former prompts and reads as the current one.
+      const previous = formerPrompts[key]?.at(-1) ?? "";
+      expect([profile.id, key, previous.includes("`- [~]`"), previous === current]).toEqual([profile.id, key, true, false]);
+      const agent = { ...profile, prompts: { [key]: previous } };
+      expect(validateConfig(withAgents([agent], profile.id)).agentSessions.agents[0].prompts[key]).toBe(current);
+      const edited = { ...profile, prompts: { [key]: `${previous} Then stop.` } };
+      expect(validateConfig(withAgents([edited], profile.id)).agentSessions.agents[0].prompts[key]).toBe(`${previous} Then stop.`);
+    }
   }
 });
 
