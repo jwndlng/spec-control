@@ -14,4 +14,4 @@
 ## 3. Documentation and verification
 
 - [~] 3.1 Update `CLAUDE.md` invariants 2 and 2a: every request, not only a mutating one, must be addressed to a loopback host name; verify by review
-- [ ] 3.2 Run `bun run check` and `bun run build`, then check with `curl -H 'Host: attacker.example:4711' http://127.0.0.1:4711/api/config` against `dist/spec-control` that the answer is `403`
+- [x] 3.2 Run `bun run check` and `bun run build`, then check with `curl -H 'Host: attacker.example:4711' http://127.0.0.1:4711/api/config` against `dist/spec-control` that the answer is `403`
