@@ -14,4 +14,4 @@
 ## 3. Wrap-up
 
 - [x] 3.1 Update the `desktop/` paragraph of `CLAUDE.md` and add a What's new entry to `src/ui/changelog.ts`; verify with `bun run check`
-- [~] 3.2 Run `bun run check`, `bun run build` and `bun run build:desktop`; in the app, change the port, stop the server, Retry, and check links and Reload; open a proposal with `[design](./design.md)` and follow it; verify by hand on an Apple silicon Mac
+- [x] 3.2 Run `bun run check`, `bun run build` and `bun run build:desktop`; in the app, change the port, stop the server, Retry, and check links and Reload; open a proposal with `[design](./design.md)` and follow it; verify by hand on an Apple silicon Mac
