@@ -109,8 +109,8 @@ export function mergeChanges(copies: ChangeCopy[], archivedOnMain: Map<string, s
     return {
       ...lead.change,
       ...mergedRecord(lead, group),
-      // A change found in a linked worktree is on that worktree's branch; no guessing from names needed.
-      branchMatch: lead.checkout.isMain ? lead.change.branchMatch : lead.checkout.branch,
+      // The scanner decided: a linked worktree's branch only for its own change or one it holds work on.
+      branchMatch: lead.change.branchMatch,
       checkout: lead.checkout,
       otherCheckouts: others.length ? others.map((o) => ({ ...o.checkout, column: o.change.column })) : undefined,
     };
