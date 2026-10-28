@@ -141,6 +141,14 @@ session, and MUST NOT ask the user for a further key press. When the prompt was 
 say so as it does for any other text sent on the user's behalf. Archive SHALL open its own session as before, and no
 starter SHALL be offered for a session that a prompt cannot reach.
 
+For a running **Draft artifacts** session on `docs/<change>` the tab SHALL offer Draft as sent into that session and
+every other starter the stage allows but Fast-forward as **ending the proposal session and starting** that action —
+labelled and described so, never as sending the prompt to this session — so the tab always offers the change's next
+step. Activating one SHALL open the action asking to end the proposal session first (`agent-sessions`: "The proposal
+session gives way to the next step") and then show the new session. When the proposal worktree's work status is
+`uncommitted` or `unpushed`, it SHALL first ask one confirmation saying that the proposal is not pushed yet and that its
+worktree and branch are kept; for any other work status it SHALL ask nothing, since ending it loses nothing.
+
 For a change with no session and no session worktree the tab SHALL offer the starters its stage allows as openings for
 a new session, disabled with an explanation when the repository's agent is not found on this machine.
 
@@ -153,6 +161,17 @@ not required for implementing, such as a design.
 - **WHEN** a Draft session is still running, the change has moved to `Ready`, and its Console tab is open
 - **THEN** the tab offers **Implement**, saying it sends the prompt to this session, and activating it types that prompt
   into the terminal without asking the user for another key press
+
+#### Scenario: Proposal finished, Implement next
+- **WHEN** the Draft session of `rotate-keys` runs on `docs/rotate-keys`, its proposal is pushed, the change has moved to
+  `Ready`, and its Console tab is open
+- **THEN** the split button shows **Implement**, described as ending the proposal session and starting Implement;
+  activating it asks nothing, ends that session, starts Implement on `feat/rotate-keys` and shows it in the tab
+
+#### Scenario: Proposal not pushed yet
+- **WHEN** the same holds but the `docs-rotate-keys` worktree has uncommitted files
+- **THEN** activating **Implement** first asks for confirmation, saying the proposal is not pushed and its worktree is kept,
+  and cancelling ends nothing
 
 #### Scenario: The prompt was not sent
 - **WHEN** the next step is sent to a session whose agent never shows the typed prompt
@@ -175,8 +194,8 @@ not required for implementing, such as a design.
 - **THEN** its Console tab's main part says it waits for the checks, and its menu offers **Implement**
 
 ### Requirement: The console tab selects among the change's sessions
-A change MAY have more than one session at a time — its own session and the session of its archive worktree run in
-separate worktrees. When it has more than one, the Console tab SHALL list them with their action, branch and live
+A change MAY have more than one session record — at most one of them running (`agent-sessions`: "Session lifecycle and
+control"), the others ended, their output still readable and their worktrees possibly still holding work. When it has more than one, the Console tab SHALL list them with their action, branch and live
 state, most recent first, and show the selected one; with a single session the list MAY be omitted. The most recently
 active session SHALL be selected by default.
 
@@ -185,8 +204,9 @@ selected tab. A URL naming a session the change does not have SHALL fall back to
 error. Typing, default responses and next-step prompts MUST reach only the selected session.
 
 #### Scenario: Two sessions
-- **WHEN** a change has a running Implement session and a running Archive session
-- **THEN** the Console tab lists both with their branch and state and shows the more recently active one
+- **WHEN** a change has an ended Draft session on `docs/rotate-keys` and a running Implement session on `feat/rotate-keys`
+- **THEN** the Console tab lists both with their branch and state, shows the more recently active one, and only the
+  running one offers next steps
 
 #### Scenario: Selection is linkable
 - **WHEN** the user selects the Console tab and its second session and reloads the page
