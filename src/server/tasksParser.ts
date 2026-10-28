@@ -1,8 +1,10 @@
 import type { TaskProgress } from "../shared/types.ts";
 
-// A task line is a CommonMark list item (`-`, `*`, `+`, `1.`, `1)`) followed by a checkbox holding at most one
-// character, with any spacing around it. Mirrors what `openspec` counts for progress, plus this project's `[~]`.
-const TASK_LINE = /^\s*(?:[-*+]|\d+[.)])\s+\[\s*([^\]\s]?)\s*\]/;
+// A task line is exactly what the `openspec` CLI counts (`TASK_LINE_PATTERN`, `dist/utils/task-progress.js`): a list
+// item (`-`, `*`, `+`, or one to nine digits and `.` or `)`), no whitespace required before the bracket, then a box
+// holding at most one character whose `]` is not followed by `(` or `[` — so `- [x](notes.md)` is a link bullet, not a
+// task — or a whitespace-only box, followed by anything. `test/parsers.test.ts` compares the counts with the CLI's.
+const TASK_LINE = /^\s*(?:[-*+]|\d{1,9}[.)])\s*\[(?:\s*([^\]\s]?)\s*\](?![([])|\s+\])/;
 
 /** How many `[~]` tasks' text a scan carries, and how long each may be: the snapshot stays small, `awaiting` stays exact. */
 export const AWAITING_TASKS_LIMIT = 10;

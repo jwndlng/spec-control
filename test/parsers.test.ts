@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { countTasksFromContent } from "../src/server/frameworks/openspec/adapter.ts";
 import { parseStatusV2, parseWorktrees } from "../src/server/git.ts";
 import { parseTaskProgress } from "../src/server/tasksParser.ts";
 import { boardColumns, deriveStage, isComplete, isPlanned, requiredArtifacts } from "../src/shared/columns.ts";
@@ -60,6 +61,51 @@ test("task progress: a file without the awaiting marker counts exactly as before
   expect({ done, total }).toEqual({ done: 3, total: 5 });
   expect(parseTaskProgress(md).awaiting).toBe(0);
   expect("awaitingTasks" in parseTaskProgress(md)).toBe(false);
+});
+
+test("task progress: link bullets are not tasks, as the CLI counts them", () => {
+  const md = ["- [x] a", "- [ ] b", "- [a](./a.md)", "- [x](x.md)", "- [1](#ref) footnote"].join("\n");
+  expect(parseTaskProgress(md)).toEqual({ done: 1, awaiting: 0, total: 2 });
+  expect(countTasksFromContent(md)).toEqual({ completed: 1, total: 2 });
+  // A reference-link bullet and an awaiting-looking link are links too.
+  expect(parseTaskProgress("- [A][ref]\n- [~](./notes.md)")).toEqual({ done: 0, awaiting: 0, total: 0 });
+});
+
+test("task progress: no space is needed after the list marker", () => {
+  expect(parseTaskProgress("-[x] a\n-[ ] b")).toEqual({ done: 1, awaiting: 0, total: 2 });
+  expect(parseTaskProgress("*[~] c")).toEqual({ done: 0, awaiting: 1, awaitingTasks: ["c"], total: 1 });
+});
+
+test("task progress: a whitespace-only box counts wherever it is followed", () => {
+  expect(parseTaskProgress("- [ ](./notes.md) read the notes")).toEqual({ done: 0, awaiting: 0, total: 1 });
+  expect(parseTaskProgress("- [  ][ref] b")).toEqual({ done: 0, awaiting: 0, total: 1 });
+});
+
+test("task progress: ordered markers have at most nine digits", () => {
+  expect(parseTaskProgress("123456789. [x] a\n1234567890. [x] b")).toEqual({ done: 1, awaiting: 0, total: 1 });
+});
+
+// Every file the dashboard and the `openspec` CLI must count alike (change-scanner: "Counts agree with the CLI").
+const CLI_CORPUS: Record<string, string> = {
+  plain: "## 1. Setup\n- [x] 1.1 a\n- [ ] 1.2 b\n* [X] c\n+ [ ] d\n1. [x] e\n2) [ ] f\nprose",
+  links: "- [x] a\n- [ ] b\n- [a](./a.md)\n- [x](x.md)\n- [1](#ref) footnote\n- [Design](./design.md)",
+  references: "- [A][a]\n- [x][b] done?\n- [ ][c] open\n\n[a]: https://example.com",
+  noSpace: "-[x] a\n-[ ] b\n1.[x] c\n2)[ ] d",
+  whitespaceBox: "- [ ](x)\n- [ ][y]\n- [   ] z\n- [] empty\n- []( ) link-ish",
+  spacing: "- [ x] a\n- [x ] b\n- [ X ] c\n- [-] d\n- [?] e\n- [WIP] f\n- [x]done",
+  ordered: "1) [x] a\n123456789. [ ] b\n1234567890. [x] c\n0. [x] d",
+  crlf: "- [x] a\r\n- [ ] b\r\n- [x](x.md)\r\n",
+  nested: "- [x] 1.1\n  - [ ] 1.1.1\n    * [x] 1.1.1.1\n\t+ [ ] tabbed",
+  fenced: "```md\n- [x] example\n- [ ] example\n```\n- [ ] real",
+  notTasks: "[x] no marker\n- not a task\n-- [x] double\n- x] half\n- [x",
+};
+
+test("task progress: counts agree with the CLI for every file without `[~]`", () => {
+  for (const [name, md] of Object.entries(CLI_CORPUS)) {
+    const { done, total } = parseTaskProgress(md);
+    const cli = countTasksFromContent(md);
+    expect({ name, done, total }).toEqual({ name, done: cli.completed, total: cli.total });
+  }
 });
 
 test("worktree porcelain parsing: main first, detached kept, flags read", () => {
@@ -221,6 +267,12 @@ test("column derivation: a task awaiting validation settles the change into Done
   // Only `done` carries a sub-state.
   expect(stage(specDriven(...ALL), { done: 3, awaiting: 3, total: 3 }, { archived: true }).subState).toBeUndefined();
   expect(stage(specDriven(...ALL), { done: 0, awaiting: 0, total: 12 }).subState).toBeUndefined();
+});
+
+test("column derivation: settled tasks decide Done and Implementing (kanban-board scenarios)", () => {
+  expect(stage(scanned(...ALL), { done: 13, awaiting: 2, total: 15 })).toEqual({ stage: "done", column: "Done", subState: "validate" });
+  expect(stage(scanned(...ALL), { done: 0, awaiting: 1, total: 4 })).toEqual({ stage: "implementing", column: "Implementing" });
+  expect(stage(scanned(...ALL), { done: 0, awaiting: 3, total: 3 })).toEqual({ stage: "done", column: "Done", subState: "validate" });
 });
 
 test("column derivation: a snapshot cached without `awaiting` derives exactly what it derived before", () => {

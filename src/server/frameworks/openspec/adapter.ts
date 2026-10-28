@@ -19,6 +19,9 @@ import {
 import { isSpecsArtifactPath } from "@openspec-core/artifact-graph/outputs.js";
 // Pure string parsers (no file or module-path access), so they are safe inside the compiled binary.
 export { extractRequirementsSection, normalizeRequirementName, parseDeltaSpec } from "@openspec-core/parsers/requirement-blocks.js";
+// The CLI's own task counting, for the test that keeps `tasksParser.ts` counting what `openspec status` counts. Importing
+// it only defines functions; the scanner never calls it.
+export { countTasksFromContent } from "../../../../node_modules/@fission-ai/openspec/dist/utils/task-progress.js";
 import specDrivenYaml from "../../../../node_modules/@fission-ai/openspec/schemas/spec-driven/schema.yaml" with { type: "text" };
 import { existsSync } from "node:fs";
 import { join } from "node:path";
