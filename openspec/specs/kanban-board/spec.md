@@ -6,7 +6,7 @@ Defines the Kanban board UI: how changes map to columns, what cards display, fil
 ## Requirements
 
 ### Requirement: Board columns follow the lifecycle phases
-The board SHALL place each change in exactly one column, where a column names the phase of the lifecycle the change is in. Using, in order: `Archived` if the change is archived; `Done` if `tasks.total > 0` and `tasks.done == tasks.total`, whether or not the change's delta specs are already synced into the main specs; `Implementing` if `tasks.done > 0`; `Ready` if every **required** artifact is done (ready to apply, nothing ticked yet); `Unknown` if the change's artifacts could not be read; `Backlog` if no artifact is done; otherwise `Drafts` (at least one artifact is done and at least one required artifact is not). An artifact is required when the change's schema names it in `apply.requires` — the artifacts OpenSpec needs before implementation starts; for `spec-driven` that is `tasks` alone, so `design` (and likewise `proposal` and `specs`) never holds a change back from `Ready`. When a schema declares no `apply.requires`, every artifact of it is required. When the change's artifact statuses do not say which artifacts are required — a snapshot recorded before they did — every artifact SHALL count as required. Which artifacts are done, and in which order they were written, SHALL NOT matter beyond that, and the board SHALL NOT name any artifact itself: every schema is placed by its own `apply.requires`.
+The board SHALL place each change in exactly one column, where a column names the phase of the lifecycle the change is in. Using, in order: `Archived` if the change is archived; `Done` if `tasks.total > 0` and every task is **settled** — `tasks.done + tasks.awaiting == tasks.total`, a task awaiting validation (`[~]`) counting as settled because the agent is finished with it — whether or not the change's delta specs are already synced into the main specs, with the sub-state `validate` while `tasks.awaiting > 0` and `complete` otherwise; `Implementing` if at least one task is settled (`tasks.done + tasks.awaiting > 0`); `Ready` if every **required** artifact is done (ready to apply, nothing ticked yet); `Unknown` if the change's artifacts could not be read; `Backlog` if no artifact is done; otherwise `Drafts` (at least one artifact is done and at least one required artifact is not). An artifact is required when the change's schema names it in `apply.requires` — the artifacts OpenSpec needs before implementation starts; for `spec-driven` that is `tasks` alone, so `design` (and likewise `proposal` and `specs`) never holds a change back from `Ready`. When a schema declares no `apply.requires`, every artifact of it is required. When the change's artifact statuses do not say which artifacts are required — a snapshot recorded before they did — every artifact SHALL count as required. Which artifacts are done, and in which order they were written, SHALL NOT matter beyond that, and the board SHALL NOT name any artifact itself: every schema is placed by its own `apply.requires`.
 
 The board SHALL show the columns `Backlog`, `Drafts`, `Ready`, `Implementing`, `Done`, `Archived`, in that order, on the combined board and on every repository board, whether or not a column holds a change; `Unknown` SHALL be shown between `Drafts` and `Ready` only while at least one change on that board is in it. Columns MUST NOT depend on the schemas the tracked changes use: there SHALL be no column per artifact and no `Synced` column.
 
@@ -41,6 +41,18 @@ The board SHALL show the columns `Backlog`, `Drafts`, `Ready`, `Implementing`, `
 #### Scenario: Tasks ticked while an artifact is still open
 - **WHEN** `design` is not done and `tasks` is `done: 2, total: 12`
 - **THEN** it appears in `Implementing`
+
+#### Scenario: Every task settled, some awaiting validation
+- **WHEN** a change is not archived and `tasks` is `done: 13, awaiting: 2, total: 15`
+- **THEN** it appears in `Done` with the sub-state `validate`, not in `Implementing`
+
+#### Scenario: Only awaiting tasks
+- **WHEN** a change is not archived and `tasks` is `done: 0, awaiting: 1, total: 4`
+- **THEN** it appears in `Implementing`, not in `Ready`
+
+#### Scenario: Every task awaiting validation
+- **WHEN** a change is not archived and `tasks` is `done: 0, awaiting: 3, total: 3`
+- **THEN** it appears in `Done` with the sub-state `validate`
 
 #### Scenario: Complete but not synced
 - **WHEN** `tasks` is `done: 12, total: 12`, the change is not archived, and its delta specs are not yet reflected in the main specs
