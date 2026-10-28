@@ -1814,17 +1814,43 @@ When a profile's command holds `{prompt}` inside a longer argument, such as `--p
 - **WHEN** a profile's command is `agy`, `--prompt-interactive={prompt}` and its Implement prompt for `rotate-keys` contains `cost is $& and $'`
 - **THEN** the agent is started with the argument `--prompt-interactive=` followed by the prompt containing `cost is $& and $'` unchanged
 
-### Requirement: Stopping the dashboard waits until every agent has ended
-When the dashboard is stopped while agent sessions run, it SHALL send every running agent the hang-up, wait for each agent's process to exit for at most a grace period of two seconds, send a forced kill (`SIGKILL`) to every agent still running after it, and wait for those to exit for at most one more second, before it records the sessions as ended because the dashboard was stopped and before the dashboard's own process exits. It MUST NOT exit while an agent it started could still be running without having sent that agent the forced kill. An agent that is still running after the forced kill and the second wait SHALL be reported on standard error with its process id. The whole wait SHALL be bounded so that the desktop app's stop, which waits ten seconds before it kills the server, is never reached because of it.
+### Requirement: The end-session dialog stays until its confirmation has finished
+While the end-session dialog carries out a confirmation — ending the session, removing its worktree, cleaning up
+leftovers or pulling — Escape SHALL do nothing and **Cancel** SHALL be disabled, so that the dialog cannot be closed
+while work it started is still running and its report is never lost. Escape SHALL close only the end-session dialog,
+never a view behind it such as the change detail view. A confirmation SHALL report only into the dialog of the session
+it was started for: when that dialog is no longer the open one, its outcome SHALL NOT change, report into or close the
+dialog now open for another session.
 
-#### Scenario: An agent that ignores the hang-up
-- **WHEN** a session for `rotate-keys` runs an agent that ignores `SIGHUP` and the dashboard receives `SIGTERM`
-- **THEN** the agent is sent `SIGKILL` about two seconds later, its process no longer exists when the dashboard exits, and the session is recorded as ended because the dashboard was stopped
+#### Scenario: Escape while the end runs
+- **WHEN** the user confirms ending a session with **Pull** selected and presses Escape while the pull runs
+- **THEN** the dialog stays open, and when the pull is refused over change leftovers it shows that report with
+  **Resolve and pull**
 
-#### Scenario: Resume after a stop
-- **WHEN** the dashboard was stopped while that session ran, is started again and the user presses Resume
-- **THEN** exactly one agent runs in the session's worktree
+#### Scenario: Cancel while busy
+- **WHEN** a confirmation is in progress
+- **THEN** Cancel is disabled and nothing closes the dialog until the confirmation has finished
 
-#### Scenario: Agents that exit at once
-- **WHEN** every running agent exits on the hang-up
-- **THEN** the dashboard exits as soon as they have, without waiting out the grace period
+#### Scenario: Escape over the change detail view
+- **WHEN** the end-session dialog is open over the change detail view of `rotate-keys` and the user presses Escape
+  before confirming
+- **THEN** the dialog closes, nothing is ended, and the change detail view stays open
+
+#### Scenario: Another session's dialog
+- **WHEN** a confirmation for the session of `rotate-keys` is still running and the end-session dialog of the session of
+  `add-login` is opened
+- **THEN** the outcome of the `rotate-keys` confirmation neither appears in nor closes the `add-login` dialog
+
+### Requirement: A session panel action is sent once per activation
+While one of the session panel's header actions — **Ship**, **Resolve conflicts**, **Merge**, **Resume** or **Delete
+record** — is in flight, all of them SHALL be disabled, and a further activation SHALL send no request, so that a
+double-click sends one request. The panel SHALL enable them again once the request has finished, whether it succeeded
+or failed. This is independent of the server refusing a second concurrent start of the same session.
+
+#### Scenario: Double-click on Ship
+- **WHEN** the user double-clicks **Ship** on an ended session of `rotate-keys`
+- **THEN** one Ship request is sent and one agent is started in its worktree
+
+#### Scenario: Failed request
+- **WHEN** a Resume request fails
+- **THEN** the panel shows the error and its actions are enabled again
