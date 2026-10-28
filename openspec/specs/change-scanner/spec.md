@@ -6,7 +6,7 @@ Defines how the scanner polls tracked repositories and derives each change's art
 ## Requirements
 
 ### Requirement: Scanner polls enabled repositories on an interval
-The scanner SHALL scan every enabled repository each `pollIntervalSeconds` (default 60) and on explicit trigger. Repositories MUST be scanned concurrently with a bounded concurrency (default 4) and a per-repository timeout. If a scan is already in flight, a trigger MUST NOT start a second concurrent full scan.
+The scanner SHALL scan every enabled repository each `pollIntervalSeconds` (default 60) and on explicit trigger. Repositories MUST be scanned concurrently with a bounded concurrency (default 4) and a per-repository timeout. If a scan is already in flight, a trigger MUST NOT start a second concurrent full scan; instead it SHALL queue exactly one follow-up scan, which starts once the running scan has finished and reads the configuration and the repositories afresh, so that whatever was written before the trigger is in the snapshot it produces. Any number of triggers while a scan is in flight SHALL queue that one follow-up and no more, and at most one scan SHALL run at any time.
 
 #### Scenario: Periodic scan
 - **WHEN** the dashboard is running with `pollIntervalSeconds: 60`
@@ -14,7 +14,15 @@ The scanner SHALL scan every enabled repository each `pollIntervalSeconds` (defa
 
 #### Scenario: Trigger while in flight
 - **WHEN** a scan is running and `POST /api/scan` is called
-- **THEN** the response is `{ started: false }` and no second scan starts
+- **THEN** the response is `{ started: false }`, no second scan starts while the first runs, and one follow-up scan starts once it has finished
+
+#### Scenario: A repository enabled during a scan
+- **WHEN** a scan of `demo-ops` is in flight with `pollIntervalSeconds: 3600` and the user enables `beta-soc`
+- **THEN** once the follow-up scan has finished the snapshot holds both `demo-ops` and `beta-soc`, without waiting for the next poll
+
+#### Scenario: Many triggers, one follow-up
+- **WHEN** three changes are created in `demo-ops` while one scan is in flight
+- **THEN** exactly one follow-up scan runs after it and its snapshot holds all three changes
 
 ### Requirement: Artifact status is computed with the OpenSpec library
 For every change directory under `openspec/changes/` (excluding `archive/`) and under `openspec/changes/archive/`, the scanner SHALL compute artifact statuses using `@fission-ai/openspec` (`resolveSchema`, `loadChangeContext`, `formatChangeStatus`) in-process. The scanner MUST NOT invoke the `openspec` CLI. Artifacts MUST be reported in schema order with status `done`, `ready` or `blocked`. Each artifact SHALL also be reported as **required** when the change's schema names it in `apply.requires`; when the schema declares no `apply.requires`, every artifact SHALL be reported as required. Being required SHALL NOT change an artifact's status: `done`, `ready` and `blocked` keep their meaning, and an artifact that is not required is still `ready` or `blocked` until it is written.
