@@ -4,7 +4,7 @@
 // All of it is invented, like the rest of the sample (see sampleData.ts): every repository, change, branch and path
 // comes from the sample, and terminal output comes from the hand-written transcripts.
 import { blockedReason } from "../../shared/dependencies.ts";
-import { availableActions, isChangeless, isConsole, isIntegration, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type Session, type SessionAction, type AutoMergePromptResult, type PromptResult, type SessionWorktree, type ShipResult, SHIPPABLE_WORK, type StartResult, type Snapshot, type WorkStatus, type Worktree } from "../../shared/types.ts";
+import { availableActions, DEFAULT_EDITOR, isChangeless, isConsole, isIntegration, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type Session, type SessionAction, type AutoMergePromptResult, type PromptResult, type SessionWorktree, type ShipResult, SHIPPABLE_WORK, type StartResult, type Snapshot, type WorkStatus, type Worktree } from "../../shared/types.ts";
 import { sessionBranch } from "../../shared/sessionBranch.ts";
 import { ApiError, type TerminalConnection, type TerminalHandlers } from "../api.ts";
 import { DEMO_AGENT, DEMO_ROOT } from "./sampleData.ts";
@@ -293,6 +293,8 @@ export function createDemoSessions({ now, getConfig, getSnapshot, integratable, 
         // The demo looks at no machine, so it claims no preset as found: Settings offers them unmarked.
         presets: [],
         worktrees: enabled ? worktrees() : [],
+        // Reported as found so Open in editor is visible and enabled; pressing it says the demo opens no editor.
+        editor: { command: [...DEFAULT_EDITOR], found: true },
       };
     },
 

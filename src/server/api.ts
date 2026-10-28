@@ -523,6 +523,7 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
           agents: sessions.agents(),
           presets: sessions.presets(),
           worktrees: await sessions.worktrees(),
+          editor: sessions.editor(),
           ...(state.keepAwake ? { keepAwake: state.keepAwake.status() } : {}),
         });
       }
@@ -548,6 +549,7 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
       return json(await sessions.worktreeStatus(id));
     } else if (req.method === "POST") {
       if (sub === "resume") return json(await sessions.resume(id));
+      if (sub === "editor") return json(await sessions.openEditor(id));
       if (sub === "ship") return json(await sessions.ship(id));
       if (sub === "resolve-conflicts") return json(await sessions.resolveConflicts(id, await cachedPullRequests(state, sessions.get(id).repoId)));
       if (sub === "merge") return json(await sessions.merge(id, lastGoodPullRequests(state, sessions.get(id))));
@@ -1174,6 +1176,17 @@ async function postWorktreeRemove(state: AppState, req: Request): Promise<Respon
   }
 }
 
+/** Open in editor for a session worktree (editor-launch): the browser names it, the server's list gives the folder. */
+async function postWorktreeEditor(state: AppState, req: Request): Promise<Response> {
+  if (!state.sessions) return json({ error: "agent sessions are not available" }, 403);
+  try {
+    return json(await state.sessions.openWorktreeEditor(await readJson(req)));
+  } catch (err) {
+    if (err instanceof SessionError) return json({ error: err.message }, err.status);
+    throw err;
+  }
+}
+
 /** What `GET /api/update` answers: the last check's outcome, without a request. Off where no checker runs. */
 function updateStatus(state: AppState): UpdateStatus {
   return state.updateChecker?.status() ?? { enabled: false, current: VERSION, outcome: "never", available: false };
@@ -1291,6 +1304,7 @@ export function createFetchHandler({ state, indexHtml }: AppOptions): (req: Requ
       const artifactMatch = req.method === "GET" ? ARTIFACT_ROUTE.exec(pathname) : null;
       if (artifactMatch) return artifactRoutes(state, url, artifactMatch);
       if (req.method === "POST" && pathname === "/api/worktrees/remove") return postWorktreeRemove(state, req);
+      if (req.method === "POST" && pathname === "/api/worktrees/editor") return postWorktreeEditor(state, req);
       if (req.method === "GET" && pathname === "/api/state") return json(state.autoFetcher?.withOutcomes(state.scanner.snapshot) ?? state.scanner.snapshot);
       // Read-only and local (openspec/specs/environment-check): no network, nothing in a tracked repository.
       // `force` is what **Re-check** sends: the user just changed the machine, which no cache key can see.

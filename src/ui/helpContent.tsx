@@ -170,6 +170,16 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             its own permission prompts.
           </li>
           <li>
+            <strong>Open in editor</strong>, beside <strong>Copy cd</strong> in the Console tab and in Open work, opens the
+            folder the change's agent works in — its worktree, or the project folder for a session without one — in your
+            editor. It runs VS Code's <code>code</code> unless you set another <strong>Editor command</strong> under{" "}
+            <AppLink path="/settings" query="?section=agents">Settings → Agent sessions</AppLink>, one argument per line,
+            with <code>{"{path}"}</code> where the folder goes (otherwise it is added last) — for example{" "}
+            <code>zed</code>, or <code>open</code>, <code>-a</code>, <code>Visual Studio Code</code>,{" "}
+            <code>{"{path}"}</code>. If <code>code</code> is not found, run <strong>Shell Command: Install 'code' command in
+            PATH</strong> from VS Code's command palette. The editor is yours: the dashboard only starts it.
+          </li>
+          <li>
             <strong>Ship</strong> asks the agent to commit, push and open a pull request, and to record the branch it pushes
             in the change's <code>.openspec.yaml</code>, under <code>spec-control:</code>, in the same commit;{" "}
             <strong>Resolve conflicts</strong> asks it to bring a branch that no longer merges up to date. The dashboard
