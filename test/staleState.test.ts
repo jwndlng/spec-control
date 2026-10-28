@@ -17,6 +17,7 @@ import {
   staleReason,
   staleRequest,
 } from "../src/ui/staleState.ts";
+import { outsideNote } from "../src/ui/staleCleanup.tsx";
 import { byTag, textOf } from "./vnode.ts";
 
 const NOW = Date.parse("2026-10-22T12:00:00Z");
@@ -139,10 +140,15 @@ test("ending the archive session after the merge offers the cleanup, selected, w
   expect(endCleanupOffer(preview([archiveWorktree(), wtLeftover()]), ending)).toEqual({ offered: true, preselected: true });
 });
 
-test("a source file outside the change is offered but not selected", () => {
-  expect(endCleanupOffer(preview([archiveWorktree({ uncommitted: ["src/keys.ts"], outside: ["src/keys.ts"] })]), ending)).toEqual({ offered: true, preselected: false });
+test("a source file outside the change is offered and still selected, and named in one line", () => {
+  expect(endCleanupOffer(preview([archiveWorktree({ uncommitted: ["src/keys.ts"], outside: ["src/keys.ts"] })]), ending)).toEqual({ offered: true, preselected: true });
   // Another leftover's file outside the change counts too: the one confirmation removes it as well.
-  expect(endCleanupOffer(preview([archiveWorktree(), wtLeftover({ outside: ["src/keys.ts"] })]), ending)).toEqual({ offered: true, preselected: false });
+  expect(endCleanupOffer(preview([archiveWorktree(), wtLeftover({ outside: ["src/keys.ts"] })]), ending)).toEqual({ offered: true, preselected: true });
+  expect(outsideNote([archiveWorktree({ outside: ["src/keys.ts"] })])).toBe("Also deletes src/keys.ts — outside the change, copied first");
+  const five = ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts"];
+  expect(outsideNote([archiveWorktree({ outside: five.slice(0, 3) }), wtLeftover({ outside: five.slice(2) })])).toBe(
+    "Also deletes src/a.ts, src/b.ts, src/c.ts and 2 more — outside the change, copied first",
+  );
 });
 
 test("with the pull request still open nothing is offered and the dialog says the worktree will be marked stale", () => {

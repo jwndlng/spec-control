@@ -3,6 +3,7 @@
 // where the user can bring the repository's main checkout up to date with work that landed. For a change that is
 // archived and merged it offers the stale cleanup in place of the plain removal (agent-sessions: "Ending a session
 // cleans up a stale change's leftovers").
+import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { PullResult, StaleCleanupPreview, StaleCleanupResult, WorkStatus } from "../shared/types.ts";
 import { api } from "./api.ts";
@@ -11,7 +12,7 @@ import { pullNeedsReport, pullOutcome } from "./pullState.ts";
 import { inPlaceLeftover } from "./inPlaceText.ts";
 import { endConfirmable, endSeverity, endWarning, pullOffer, removalPreselected, reportShip, worktreeRemovalPossible } from "./sessionState.ts";
 import { useSessionUi } from "./sessions.tsx";
-import { StaleCleanupOutcome, StaleLeftoverList } from "./staleCleanup.tsx";
+import { outsideNote, StaleCleanupOutcome, StaleLeftoverList } from "./staleCleanup.tsx";
 import { cleanupNeedsReport, endCleanupOffer, keptUntilStale, outsidePaths, staleRequest } from "./staleState.ts";
 
 interface Status {
@@ -25,6 +26,25 @@ interface Report {
   result?: PullResult;
   cleanup?: StaleCleanupResult;
   worktreeRemoved: boolean;
+}
+
+/**
+ * One option: a short label, with what it does as the label's hover text and, for assistive technology, as a
+ * visually hidden description outside the label so it is not read again as part of the name.
+ */
+function Option({ id, label, description, checked, onChange }: { id: string; label: ComponentChildren; description: string; checked: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <>
+      <label class="check" title={description}>
+        <input type="checkbox" checked={checked} aria-describedby={id} onChange={(e) => onChange(e.currentTarget.checked)} />
+        {/* One flex item: `.check` is a flex row, and a repository name would otherwise become a column of its own. */}
+        <span>{label}</span>
+      </label>
+      <span id={id} class="visually-hidden">
+        {description}
+      </span>
+    </>
+  );
 }
 
 export function EndSessionDialog() {
@@ -174,7 +194,7 @@ export function EndSessionDialog() {
           </strong>
           <div id="end-body" class="dialog-body">
             {report.cleanup && <StaleCleanupOutcome result={report.cleanup} />}
-            <div class="hint">The session for <span class="mono">{session.change}</span> has ended.</div>
+            <div class="hint">Session ended{report.worktreeRemoved ? ", worktree removed" : ""}.</div>
           </div>
           <div class="row">
             <span style={{ flex: 1 }} />
@@ -211,12 +231,7 @@ export function EndSessionDialog() {
             {(result.blocking !== undefined || result.resolved !== undefined) && (
               <PullBlockedList result={result} running={live === "running"} onResolve={(claim) => void pulls.resolve(session.repoId, claim)} />
             )}
-            <div class="hint">
-              The session for <span class="mono">{session.change}</span> has ended{report.worktreeRemoved ? " and its worktree was removed" : ""}.{" "}
-              {updated
-                ? "Archives, specs and progress shown for this repository now come from the updated checkout."
-                : "Archives, specs and progress shown for this repository still come from the checkout as it is, so they may be outdated; you can pull again from the board header."}
-            </div>
+            <div class="hint">Session ended{report.worktreeRemoved ? ", worktree removed" : ""}.</div>
           </div>
           <div class="row">
             <span style={{ flex: 1 }} />
@@ -233,10 +248,17 @@ export function EndSessionDialog() {
     <div class="overlay end-overlay">
       <div class="dialog end-dialog" role="alertdialog" aria-modal="true" aria-labelledby="end-title" aria-describedby="end-body">
         <strong id="end-title">
-          {running ? "End the session for " : "Clean up the session for "}
-          <span class="mono">{session.change}</span>?
+          {running ? "End session" : "Clean up"} · <span class="mono">{session.change}</span>
         </strong>
         <div id="end-body" class="dialog-body">
+          {!hasWorktree ? (
+            <div class="hint">
+              The agent's changes stay in <span class="mono">{session.worktreePath}</span>
+              {inPlaceLeftover(repo?.isGit)}
+            </div>
+          ) : (
+            (cleanupOffer.offered || status?.removable || offer.offered) && <div class="hint">Tidy up after the session — choose what to do:</div>
+          )}
           {(stalePending || !status) && hasWorktree && <div class="hint">Checking the worktree…</div>}
           {warning && !cleanupOffer.offered && (
             <div class={`notice ${severity === "danger" ? "danger" : "warn"}`}>
@@ -244,57 +266,48 @@ export function EndSessionDialog() {
               {warning}
             </div>
           )}
-          {!hasWorktree ? (
-            <div class="hint">
-              {running && `${session.agentName} is stopped, as if you closed its terminal window. `}
-              Whatever the agent changed stays in <span class="mono">{session.worktreePath}</span>
-              {inPlaceLeftover(repo?.isGit)}
-            </div>
-          ) : cleanupOffer.offered ? (
-            <div class="hint">
-              {running && `${session.agentName} is stopped, as if you closed its terminal window. `}
-              The change is archived and merged on the default branch, so what is left of it below is no longer needed on its branches.
-            </div>
-          ) : (
-            <div class="hint">
-              {running && `${session.agentName} is stopped, as if you closed its terminal window. `}
-              The worktree and its branch <span class="mono">{session.branch}</span> are kept{status?.removable ? " unless you remove the worktree below" : ""}; its work stays on the change's card until
-              it is merged.
-            </div>
-          )}
           {cleanupOffer.offered && (
             <>
-              <label class="check">
-                <input type="checkbox" checked={cleanupSelected} onChange={(e) => setCleanupChoice(e.currentTarget.checked)} />
-                <span>
-                  also clean up the leftovers of <span class="mono">{session.change}</span>
-                  {outside.length > 0 && <> — including uncommitted files outside the change, deleted after a copy is kept</>}
-                </span>
-              </label>
-              <StaleLeftoverList leftovers={leftovers} kept={stale?.stale?.kept ?? []} />
+              <Option
+                id="end-cleanup-desc"
+                label="Clean up leftovers"
+                description="The change is archived and merged on the default branch, so the worktrees and branches listed below are no longer needed. Uncommitted files are copied under the dashboard's home first; ignored files (dependencies, build output, local environment files) are deleted without a copy. Remote branches are never touched."
+                checked={cleanupSelected}
+                onChange={setCleanupChoice}
+              />
+              {outside.length > 0 && <div class="hint">{outsideNote(leftovers)}</div>}
+              <StaleLeftoverList leftovers={leftovers} kept={stale?.stale?.kept ?? []} compact />
             </>
           )}
           {hasWorktree &&
             !cleanupOffer.offered &&
             (status?.removable ? (
-              <label class="check">
-                <input type="checkbox" checked={remove} onChange={(e) => setRemove(e.currentTarget.checked)} /> also remove the worktree (clean, and its work is merged or exists elsewhere)
-              </label>
+              <Option
+                id="end-remove-desc"
+                label="Remove worktree"
+                description={`Removes ${session.worktreePath}: it is clean, and its work is merged or exists elsewhere.${session.branch ? ` The branch ${session.branch} is kept.` : ""}`}
+                checked={remove}
+                onChange={setRemove}
+              />
             ) : (
               status?.reason && (
                 <div class="hint">
-                  The worktree cannot be removed: {status.reason}. {keptUntilStale}
+                  Worktree kept: {status.reason}. {keptUntilStale}
                 </div>
               )
             ))}
           {offer.offered && (
-            <label class="check" title="Fetches the repository's remote and fast-forwards its main checkout. Never merges, rebases, stashes or switches branches; off the default branch it only fetches.">
-              <input type="checkbox" checked={pullSelected} onChange={(e) => setPullChoice(e.currentTarget.checked)} />
-              {/* One flex item: `.check` is a flex row, and the repository name would otherwise become a column of its own. */}
-              <span>
-                also pull <span class="mono">{repo?.name}</span> (fast-forwards its main checkout, so the board does not keep showing this change as unmerged)
-              </span>
-            </label>
+            <Option
+              id="end-pull-desc"
+              label={
+                <>
+                  Pull <span class="mono">{repo?.name}</span>
+                </>
+              }
+              description="Fetches the repository's remote and fast-forwards its main checkout, so the board does not keep showing this change as unmerged. Never merges, rebases, stashes or switches branches; off the default branch it only fetches."
+              checked={pullSelected}
+              onChange={setPullChoice}
+            />
           )}
           {error && <div class="notice danger">{error}</div>}
         </div>
@@ -320,7 +333,13 @@ export function EndSessionDialog() {
               ⇪ Ship instead
             </button>
           )}
-          <button type="button" class={`btn sm ${severity === "danger" ? "danger" : "primary"}`} disabled={!endConfirmable(session, status, busy) || stalePending} onClick={() => void confirm()}>
+          <button
+            type="button"
+            class={`btn sm ${severity === "danger" ? "danger" : "primary"}`}
+            title={running ? `Stops ${session.agentName}, as if you closed its terminal window` : undefined}
+            disabled={!endConfirmable(session, status, busy) || stalePending}
+            onClick={() => void confirm()}
+          >
             {pulling ? "Pulling…" : severity === "danger" ? "End anyway" : running ? "End session" : "Done"}
           </button>
         </div>

@@ -158,7 +158,7 @@ export function cleanupNeedsReport(result: StaleCleanupResult): boolean {
 export interface EndCleanupOffer {
   /** The session's worktree is a stale leftover once the session has ended: Clean up leftovers replaces the plain removal. */
   offered: boolean;
-  /** Only when every listed uncommitted path lies inside the change's own directories. */
+  /** Whenever it is offered: files outside the change are named beside it and copied before anything is deleted. */
   preselected: boolean;
 }
 
@@ -166,8 +166,8 @@ export interface EndCleanupOffer {
 export function endCleanupOffer(preview: StaleCleanupPreview | undefined, session: { branch?: string; worktreePath: string }): EndCleanupOffer {
   const leftovers = preview?.stale?.leftovers ?? [];
   const own = leftovers.some((l) => l.kind === "worktree" && ((session.branch !== undefined && l.branch === session.branch) || l.path === session.worktreePath));
-  return own ? { offered: true, preselected: !needsAcknowledgement(leftovers) } : { offered: false, preselected: false };
+  return own ? { offered: true, preselected: true } : { offered: false, preselected: false };
 }
 
 /** Said when a session's worktree is kept because it cannot be removed and its change is not stale yet. */
-export const keptUntilStale = "It is kept, and will be marked stale, with Clean up leftovers… on the board, once the change is archived and merged on the default branch.";
+export const keptUntilStale = "It will be marked stale, with Clean up leftovers… on the board, once the change is archived and merged.";
