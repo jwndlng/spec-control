@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { newRepoConfig } from "../src/server/config.ts";
+import { newRepoConfig, repoId } from "../src/server/config.ts";
 import { DEFAULT_MAX_DEPTH, discoverRepos, findSpecProjects, toCandidates, toIntegratable } from "../src/server/discover.ts";
 import { normalizeRemote } from "../src/server/git.ts";
 import { tempDir } from "./helpers.ts";
@@ -74,6 +74,16 @@ test("candidates exclude configured repos (enabled or not) and are untracked, so
   const candidates = toCandidates([enabled, disabled], ["/w/zeta", "/w/alpha", "/w/beta", "/w/gamma"]);
   expect(candidates).toEqual([newRepoConfig("/w/gamma", false), newRepoConfig("/w/zeta", false)]);
   expect(candidates[0]).toMatchObject({ name: "gamma", enabled: false });
+});
+
+test("a candidate whose path's id a configured repository holds is reported with the id Enable then stores", () => {
+  // /w/acme/Tools kept the id of its former spelling after a rename; a new folder now has that spelling.
+  const tools = { ...newRepoConfig("/w/acme/tools", true), id: repoId("/w/acme/Tools") };
+  const [candidate] = toCandidates([tools], ["/w/acme/Tools"]);
+  expect(candidate.id).not.toBe(tools.id);
+  expect(candidate).toEqual(newRepoConfig("/w/acme/Tools", false, [tools.id]));
+  expect(toIntegratable([tools], ["/w/acme/Tools"])[0].id).toBe(candidate.id);
+  expect(toCandidates([], ["/w/acme/Tools"])[0].id).toBe(repoId("/w/acme/Tools"));
 });
 
 test("overlapping roots and a trailing slash return each repo once", async () => {
