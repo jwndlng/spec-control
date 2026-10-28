@@ -1,6 +1,6 @@
 // CLI entry point: `spec-control [--port N] [--no-open] [--version]`.
 import indexHtmlAsset from "../../dist/ui/index.html" with { type: "text" };
-import { createFetchHandler, createWebSocketHandlers, startingFetchHandler, type AppState, type TerminalSocketData } from "./api.ts";
+import { createFetchHandler, createWebSocketHandlers, escapedErrorResponse, startingFetchHandler, type AppState, type TerminalSocketData } from "./api.ts";
 import { diffSnapshots, sessionEvent } from "./activity/events.ts";
 import { ActivityLog } from "./activity/log.ts";
 import { AutoFetcher } from "./autoFetch.ts";
@@ -78,6 +78,8 @@ async function main(): Promise<void> {
     port: args.port ?? (await configuredPort(await homeBeforeMigration())),
     fetch: startingFetchHandler,
     websocket: { message() {} },
+    // A last resort for anything thrown outside the fetch handler's own mapping: never Bun's error page or a stack.
+    error: escapedErrorResponse,
   });
   for (const line of describeOutcome(await startHomeMigration())) console.log(line);
 
@@ -140,6 +142,7 @@ async function main(): Promise<void> {
 
   server.reload({
     fetch: createFetchHandler({ state, indexHtml }),
+    error: escapedErrorResponse,
     websocket: createWebSocketHandlers(state) as unknown as Bun.WebSocketHandler<TerminalSocketData>,
   });
   const url = `http://127.0.0.1:${server.port}`;
