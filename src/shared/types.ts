@@ -387,6 +387,12 @@ export interface RepoSnapshot {
   /** Absent for non-git repositories and in snapshots cached by older versions. */
   workInProgress?: WorkInProgress;
   /**
+   * Linked worktrees with an `openspec/changes` directory this scan did not read — left out by the limit, or failed or
+   * timed out — as the paths their changes' `checkout.path` carries. Omitted when every one was read (and in snapshots
+   * cached by older versions, read as none). Only the activity diff uses it; the board does not.
+   */
+  unreadWorktrees?: string[];
+  /**
    * Latest change to anything under `openspec/`: the last commit touching it, or the mtime of a file
    * git reports as modified/untracked there, whichever is newer. Absent in snapshots cached by older versions.
    */

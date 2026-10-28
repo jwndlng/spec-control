@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-28-accurate-activity-events",
+    date: "2026-10-28",
+    title: "Accurate activity for reused names and skipped worktrees",
+    summary:
+      "A new change that reuses the name of an archived one no longer shows up in the activity feed as moving on every scan, and its own archiving is recorded. A worktree a scan could not read no longer looks like changes removed and created again, and a dependency on a reused name waits for the new change instead of counting the old archive.",
+  },
+  {
     id: "2026-10-28-harden-session-lifecycle",
     date: "2026-10-28",
     title: "Safer agent session starts and ends",

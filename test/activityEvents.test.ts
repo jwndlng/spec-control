@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { diffSnapshots, newEventId } from "../src/server/activity/events.ts";
 import { rederive } from "../src/server/cache.ts";
 import type { ChangeSnapshot, RepoSnapshot, Snapshot } from "../src/shared/types.ts";
@@ -53,6 +53,62 @@ test("created, archived and removed", () => {
 test("nothing changed, nothing recorded", () => {
   const repos = [repo("r1", "demo-ops", [change("a", "Ready", { tasks: { done: 0, total: 3 } }), change("z", "Archived", { archived: "2026-01-01" })])];
   expect(diff(snap(T0, repos), snap(T0 + MIN, structuredClone(repos)))).toEqual([]);
+});
+
+test("an active change beside an old archive of its name is compared with itself only", () => {
+  const repos = [repo("r1", "demo-ops", [change("rotate-keys", "Drafts"), change("rotate-keys", "Archived", { archived: "2026-09-01", stage: "archived" })])];
+  expect(diff(snap(T0, repos), snap(T0 + MIN, structuredClone(repos)))).toEqual([]);
+});
+
+test("a reused name is archived again: one archived event from its column, no removed event", () => {
+  const old = change("rotate-keys", "Archived", { archived: "2026-09-01", stage: "archived" });
+  const before = snap(T0, [repo("r1", "demo-ops", [change("rotate-keys", "Done"), old])]);
+  const after = snap(T0 + MIN, [repo("r1", "demo-ops", [change("rotate-keys", "Archived", { archived: "2026-10-28", stage: "archived" }), structuredClone(old)])]);
+  expect(brief(diff(before, after))).toEqual([{ kind: "change-archived", repoName: "demo-ops", change: "rotate-keys", from: "Done" }]);
+});
+
+test("a reused name is created", () => {
+  const old = change("rotate-keys", "Archived", { archived: "2026-09-01", stage: "archived" });
+  const before = snap(T0, [repo("r1", "demo-ops", [old])]);
+  const after = snap(T0 + MIN, [repo("r1", "demo-ops", [change("rotate-keys", "Backlog"), structuredClone(old)])]);
+  expect(brief(diff(before, after))).toEqual([{ kind: "change-created", repoName: "demo-ops", change: "rotate-keys", to: "Backlog" }]);
+});
+
+describe("a worktree left unread is not activity", () => {
+  const wt = "/w/acme/demo-ops-wt/audit-trail";
+  const onWorktree = { path: wt, branch: "feat/audit-trail", isMain: false };
+  const onMain = { path: "/w/acme/demo-ops", branch: "main", isMain: true };
+
+  test("a worktree that times out for one scan: no removed, no created", () => {
+    const read = repo("r1", "demo-ops", [change("audit-trail", "Implementing", { checkout: onWorktree })]);
+    const unread = repo("r1", "demo-ops", [], { unreadWorktrees: [wt] });
+    expect(diff(snap(T0, [read]), snap(T0 + MIN, [unread]))).toEqual([]);
+    expect(diff(snap(T0 + MIN, [unread]), snap(T0 + 2 * MIN, [structuredClone(read)]))).toEqual([]);
+  });
+
+  test("a worktree that falls behind the limit: no move to the main checkout's copy, nor back", () => {
+    const read = repo("r1", "demo-ops", [change("audit-trail", "Implementing", { checkout: onWorktree, otherCheckouts: [{ ...onMain, column: "Ready" }] })]);
+    const unread = repo("r1", "demo-ops", [change("audit-trail", "Ready", { checkout: onMain })], { unreadWorktrees: [wt] });
+    expect(diff(snap(T0, [read]), snap(T0 + MIN, [unread]))).toEqual([]);
+    expect(diff(snap(T0 + MIN, [unread]), snap(T0 + 2 * MIN, [structuredClone(read)]))).toEqual([]);
+  });
+
+  test("a worktree that is gone is not unread: its change is removed", () => {
+    const read = repo("r1", "demo-ops", [change("audit-trail", "Implementing", { checkout: onWorktree })]);
+    expect(brief(diff(snap(T0, [read]), snap(T0 + MIN, [repo("r1", "demo-ops", [])])))).toEqual([{ kind: "change-removed", repoName: "demo-ops", change: "audit-trail", from: "Implementing" }]);
+  });
+
+  test("a previous snapshot without the list (older versions) is read as having left none unread", () => {
+    const before = repo("r1", "demo-ops", [change("audit-trail", "Ready", { checkout: onMain })]);
+    const after = repo("r1", "demo-ops", [change("audit-trail", "Implementing", { checkout: onWorktree })]);
+    expect(brief(diff(snap(T0, [before]), snap(T0 + MIN, [after]))).map((e) => e.kind)).toEqual(["change-moved"]);
+  });
+
+  test("other changes of the repository are still compared", () => {
+    const before = repo("r1", "demo-ops", [change("audit-trail", "Implementing", { checkout: onWorktree }), change("a", "Drafts", { checkout: onMain })]);
+    const after = repo("r1", "demo-ops", [change("a", "Ready", { checkout: onMain })], { unreadWorktrees: [wt] });
+    expect(brief(diff(snap(T0, [before]), snap(T0 + MIN, [after]))).map((e) => e.kind)).toEqual(["change-moved"]);
+  });
 });
 
 test("first sight of a repository is a baseline: one tracked event, none per change", () => {
