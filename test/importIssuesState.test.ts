@@ -41,6 +41,8 @@ test("names: the New change rule, taken by an existing change, or used by anothe
   expect(nameProblem("add-audit-trail", taken, [])).toContain("exists already");
   expect(nameProblem("fine", taken, ["fine"])).toContain("another checked issue");
   expect(nameProblem("fine", taken, ["other"])).toBeNull();
+  expect(nameProblem("archive", taken, [])).toBe("archive is reserved for archived changes");
+  expect(nameProblem("-wip", taken, [])).toBe("must not start with . or -");
   const rows = [
     { issue: issue(1, "Same"), name: issueChangeName("Same", 1) },
     { issue: issue(2, "same!"), name: issueChangeName("same!", 2) },

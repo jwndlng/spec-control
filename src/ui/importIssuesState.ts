@@ -2,7 +2,8 @@
 // a filter shows, which are already imported, the name each checked issue proposes and why one is refused, the prompt
 // it becomes, and the one-at-a-time creates that import them.
 import { issueRef, issueUrl } from "../shared/issues.ts";
-import { CHANGE_NAME_PATTERN, type ChangeIssueRef, type ChangeSnapshot, type GithubIssue } from "../shared/types.ts";
+import { newChangeNameProblem } from "../shared/changeNames.ts";
+import type { ChangeIssueRef, ChangeSnapshot, GithubIssue } from "../shared/types.ts";
 import { api, ApiError } from "./api.ts";
 
 /** The issues whose number, title or labels contain `query`, ignoring case; all of them for an empty query. */
@@ -39,8 +40,8 @@ export interface ImportRow {
  */
 export function nameProblem(name: string, taken: ReadonlySet<string>, others: string[]): string | null {
   const trimmed = name.trim();
-  if (trimmed === "") return "required";
-  if (!CHANGE_NAME_PATTERN.test(trimmed)) return "only letters, digits, dots, dashes and underscores";
+  const problem = newChangeNameProblem(trimmed);
+  if (problem !== null) return problem;
   if (taken.has(trimmed)) return "a change of this name exists already";
   if (others.includes(trimmed)) return "another checked issue uses this name";
   return null;

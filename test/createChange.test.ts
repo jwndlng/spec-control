@@ -103,7 +103,7 @@ test("reads schema from openspec/config.yaml and falls back to spec-driven", asy
 
 test("rejects an invalid change name", async () => {
   const root = await repoWithOpenspec();
-  for (const name of ["", "foo/bar", "with space", "with;semicolon", "with$dollar"]) {
+  for (const name of ["", "foo/bar", "with space", "with;semicolon", "with$dollar", "archive", "Archive", ".", "..", ".git", "-wip", "a..b", "notes.", "notes.lock", "a".repeat(129)]) {
     const result = await createChange(root, name);
     expect([name, result.ok]).toEqual([name, false]);
     if (result.ok) continue;
@@ -257,13 +257,29 @@ test("a refused create runs no git: the index is byte-for-byte unchanged", async
   const repo = await tempGitRepo();
   await mkdir(join(repo, "openspec", "changes", "taken"));
   const indexBefore = readFileSync(join(repo, ".git", "index"));
-  for (const [name, reason] of [["taken", "duplicate-active"], ["foo/bar", "invalid-name"]] as const) {
+  for (const [name, reason] of [["taken", "duplicate-active"], ["foo/bar", "invalid-name"], ["archive", "invalid-name"], ["Archive", "invalid-name"]] as const) {
     const result = await withoutGit(() => createChange(repo, name));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe(reason);
   }
   expect(readFileSync(join(repo, ".git", "index")).equals(indexBefore)).toBe(true);
   expect(porcelain(repo)).toEqual([]);
+});
+
+test("the refusal names the rule a name breaks", async () => {
+  const root = await repoWithOpenspec();
+  const result = await createChange(root, "archive");
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.message).toContain("reserved");
+});
+
+test("stageChangeDir never stages a name a new change may not have", async () => {
+  const repo = await tempGitRepo();
+  await mkdir(join(repo, "openspec", "changes", "archive"), { recursive: true });
+  await writeFile(join(repo, "openspec", "changes", "archive", ".openspec.yaml"), "schema: spec-driven\n");
+  const indexBefore = readFileSync(join(repo, ".git", "index"));
+  expect(await stageChangeDir(repo, "archive")).toBe(false);
+  expect(readFileSync(join(repo, ".git", "index")).equals(indexBefore)).toBe(true);
 });
 
 test("writes depends-on.yaml with the dependencies in order, which the scanner reads back", async () => {

@@ -83,7 +83,10 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           </li>
           <li>
             <strong>New change</strong> on a board creates <code>openspec/changes/&lt;name&gt;/</code>, optionally with a
-            prompt, and stages it. Nothing is committed.
+            prompt, and stages it. Nothing is committed. A name uses letters, digits, <code>.</code>, <code>-</code> and{" "}
+            <code>_</code>, at most 128 of them; it must not start with <code>.</code> or <code>-</code>, contain{" "}
+            <code>..</code> or end in <code>.</code> or <code>.lock</code> (git could not branch it), and{" "}
+            <code>archive</code> is reserved for archived changes.
           </li>
           <li>
             <strong>Import from issues</strong> on a project's board lists its open GitHub issues; check the ones you want

@@ -15,12 +15,12 @@
 import { constants } from "node:fs";
 import { access, chmod, copyFile, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { isChangeDirName } from "../shared/changeNames.ts";
 import type { PullBlockingFile, PullResolve, PullResult, RepoConfig } from "../shared/types.ts";
 import { defaultBranch, repositoryKey } from "./git.ts";
 import { gitWrite } from "./gitWrite.ts";
 import { dashboardHome } from "./paths.ts";
 import { OPENSPEC_PATHS } from "./frameworks/registry.ts";
-import { CHANGE_NAME } from "./source.ts";
 
 export const FETCH_TIMEOUT_MS = 60_000;
 const LOCAL_TIMEOUT_MS = 15_000;
@@ -212,7 +212,7 @@ export function isChangeLeftoverPath(path: string): boolean {
   const slash = rest.indexOf("/");
   if (slash <= 0 || slash === rest.length - 1) return false;
   const name = rest.slice(0, slash);
-  if (!CHANGE_NAME.test(name) || name === "archive" || name === "." || name === "..") return false;
+  if (!isChangeDirName(name)) return false;
   return rest
     .slice(slash + 1)
     .split("/")
