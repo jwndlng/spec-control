@@ -69,3 +69,23 @@ export interface LastOpened {
 export function shouldOpen(url: string, now: number, last: LastOpened | undefined): boolean {
   return !last || last.url !== url || now - last.at >= REPEAT_WINDOW_MS;
 }
+
+/**
+ * What a `target="_blank"` or `window.open` request does (desktop-window-fixes D3): never replace the window's page,
+ * so the server's own origin goes to the browser like any other; the rest as `externalTarget`.
+ */
+export function newWindowTarget(raw: string, port: number): LinkTarget {
+  const target = externalTarget(raw, port);
+  return target.kind === "internal" ? { kind: "external", url: new URL(raw).href } : target;
+}
+
+export type WindowMove = { reload: false } | { reload: true; rules: string[]; url: string };
+
+/**
+ * Whether a window set up for `windowPort` must move to the server's `port` (desktop-window-fixes D2): after a Retry
+ * on a changed port, new rules and the new origin's `/`; the same port keeps the page.
+ */
+export function windowForPort({ windowPort, port }: { windowPort: number; port: number }): WindowMove {
+  if (windowPort === port) return { reload: false };
+  return { reload: true, rules: navigationRules(port), url: `${appOrigin(port)}/` };
+}

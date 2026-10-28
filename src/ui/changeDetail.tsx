@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, DismissPreview, DismissResult, RepoSnapshot, Snapshot, TaskProgress } from "../shared/types.ts";
 import { ApiError, api } from "./api.ts";
 import { CopyButton, CopyRefButton, Meter } from "./kanban.tsx";
-import { renderMarkdown } from "./markdown.tsx";
+import { type LinkResolver, renderMarkdown } from "./markdown.tsx";
 import { backTarget, CONSOLE_TAB, changePath, type DetailQuery, parseDetailQuery, repoPath, serializeDetailQuery } from "./routes.ts";
 import { ConsolePanel, ConsoleSessionList, ResolveConflicts } from "./sessionPanel.tsx";
 import { changeWorktreePath, consoleAvailable, consoleSession, consoleSessions, consoleTabAvailable } from "./sessionState.ts";
@@ -22,7 +22,7 @@ import { DismissDialog } from "./dismissChange.tsx";
 import { duplicateNotice, staleHint, staleReason } from "./staleState.ts";
 import { dismissedNotice, dismissOffer } from "./dismissState.ts";
 import { checkoutHint, daysSince, leftoverHint, pendingArchiveHint, relTime, splitPathLabel } from "./format.ts";
-import { currentQuery, followInApp, href, navigate, replaceQuery } from "./url.ts";
+import { currentQuery, followInApp, href, hrefWithQuery, navigate, replaceQuery } from "./url.ts";
 
 export function artifactLabel(id: string): string {
   return id.replace(/[-_]+/g, " ").replace(/^./, (c) => c.toUpperCase());
@@ -45,6 +45,44 @@ export function resolveSelection(artifacts: ChangeArtifactEntry[], query: Pick<D
   if (!artifact) return {};
   const file = artifact.files.find((f) => f.path === query.file) ?? artifact.files[0];
   return { artifactId: artifact.id, file: file.path };
+}
+
+/**
+ * The change's own file a relative link in `shownFile` names (design D4 of desktop-window-fixes): the target joined
+ * with the shown file's directory, `.` and `..` resolved, `#…` and `?…` dropped. Undefined when it leaves the change's
+ * directory, is only a fragment or names a file the view does not list.
+ */
+export function artifactLinkTarget(target: string, shownFile: string, artifacts: ChangeArtifactEntry[]): Required<Selection> | undefined {
+  const path = target.replace(/[?#].*$/s, "");
+  if (!path || path.startsWith("/") || path.includes("\\")) return undefined;
+  const segments = shownFile.split("/").slice(0, -1);
+  for (const raw of path.split("/")) {
+    let segment: string;
+    try {
+      segment = decodeURIComponent(raw);
+    } catch {
+      return undefined;
+    }
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (segments.length === 0) return undefined;
+      segments.pop();
+    } else segments.push(segment);
+  }
+  const file = segments.join("/");
+  const artifact = artifacts.find((a) => a.files.some((f) => f.path === file));
+  return artifact ? { artifactId: artifact.id, file } : undefined;
+}
+
+/** Links between the change's files: the detail URL with that file selected, keeping the board the view came from. */
+export function artifactLinks(repoId: string, changeName: string, shownFile: string, artifacts: ChangeArtifactEntry[], from: string | undefined): LinkResolver {
+  return {
+    resolve(target) {
+      const selection = artifactLinkTarget(target, shownFile, artifacts);
+      if (!selection) return undefined;
+      return hrefWithQuery(changePath(repoId, changeName), serializeDetailQuery({ artifact: selection.artifactId, file: selection.file, raw: false, from }));
+    },
+  };
 }
 
 /** Same line shape and the same three states the scanner counts, so the checklist's label cannot disagree with the boxes below it. */
@@ -625,7 +663,20 @@ export function ChangeDetail({
   }, [repoId, changeName, known, file, snapshot]);
 
   const text = fileState?.status === "ok" ? fileState.text : undefined;
-  const rendered = useMemo(() => (text === undefined ? null : renderMarkdown(text)), [text]);
+  const shownPath = fileState?.path;
+  const rendered = useMemo(
+    () => (text === undefined || shownPath === undefined ? null : renderMarkdown(text, artifactLinks(repoId, changeName, shownPath, listing?.artifacts ?? [], query.from))),
+    [text, shownPath, listing, repoId, changeName, query.from],
+  );
+  // A link to another file of the change (`artifactLinks`) selects that file here; a modified click is left to the browser.
+  const followFileLink = (event: MouseEvent) => {
+    const anchor = (event.target as Element | null)?.closest?.("a.md-file-link");
+    if (!(anchor instanceof HTMLAnchorElement)) return;
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const linked = parseDetailQuery(new URL(anchor.href).search);
+    setQuery({ artifact: linked.artifact, file: linked.file, raw: false });
+  };
 
   // `from` never changes while the view is open: selecting a tab, a file or raw keeps it in the query.
   const close = useMemo(() => detailClose(query.from, repoId), [query.from, repoId]);
@@ -713,7 +764,8 @@ export function ChangeDetail({
         ) : (
           artifact && <FileList artifact={artifact} selected={file} onSelect={(path) => setQuery({ artifact: artifact.id, file: path })} />
         )}
-        <section class="detail-content">
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: delegated from the links inside, which are anchors — Enter on one fires this click too */}
+        <section class="detail-content" onClick={followFileLink}>
           {onConsole ? (
             <ConsolePanel session={shownSession} worktree={shownWorktree} of={{ repoId, change: changeName }} />
           ) : (

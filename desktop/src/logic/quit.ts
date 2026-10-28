@@ -41,3 +41,12 @@ export async function stopServer(child: StoppableChild, graceMs = 10_000): Promi
   }
   return outcome;
 }
+
+/**
+ * Every exit stops the server the app started (desktop-window-fixes D1), the same way as Quit; `undefined` — attached
+ * to a server started elsewhere, or nothing running — stops nothing.
+ */
+export async function stopOwned(owned: StoppableChild | undefined, graceMs?: number): Promise<"none" | "stopped" | "killed"> {
+  if (!owned) return "none";
+  return stopServer(owned, graceMs);
+}

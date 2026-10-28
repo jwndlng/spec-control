@@ -8,15 +8,36 @@ import type { ComponentChildren, VNode } from "preact";
 
 const ALLOWED_SCHEMES = new Set(["http:", "https:", "mailto:"]);
 
-/** The target when it may become an `href`: http, https, mailto or relative. Undefined for everything else. */
-export function safeHref(target: string): string | undefined {
-  // Browsers ignore control characters and whitespace inside a scheme ("java\tscript:"), so judge the cleaned-up form.
+/** Browsers ignore control characters and whitespace inside a scheme ("java\tscript:"), so targets are judged cleaned up. */
+function cleanTarget(target: string): string {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what is being removed
-  const cleaned = target.replace(/[\u0000- \u007f-\u009f]/g, "");
-  if (!cleaned) return undefined;
-  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(cleaned)?.[1];
-  if (scheme === undefined) return cleaned;
+  return target.replace(/[\u0000- \u007f-\u009f]/g, "");
+}
+
+function schemeOf(cleaned: string): string | undefined {
+  return /^([a-z][a-z0-9+.-]*):/i.exec(cleaned)?.[1];
+}
+
+/** The target when it may become an external `href`: absolute http, https or mailto. Undefined for everything else. */
+export function safeHref(target: string): string | undefined {
+  const cleaned = cleanTarget(target);
+  const scheme = schemeOf(cleaned);
+  if (scheme === undefined) return undefined;
   return ALLOWED_SCHEMES.has(`${scheme.toLowerCase()}:`) ? cleaned : undefined;
+}
+
+/** The target when it is relative (no scheme), cleaned up; only a `LinkResolver` may turn it into a link. */
+export function relativeTarget(target: string): string | undefined {
+  const cleaned = cleanTarget(target);
+  return cleaned && schemeOf(cleaned) === undefined ? cleaned : undefined;
+}
+
+/**
+ * Turns a relative link target into a URL of the dashboard's own, or refuses it (undefined). Without one, relative
+ * targets are text: they would resolve against the dashboard's route, never the file they were written in.
+ */
+export interface LinkResolver {
+  resolve(target: string): string | undefined;
 }
 
 const ENTITIES: Record<string, string> = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'", "&nbsp;": " " };
@@ -25,6 +46,10 @@ const ENTITIES: Record<string, string> = { "&amp;": "&", "&lt;": "<", "&gt;": ">
 function decode(text: string): string {
   return text.replace(/&(?:amp|lt|gt|quot|nbsp|#39);/g, (entity) => ENTITIES[entity]);
 }
+
+// One document renders at a time, synchronously, so the resolver of the current `renderMarkdown` call is module state
+// rather than a parameter threaded through every function below.
+let links: LinkResolver | undefined;
 
 function inline(tokens: Token[] | undefined): ComponentChildren {
   return (tokens ?? []).map((token) => inlineToken(token));
@@ -50,7 +75,17 @@ function inlineToken(token: Token): ComponentChildren {
     case "link": {
       const link = token as Tokens.Link;
       const target = safeHref(link.href);
-      if (target === undefined) return inline(link.tokens);
+      if (target === undefined) {
+        const relative = relativeTarget(link.href);
+        const inView = relative === undefined ? undefined : links?.resolve(relative);
+        if (inView === undefined) return inline(link.tokens);
+        // A file of the same view: followed in place, so no new tab or window.
+        return (
+          <a href={inView} title={link.title ?? undefined} class="md-file-link">
+            {inline(link.tokens)}
+          </a>
+        );
+      }
       return (
         <a href={target} title={link.title ?? undefined} target="_blank" rel="noopener noreferrer">
           {inline(link.tokens)}
@@ -170,13 +205,21 @@ function blocks(tokens: Token[]): ComponentChildren {
   return tokens.map((token) => blockToken(token));
 }
 
-/** The document as VNodes. Never throws on odd input: text the tokeniser cannot handle is shown as written. */
-export function renderMarkdown(text: string): VNode {
+/**
+ * The document as VNodes. Never throws on odd input: text the tokeniser cannot handle is shown as written. Relative
+ * link targets become links only through `resolver`; without one they are text.
+ */
+export function renderMarkdown(text: string, resolver?: LinkResolver): VNode {
   let tokens: Token[];
   try {
     tokens = lexer(text, { gfm: true });
   } catch {
     return <div class="markdown"><pre>{text}</pre></div>;
   }
-  return <div class="markdown">{blocks(tokens)}</div>;
+  links = resolver;
+  try {
+    return <div class="markdown">{blocks(tokens)}</div>;
+  } finally {
+    links = undefined;
+  }
 }

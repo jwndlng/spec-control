@@ -95,7 +95,7 @@ test("images are neither embedded nor fetched", () => {
   expect(textOf(tree)).toBe("before diagram after");
 });
 
-test("only http, https, mailto and relative targets become links", () => {
+test("only absolute http, https and mailto targets become links without a resolver", () => {
   const dangerous = renderMarkdown("[click](javascript:alert(1)) [d](data:text/html,x) [v](vbscript:x) [f](file:///etc/passwd)");
   expect(byTag(dangerous, "a")).toEqual([]);
   expect(textOf(dangerous)).toBe("click d v f");
@@ -105,7 +105,7 @@ test("only http, https, mailto and relative targets become links", () => {
   expect(textOf(docs)).toBe("docs");
 
   const others = byTag(renderMarkdown("[m](mailto:team@example.com) [r](design.md) <https://example.com/auto>"), "a");
-  expect(others.map((a) => a.props.href)).toEqual(["mailto:team@example.com", "design.md", "https://example.com/auto"]);
+  expect(others.map((a) => a.props.href)).toEqual(["mailto:team@example.com", "https://example.com/auto"]);
   expect(others.every((a) => a.props.target === "_blank" && a.props.rel === "noopener noreferrer")).toBe(true);
 
   expect(safeHref("JaVaScRiPt:alert(1)")).toBeUndefined();
@@ -113,7 +113,27 @@ test("only http, https, mailto and relative targets become links", () => {
   expect(safeHref("\u0001javascript:alert(1)")).toBeUndefined();
   expect(safeHref("")).toBeUndefined();
   expect(safeHref("HTTPS://example.com")).toBe("HTTPS://example.com");
-  expect(safeHref("../specs/x.md#anchor")).toBe("../specs/x.md#anchor");
+  expect(safeHref("../specs/x.md#anchor")).toBeUndefined();
+});
+
+test("What's new never renders a relative link: without a resolver, relative targets are text", () => {
+  const tree = renderMarkdown("See [design](./design.md), [up](../../specs/x.md), [top](#top) and [root](/board).");
+  expect(byTag(tree, "a")).toEqual([]);
+  expect(textOf(tree)).toBe("See design, up, top and root.");
+});
+
+test("a resolver turns relative targets into in-place links, and only those it accepts", () => {
+  const seen: string[] = [];
+  const resolver = { resolve: (t: string) => (seen.push(t), t === "./design.md" ? "/repo/r/change/c?file=design.md" : undefined) };
+  const tree = expectInert("[d](./design.md) [x](./missing.md) [js](javascript:alert(1)) [w](https://example.com)");
+  const links = byTag(renderMarkdown("[d](./design.md) [x](./missing.md) [js](javascript:alert(1)) [w](https://example.com)", resolver), "a");
+  expect(seen).toEqual(["./design.md", "./missing.md"]); // never asked about absolute targets
+  expect(links.map((a) => a.props.href)).toEqual(["/repo/r/change/c?file=design.md", "https://example.com"]);
+  expect(links[0].props.target).toBeUndefined();
+  expect(links[0].props.class).toBe("md-file-link");
+  expect(textOf(tree)).toBe("d x js w");
+  // The resolver belongs to one call: the next render without one has no relative links again.
+  expect(byTag(renderMarkdown("[d](./design.md)"), "a")).toEqual([]);
 });
 
 test("the renderer has no way to inject markup", () => {
