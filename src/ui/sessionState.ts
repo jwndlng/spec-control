@@ -256,6 +256,24 @@ export function endConfirmable(session: Pick<Session, "inPlace"> | undefined, st
   return !busy && (!worktreeRemovalPossible(session) || status !== undefined);
 }
 
+/**
+ * Whether Escape closes the end-session dialog: not while a confirmation runs, which would carry on out of sight and
+ * lose its report. Either way the key stops at the dialog, so the view behind it stays open.
+ */
+export function endDialogEscape(busy: boolean): boolean {
+  return !busy;
+}
+
+/**
+ * The dialog's setters and close, as a confirmation started for `startedFor` may use them: each one does nothing once
+ * the dialog shows another session, so an outcome never reports into, or closes, a dialog it was not started from.
+ */
+export function ownReports<T extends Record<string, (...args: never[]) => unknown>>(startedFor: string, current: () => string | undefined, sinks: T): T {
+  const guarded: Record<string, (...args: never[]) => unknown> = {};
+  for (const [name, sink] of Object.entries(sinks)) guarded[name] = (...args) => (current() === startedFor ? sink(...args) : undefined);
+  return guarded as T;
+}
+
 export interface PullOffer {
   /** Whether the end-session dialog offers to pull at all: only for a worktree session, in a repository the pull action can run in. */
   offered: boolean;
@@ -552,9 +570,47 @@ export function openWork(worktrees: SessionWorktree[], all: readonly Session[], 
   return { items: [...items, ...left], unshipped: left.filter((i) => i.worktree?.work.state !== "merged").length, running: items.length };
 }
 
+/**
+ * Runs one action at a time: a call while another runs is dropped, so a double-click that arrives before the re-render
+ * disables the buttons still sends one request. `onBusy` follows the flag, for the buttons; it is cleared however the
+ * action ends.
+ */
+export function oneAtATime(running: { current: boolean }, onBusy: (busy: boolean) => void): (fn: () => Promise<void>) => Promise<void> {
+  return async (fn) => {
+    if (running.current) return;
+    running.current = true;
+    onBusy(true);
+    try {
+      await fn();
+    } finally {
+      running.current = false;
+      onBusy(false);
+    }
+  };
+}
+
 /** One argument per line; blank lines are dropped. A command is an argument list, never a shell string. */
 export function parseArgLines(text: string): string[] {
   return text.split("\n").map((l) => l.trim()).filter(Boolean);
+}
+
+/** What an argument field stores for its text: the parsed lines, or nothing when it is optional and they are empty. */
+export function argLinesValue(text: string, optional: boolean): string[] | undefined {
+  const args = parseArgLines(text);
+  return args.length || !optional ? args : undefined;
+}
+
+/**
+ * The text an argument field shows: what the user typed while it still parses to the stored list, otherwise the list
+ * one per line — the list was changed by something else (a preset, a reset, another profile).
+ */
+export function argLinesText(raw: string | undefined, list: string[] | undefined): string {
+  const stored = list ?? [];
+  if (raw !== undefined) {
+    const typed = parseArgLines(raw);
+    if (typed.length === stored.length && typed.every((arg, i) => arg === stored[i])) return raw;
+  }
+  return stored.join("\n");
 }
 
 export function slugId(name: string, taken: string[]): string {

@@ -68,15 +68,30 @@ export function parseIssueFile(text: string): ChangeSnapshot["sourceIssue"] {
   }
 }
 
+/** A change's branch candidates, in order: its recorded branches, then the dashboard's own session branches. */
+function branchCandidates(name: string, recorded: ChangeRecord | undefined): Set<string> {
+  return new Set([recorded?.branch, recorded?.archiveBranch, sessionBranch("implement", name), sessionBranch("archive", name)].filter((b): b is string => b !== undefined));
+}
+
 /**
- * The branch of a change that lives in the main checkout: the main checkout's own branch when it is exactly one of the
- * change's branch candidates, else the first linked worktree's branch that is. Never containment: `feat/add-validate-phase`
- * is another change's branch, not `add-validate`'s (change-scanner: "Branch and worktree matching").
+ * The main checkout's own branch when it is exactly one of the change's branch candidates, else the first linked
+ * worktree's branch that is. Never containment: `feat/add-validate-phase` is another change's branch, not
+ * `add-validate`'s (change-scanner: "Branch and worktree matching").
  */
-function findBranchMatch(name: string, recorded: ChangeRecord | undefined, branch: string | undefined, worktrees: Worktree[]): string | undefined {
-  const candidates = new Set([recorded?.branch, recorded?.archiveBranch, sessionBranch("implement", name), sessionBranch("archive", name)].filter((b): b is string => b !== undefined));
-  if (branch !== undefined && candidates.has(branch)) return branch;
+function findBranchMatch(candidates: Set<string>, mainBranch: string | undefined, worktrees: Worktree[]): string | undefined {
+  if (mainBranch !== undefined && candidates.has(mainBranch)) return mainBranch;
   return worktrees.find((w) => !w.isMain && w.branch !== undefined && candidates.has(w.branch))?.branch;
+}
+
+/**
+ * A linked worktree's branch is a change's only when it is one of its candidates or the worktree holds work on it:
+ * every branch carries the changes of the commit it was cut from, and another change's branch would link that change's
+ * pull request. Otherwise the change is matched as if it lived in the main checkout.
+ */
+async function branchMatchFor(ctx: RepoContext, entry: ChangeDirEntry, recorded: ChangeRecord | undefined): Promise<string | undefined> {
+  const candidates = branchCandidates(entry.name, recorded);
+  if (!ctx.isMain && ctx.branch !== undefined && (candidates.has(ctx.branch) || (await ctx.holdsWork?.(entry)))) return ctx.branch;
+  return findBranchMatch(candidates, ctx.mainBranch, ctx.worktrees);
 }
 
 /**
@@ -151,6 +166,10 @@ interface RepoContext {
   isGit: boolean;
   /** The branch checked out here. */
   branch?: string;
+  /** The branch the main checkout is on. */
+  mainBranch?: string;
+  /** For a linked worktree: whether it holds work on the change (uncommitted, or committed since its fork from the base). */
+  holdsWork?: (entry: ChangeDirEntry) => Promise<boolean>;
   worktrees: Worktree[];
   /** Files under the framework's root that differ from HEAD, with their mtimes. */
   dirty: DirtyFile[];
@@ -238,9 +257,7 @@ async function scanChange(ctx: RepoContext, entry: ChangeDirEntry, withGit: bool
     archived: entry.archived,
     lastActivityAt,
     specsSynced,
-    // In the main checkout the branch is an exact match against the change's candidates; a linked worktree's copy is
-    // on that worktree's branch.
-    branchMatch: entry.archived ? undefined : ctx.isMain ? findBranchMatch(entry.name, recorded, ctx.branch, ctx.worktrees) : ctx.branch,
+    branchMatch: entry.archived ? undefined : await branchMatchFor(ctx, entry, recorded),
     ...(recorded ? { recorded } : {}),
     stage,
     column,
@@ -290,7 +307,7 @@ export async function scanRepo(
   const lastUpdatedAt = isGit
     ? latestIso(await source.lastActivity(frameworkDir), newestDirty(dirty, frameworkDir))
     : await source.newestMtime(frameworkDir);
-  const ctx: RepoContext = { repo, source, root: repo.path, isMain: true, isGit, branch, worktrees, dirty, framework, project };
+  const ctx: RepoContext = { repo, source, root: repo.path, isMain: true, isGit, branch, mainBranch: branch, worktrees, dirty, framework, project };
   const detectedLabels = await scanLabels(source, repo.path, framework.layout.skipDirs);
 
   const listing = await framework.listChanges(source);
@@ -436,6 +453,8 @@ async function scanWorktrees(main: RepoContext, archivedOnMain: Map<string, stri
   if (candidates.length > selected.length) warnings.push(`${candidates.length - selected.length} of ${candidates.length} worktrees were not read (limit ${WORKTREE_LIMIT}; the most recently changed ones are)`);
   const unread = candidates.slice(WORKTREE_LIMIT).map((c) => c.worktree.path);
 
+  // Committed work on a change is read against the fork point from this base; none means no worktree holds any.
+  const base = selected.length ? await main.source.baseRef().catch(() => undefined) : undefined;
   const results: WorktreeCopies[] = new Array(selected.length).fill({ copies: [], pending: [] });
   let next = 0;
   const worker = async (): Promise<void> => {
@@ -443,7 +462,7 @@ async function scanWorktrees(main: RepoContext, archivedOnMain: Map<string, stri
       const index = next++;
       const { worktree, source } = selected[index];
       try {
-        results[index] = await withTimeout(scanWorktree(main, worktree, source, archivedOnMain), WORKTREE_TIMEOUT_MS, `worktree ${worktreeLabel(worktree)}`);
+        results[index] = await withTimeout(scanWorktree(main, worktree, source, archivedOnMain, base), WORKTREE_TIMEOUT_MS, `worktree ${worktreeLabel(worktree)}`);
       } catch (err) {
         warnings.push(`worktree ${worktreeLabel(worktree)}: ${err instanceof Error ? err.message : String(err)}`);
         unread.push(worktree.path);
@@ -454,7 +473,7 @@ async function scanWorktrees(main: RepoContext, archivedOnMain: Map<string, stri
   return { copies: results.flatMap((r) => r.copies), pending: results.flatMap((r) => r.pending), warnings, unread: unread.sort() };
 }
 
-async function scanWorktree(main: RepoContext, worktree: Worktree, source: RepoSource, archivedOnMain: Map<string, string>): Promise<WorktreeCopies> {
+async function scanWorktree(main: RepoContext, worktree: Worktree, source: RepoSource, archivedOnMain: Map<string, string>, base: string | undefined): Promise<WorktreeCopies> {
   const listing = await main.framework.listChanges(source);
   // Every branch carries main's archives along; only what main lacks (by name, as of that date) is news worth reading.
   const pendingEntries = listing.archived.filter((entry) => !((archivedOnMain.get(entry.name) ?? "") >= (entry.archived ?? "")));
@@ -462,7 +481,15 @@ async function scanWorktree(main: RepoContext, worktree: Worktree, source: RepoS
   // A branch may carry its own config; it is that checkout's changes it applies to.
   const project = await main.framework.readProject(source, main.project);
   const dirty = await source.dirtyFiles(main.framework.layout.root).catch(() => []);
-  const ctx: RepoContext = { ...main, source, root: worktree.path, isMain: false, branch: worktree.branch, dirty, project };
+  // Asked at most once per worktree, and only for a change whose candidates do not include the worktree's branch.
+  let touched: Promise<Set<string> | undefined> | undefined;
+  const holdsWork = async (entry: ChangeDirEntry): Promise<boolean> => {
+    if (newestDirty(dirty, entry.dir) !== undefined) return true;
+    if (base === undefined) return false;
+    touched ??= source.changesTouchedSinceFork(main.framework.layout.changesDir, base).catch(() => undefined);
+    return (await touched)?.has(entry.name) ?? false;
+  };
+  const ctx: RepoContext = { ...main, source, root: worktree.path, isMain: false, branch: worktree.branch, dirty, project, holdsWork };
   const checkout = { path: worktree.path, branch: worktree.branch, isMain: false };
   const copies: ChangeCopy[] = [];
   for (const entry of listing.active) copies.push({ change: await scanChange(ctx, entry, true), checkout });

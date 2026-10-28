@@ -249,3 +249,15 @@ test("a proposal branch is compared exactly: containment is still not a match", 
   expect(linkedPullRequest(named("rotate"), [list("alpha", [pr({ number: 90, head: "docs/rotate-keys" })])])).toBeUndefined();
   expect(isProposalPullRequest(named("rotate"), pr({ number: 90, head: "docs/rotate-keys" }))).toBe(false);
 });
+
+test("a copy carried along in another change's worktree does not take that change's pull request (link-only-own-branch)", () => {
+  // The reproduction: `rotate-keys` leads from `add-login`'s worktree, so the scanner gives it no `branchMatch`.
+  const merged = pr({ number: 10, head: "feat/rotate-keys", state: "merged", mergedAt: at(5), createdAt: at(20) });
+  const open = pr({ number: 20, head: "feat/add-login", createdAt: at(1) });
+  const lists = [list("alpha", [merged, open])];
+  expect(linkedPullRequest({ repoId: "alpha", name: "rotate-keys" }, lists)?.number).toBe(10);
+  expect(linkedPullRequest({ repoId: "alpha", name: "add-login", branchMatch: "feat/add-login" }, lists)?.number).toBe(20);
+  // work on another branch still links it: the scanner gave that branch because the worktree changed the change
+  const work = pr({ number: 31, head: "wip/keys", createdAt: at(1) });
+  expect(linkedPullRequest({ repoId: "alpha", name: "rotate-keys", branchMatch: "wip/keys" }, [list("alpha", [merged, work])])?.number).toBe(31);
+});

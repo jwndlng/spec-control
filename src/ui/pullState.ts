@@ -55,6 +55,14 @@ export function pullNeedsReport(result: PullResult): boolean {
   return tone === "warning" || tone === "danger";
 }
 
+/**
+ * What the Blocked pull list beside a Pull control shows: the repository's outcome, or — while its pull runs, as it
+ * does after Resolve and pull — the last one, so the list stays open and says it is resolving instead of vanishing.
+ */
+export function shownPullResult(state: "running" | PullResult | undefined, last: PullResult | undefined): PullResult | undefined {
+  return state === "running" ? last : state;
+}
+
 /** What one blocking file is, in the words the confirmation shows next to its path. */
 export function blockingNote(file: PullBlockingFile): string {
   if (file.kind !== "leftover") return "your own uncommitted work — it is never touched";

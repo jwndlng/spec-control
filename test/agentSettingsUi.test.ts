@@ -2,8 +2,9 @@ import { expect, test } from "bun:test";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE } from "../src/shared/agentDefaults.ts";
 import type { AgentAvailability, AgentProfile, AgentSessionsConfig, KeepAwakeStatus, PromptKey } from "../src/shared/types.ts";
 import { defaultConfig, validateConfig } from "../src/server/config.ts";
-import { AgentEditor, ConsoleAgentPicker, EditorCommandField, KeepAwakeSetting, keepAwakeState, PerProjectNote, PresetPicker, ShortcutEditor, withoutAgent } from "../src/ui/agentSettings.tsx";
-import { byTag, elements, textOf } from "./vnode.ts";
+import { AgentEditor, ArgLinesArea, ArgLinesField, ConsoleAgentPicker, EditorCommandField, KeepAwakeSetting, keepAwakeState, PerProjectNote, PresetPicker, ShortcutEditor, withoutAgent } from "../src/ui/agentSettings.tsx";
+import { argLinesText, argLinesValue } from "../src/ui/sessionState.ts";
+import { byComponent, byTag, elements, textOf } from "./vnode.ts";
 
 const profile = (patch: Partial<AgentProfile> = {}): AgentProfile => ({ id: "fake", name: "Fake Agent", command: ["fake", "{prompt}"], prompts: { implement: "implement {change}" }, ...patch });
 
@@ -291,35 +292,119 @@ test("Keep awake while agents work reads ticked until switched off, says display
   expect(source.indexOf("<KeepAwakeSetting")).toBeGreaterThan(source.indexOf("</fieldset>"));
 });
 
+/**
+ * An argument field as the browser drives it: the textarea's text is what the user typed, the field stores the parsed
+ * list, and the parent hands that list back on the next render.
+ */
+function argField(list: string[] | undefined, optional: boolean) {
+  let raw: string | undefined;
+  let stored = list;
+  const shown = () => argLinesText(raw, stored);
+  const type = (text: string) => {
+    raw = text;
+    stored = argLinesValue(text, optional);
+  };
+  const replace = (next: string[] | undefined) => (stored = next);
+  return { shown, type, replace, stored: () => stored };
+}
+
+/** An argument field's props, read off the leaf its hooks leave it as in the tree. */
+const argProps = (field: { props: unknown }) => field.props as Parameters<typeof ArgLinesField>[0];
+
+/** The field the editor renders for a label, with its stored list and a way to type into it. */
+function argFieldIn(tree: ReturnType<typeof AgentEditor>, label: string) {
+  const host = elements(tree).find((el) => el.type === "label" && textOf(el).includes(label));
+  const [field] = byComponent(host, ArgLinesField);
+  return argProps(field);
+}
+
 test("Launch arguments are edited one per line in the Command group; clearing them stores none", () => {
   let patch: Partial<AgentProfile> | undefined;
   const tree = AgentEditor({ agent: profile({ launchArgs: ["--mode", "auto"] }), isDefault: true, canRemove: false, open: true, onToggle: () => {}, onChange: (p) => (patch = p), onRemove: () => {}, onDefault: () => {} });
   const label = elements(tree).find((el) => el.type === "label" && textOf(el).includes("Launch arguments"));
-  expect(label).toBeDefined();
   expect(textOf(label)).toContain("consoles and resumes included");
-  const field = byTag(label, "textarea")[0];
-  expect(field.props.value).toBe("--mode\nauto");
-  const type = (value: string) => (field.props.onInput as (e: { currentTarget: { value: string } }) => void)({ currentTarget: { value } });
-  type("--model\n fast \n");
+  const field = argFieldIn(tree, "Launch arguments");
+  expect(field.value).toEqual(["--mode", "auto"]);
+  expect(field.optional).toBe(true);
+  expect(argLinesText(undefined, field.value)).toBe("--mode\nauto");
+  field.onChange(argLinesValue("--model\n fast \n", true));
   expect(patch).toEqual({ launchArgs: ["--model", "fast"] });
-  type("  \n");
+  field.onChange(argLinesValue("  \n", true));
   expect(patch).toEqual({ launchArgs: undefined });
+});
+
+test("Command, Launch arguments and Resume command store under their own keys; an empty Command stays a list", () => {
+  let patch: Partial<AgentProfile> | undefined;
+  const tree = AgentEditor({ agent: profile({ resumeCommand: ["fake", "--continue"] }), isDefault: true, canRemove: false, open: true, onToggle: () => {}, onChange: (p) => (patch = p), onRemove: () => {}, onDefault: () => {} });
+  const fields = byComponent(tree, ArgLinesField).map(argProps);
+  expect(fields.map((f) => [f.value, f.optional ?? false])).toEqual([
+    [["fake", "{prompt}"], false],
+    [undefined, true],
+    [["fake", "--continue"], true],
+  ]);
+  fields[0].onChange(argLinesValue("", false));
+  expect(patch).toEqual({ command: [] });
+  fields[2].onChange(argLinesValue("fake\nresume", true));
+  expect(patch).toEqual({ resumeCommand: ["fake", "resume"] });
+});
+
+test("an argument field keeps spaces and new lines as typed and stores the parsed list", () => {
+  const field = argField(undefined, true);
+  // Typed one key at a time: every intermediate text stays exactly as typed.
+  const typed = "open\n-a\nVisual Studio Code";
+  for (let i = 1; i <= typed.length; i++) {
+    field.type(typed.slice(0, i));
+    expect(field.shown()).toBe(typed.slice(0, i));
+  }
+  expect(field.stored()).toEqual(["open", "-a", "Visual Studio Code"]);
+  // Enter after the last argument opens a new line; nothing new is stored until something is typed on it.
+  field.type(`${typed}\n`);
+  expect(field.shown()).toBe(`${typed}\n`);
+  expect(field.stored()).toEqual(["open", "-a", "Visual Studio Code"]);
+  // Surrounding whitespace is shown but not stored.
+  field.type("  --mode auto \n");
+  expect(field.shown()).toBe("  --mode auto \n");
+  expect(field.stored()).toEqual(["--mode auto"]);
+});
+
+test("an argument field shows the list when something else replaced it, and a required field stores an empty list", () => {
+  const field = argField(["claude"], false);
+  expect(field.shown()).toBe("claude");
+  field.type("claude\n");
+  expect(field.shown()).toBe("claude\n");
+  // A preset (or another profile) replaces the list: the field shows the new one, not the old text.
+  field.replace(["agy", "{prompt}"]);
+  expect(field.shown()).toBe("agy\n{prompt}");
+  field.type("");
+  expect(field.stored()).toEqual([]);
+  expect(argLinesValue(" \n ", true)).toBeUndefined();
+});
+
+test("the argument textarea passes on the text exactly as typed and grows with its lines", () => {
+  const typed: string[] = [];
+  const [area] = byTag(ArgLinesArea({ text: "open\n-a\nVisual Studio Code\n", label: "Editor command", onInput: (t) => typed.push(t) }), "textarea");
+  expect(area.props.value).toBe("open\n-a\nVisual Studio Code\n");
+  expect(area.props.rows).toBe(4);
+  expect(area.props["aria-label"]).toBe("Editor command");
+  (area.props.onInput as (e: { currentTarget: { value: string } }) => void)({ currentTarget: { value: "open \n" } });
+  expect(typed).toEqual(["open \n"]);
 });
 
 test("the editor command field: one argument per line, empty stores nothing, and the hint names code and an example", () => {
   let stored: string[] | undefined = ["unchanged"];
-  const field = EditorCommandField({ editor: undefined, onChange: (editor) => (stored = editor) });
-  const [area] = byTag(field, "textarea");
-  const type = (value: string) => (area.props.onInput as (e: { currentTarget: { value: string } }) => void)({ currentTarget: { value } });
-  expect(area.props.value).toBe("");
+  const tree = EditorCommandField({ editor: undefined, onChange: (editor) => (stored = editor) });
+  const [field] = byComponent(tree, ArgLinesField);
+  const props = argProps(field);
+  expect(props).toMatchObject({ value: undefined, optional: true, label: "Editor command", placeholder: "code" });
+  const type = (text: string) => props.onChange(argLinesValue(text, true));
   type("zed");
   expect(stored).toEqual(["zed"]);
   type("open\n-a\nVisual Studio Code\n{path}");
   expect(stored).toEqual(["open", "-a", "Visual Studio Code", "{path}"]);
   type("");
   expect(stored).toBeUndefined();
-  const hint = textOf(field);
+  const hint = textOf(tree);
   expect(hint).toContain("Empty uses code");
   expect(hint).toContain('open -a "Visual Studio Code" {path}');
-  expect(byTag(EditorCommandField({ editor: ["zed", "--new"], onChange: () => {} }), "textarea")[0].props.value).toBe("zed\n--new");
+  expect(byComponent(EditorCommandField({ editor: ["zed", "--new"], onChange: () => {} }), ArgLinesField)[0].props.value).toEqual(["zed", "--new"]);
 });

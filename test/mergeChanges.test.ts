@@ -45,7 +45,8 @@ test("mergeChanges: one change per name, data from the leading copy, other check
   expect([audit.column, audit.tasks, audit.branchMatch]).toEqual(["Implementing", { done: 4, total: 12 }, "wip/compliance"]);
   expect(audit.checkout).toEqual(wt("audit-trail", "wip/compliance"));
   expect(audit.otherCheckouts).toEqual([{ ...MAIN, column: "Drafts" }, { ...wt("old", undefined), column: "Backlog" }]);
-  expect([upgrade.checkout?.isMain, upgrade.otherCheckouts, upgrade.branchMatch]).toEqual([false, undefined, "feat/other"]);
+  // the lead is carried along in another change's worktree and the scanner found no match: the checkout's branch is not taken
+  expect([upgrade.checkout?.isMain, upgrade.otherCheckouts, upgrade.branchMatch]).toEqual([false, undefined, undefined]);
 });
 
 test("mergeChanges: a change that leads from main keeps its name-based branch guess", () => {

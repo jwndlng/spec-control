@@ -38,6 +38,11 @@ import {
   type ListedRepo,
   proposedWorkspace,
   workspaceRootReady,
+  checkedProjects,
+  discoveryPending,
+  setupClones,
+  type WorkspaceDiscovery,
+  workspaceContinueBlocked,
   type ProjectSettingsMode,
   preselectedAgent,
   projectSettingsSave,
@@ -1089,7 +1094,7 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
   const [entered, setEntered] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [inputError, setInputError] = useState<string>();
-  const [discovery, setDiscovery] = useState<{ result?: DiscoverResult; running: boolean; error?: string }>({ running: false });
+  const [discovery, setDiscovery] = useState<WorkspaceDiscovery>({ running: false });
   const [unchecked, setUnchecked] = useState<Set<string>>(new Set());
   const [workspaceError, setWorkspaceError] = useState<string>();
   const [picking, setPicking] = useState(false);
@@ -1103,6 +1108,8 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
   const [githubOpen, setGithubOpen] = useState(false);
   const [listed, setListed] = useState<ListedRepo[]>([]);
   const [cloneIds, setCloneIds] = useState<Record<string, string>>({});
+  /** The server's folder for each accepted clone, by listed path: what the Done step finds the clone by. */
+  const [cloneTargets, setCloneTargets] = useState<Record<string, string>>({});
   const [cloneRefused, setCloneRefused] = useState<Record<string, string>>({});
   const clones = useGithubClones();
   const cloneActions = useCloneActions();
@@ -1196,15 +1203,17 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
     const roots = [...configuredRoots, ...entered.filter((r) => !configuredRoots.includes(r))];
     const mine = ++discoverySeq.current;
     if (roots.length === 0) {
-      setDiscovery({ running: false });
+      setDiscovery({ running: false, for: rootsKey });
       return;
     }
     setDiscovery((was) => ({ ...was, running: true }));
     api.discover(roots, config?.ignorePaths ?? []).then(
-      (result) => mine === discoverySeq.current && setDiscovery({ result, running: false }),
-      (err) => mine === discoverySeq.current && setDiscovery({ running: false, error: message(err) }),
+      (result) => mine === discoverySeq.current && setDiscovery({ result, running: false, for: rootsKey }),
+      (err) => mine === discoverySeq.current && setDiscovery({ running: false, error: message(err), for: rootsKey }),
     );
   }, [rootsKey]);
+  // Also before the effect has started the run for roots just changed: Continue acts on the latest result only.
+  const discovering = discoveryPending(discovery, rootsKey);
 
   const choices = config && availability ? agentChoices(config, availability.agents, availability.presets) : [];
   // Checked and preselected once the choices are known; the user's choices win from then on.
@@ -1342,6 +1351,7 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
     try {
       const clone = await api.cloneGithub(r.repo, r.root, r.name);
       setCloneIds((was) => ({ ...was, [r.path]: clone.id }));
+      setCloneTargets((was) => ({ ...was, [r.path]: clone.path }));
       setCloneRefused(({ [r.path]: _old, ...rest }) => rest);
       void githubClones.started(clone);
       return clone.id;
@@ -1353,22 +1363,20 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
 
   /** Continue on the Workspace step: `continueWorkspaceStep` decides; this applies its result to the step. */
   const continueWorkspace = async (to: number = STEP.agents) => {
+    if (workspaceContinueBlocked(rootReady, discovering)) return;
     setBusy(true);
     setWorkspaceError(undefined);
     try {
-      const checkedPaths = (discovery.result?.candidates ?? []).filter((c) => !unchecked.has(c.path)).map((c) => c.path);
+      const checkedPaths = checkedProjects(discovery.result, unchecked);
       const result = await continueWorkspaceStep(
-        { entered, toCreate, missing: new Set(missing.keys()), checked: checkedPaths, listed, cloneIds, cloneRefused },
+        { entered, toCreate, missing: new Set(missing.keys()), checked: checkedPaths, listed, cloneIds, cloneTargets, cloneRefused },
         {
           createWorkspaceFolder: api.createWorkspaceFolder,
           config: api.config,
           saveConfig: api.saveConfig,
           trackRepo: api.trackRepo,
           cloneGithub: api.cloneGithub,
-          started: (clone) => {
-            setCloneIds((was) => ({ ...was, [clone.path]: clone.id }));
-            void githubClones.started(clone);
-          },
+          started: (clone) => void githubClones.started(clone),
           onSaved,
         },
       );
@@ -1379,6 +1387,7 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
       }
       setCreateErrors(result.createErrors);
       setCloneIds(result.cloneIds);
+      setCloneTargets(result.cloneTargets);
       setCloneRefused(result.cloneRefused);
       setSaved((was) => ({
         ...was,
@@ -1390,13 +1399,14 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
       }));
       // Saved: what was entered is configured now, whether or not a refused clone keeps the step open.
       if (result.saved) {
+        // Not the unchecked set: a project the user left out stays left out while the wizard is open.
         setEntered([]);
-        setUnchecked(new Set());
         setToCreate(new Set());
       }
       if (result.outcome === "next") {
         setListed([]);
         setCloneIds({});
+        setCloneTargets({});
         setCloneRefused({});
         setStep(to);
       }
@@ -1536,7 +1546,7 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
       input,
       inputError,
       discovery: discovery.result,
-      discovering: discovery.running,
+      discovering,
       discoveryError: discovery.error,
       unchecked,
       saveError: workspaceError,
@@ -1556,7 +1566,11 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
     };
     const githubRoots = githubRootChoices(configuredRoots, entered, missing, toCreate);
     return (
-      <WizardFrame {...frame} continueBlocked={rootReady ? undefined : "A workspace folder is needed: choose one or create a new one."} onContinue={() => void continueWorkspace()}>
+      <WizardFrame
+        {...frame}
+        continueBlocked={workspaceContinueBlocked(rootReady, discovering)}
+        onContinue={() => void continueWorkspace()}
+      >
         <WorkspaceStep
           view={view}
           onInput={setInput}
@@ -1683,14 +1697,14 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
     );
   }
   // The clones setup started, as the clone list reports them now; a retry keeps the folder, so they are found by path.
-  const setupClones = clones.clones.filter((c) => saved.clonePaths.includes(c.path));
+  const startedClones = setupClones(clones.clones, saved.clonePaths);
   return (
     <WizardFrame {...frame} onContinue={() => void finish()} continueLabel="Finish">
       <DoneStep
-        summary={setupSummary(config, saved, report, missingAgents.map((c) => c.name), setupClones.filter(isCloneActive).length)}
+        summary={setupSummary(config, saved, report, missingAgents.map((c) => c.name), startedClones.filter(isCloneActive).length)}
         firstStart={info?.pending === true}
         home={info?.home}
-        clones={setupClones}
+        clones={startedClones}
         cloneActions={cloneActions}
         now={Date.now()}
       />

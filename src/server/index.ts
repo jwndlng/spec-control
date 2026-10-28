@@ -10,7 +10,7 @@ import { describeOutcome, startHomeMigration } from "./homeMigration.ts";
 import { KeepAwake } from "./keepAwake.ts";
 import { explicitHome, newDefaultHome, oldDefaultHome } from "./paths.ts";
 import { Scanner } from "./scanner.ts";
-import { confirmIntegration } from "./integration.ts";
+import { confirmIntegrationSession } from "./integration.ts";
 import { SessionManager } from "./sessions/manager.ts";
 import { pruneMergeScratch } from "./sessions/workStatus.ts";
 import { sessionHints } from "./staleChanges.ts";
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
     getSnapshot: () => state.scanner.snapshot,
     onActivity: (session, what) => void activity.append([sessionEvent(session, state.config.repos.find((r) => r.id === session.repoId)?.name ?? session.repoId, what)]),
     // The marker, not the agent's word: if `openspec/config.yaml` is there now, the repository becomes tracked.
-    onIntegrationEnded: (session) => void confirmIntegration(state, session.folder).catch(() => undefined),
+    onIntegrationEnded: (session) => void confirmIntegrationSession(state, session).catch(() => undefined),
     onRunningChanged: () => state.keepAwake?.evaluate(),
   });
   await state.sessions.init();
