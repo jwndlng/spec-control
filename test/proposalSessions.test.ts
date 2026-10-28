@@ -1,10 +1,12 @@
 // Draft ships its proposal (ship-proposals-as-docs-prs): in a docs auto-merge project a Draft session works on
-// `docs/<change>` with the proposal instruction, Implement starts beside it on `feat/<change>`, and the existing ready-merge
-// and merged-ends-session flows take the proposal pull request unchanged. Fake agent, temp git repositories, no network.
+// `docs/<change>` with the proposal instruction; Implement starts on `feat/<change>` only by ending it first
+// (one-console-per-change), and its pull request is then handed to the change's running session to merge. Fake agent, temp git repositories, no network.
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createFetchHandler, type AppState } from "../src/server/api.ts";
 import { worktreesDir } from "../src/server/paths.ts";
+import { Scanner } from "../src/server/scanner.ts";
 import { mergePrompt, openingPrompt } from "../src/server/sessions/agents.ts";
 import type { SessionManager } from "../src/server/sessions/manager.ts";
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
@@ -142,32 +144,91 @@ test("Fast-forward keeps feat/<change> and never carries the instruction or the 
   expect(seen.text()).not.toContain("titled Add OpenSpec proposal");
 });
 
-test("Implement starts beside the running proposal session, from the proposal, and never adopts its worktree", async () => {
-  const { h, manager } = await project();
-  // The proposal is not on the default branch yet: the change exists only uncommitted in the main checkout.
-  git(h.repoPath, "rm", "-r", "-q", "--cached", `openspec/changes/${CHANGE}`);
-  git(h.repoPath, "commit", "-q", "-m", "without the change");
+/** A Draft session on docs/<change> that committed its proposal and "pushed" it: what Implement follows. */
+async function proposalSession(h: Harness, manager: SessionManager) {
   const draft = await manager.open({ repoId: h.repoId, change: CHANGE, action: "draft" });
   await started(manager, draft.id, draftPrompt(h, true));
-  const proposalTip = await commit(draft.worktreePath, { [`openspec/changes/${CHANGE}/design.md`]: "# Design\n" });
-  const draftHead = git(draft.worktreePath, "rev-parse", "--abbrev-ref", "HEAD");
+  const tip = await commit(draft.worktreePath, { [`openspec/changes/${CHANGE}/design.md`]: "# Design\n" });
+  git(draft.worktreePath, "update-ref", `refs/remotes/origin/docs/${CHANGE}`, tip);
+  return { draft, tip };
+}
 
-  // The board routes Implement to a new session, Draft to the proposal session; the server agrees.
+const runningOf = (manager: SessionManager) => (manager.list() as ChangeSession[]).filter((s) => s.change === CHANGE && s.state === "running");
+
+test("Implement beside the running proposal session is refused, and nothing is created", async () => {
+  const { h, manager } = await project();
+  const { draft } = await proposalSession(h, manager);
+  const implPath = join(worktreesDir(), h.repoId, CHANGE);
+
+  // The board sends Draft to the proposal session and nothing else anywhere; the server agrees.
   const sessions = manager.list() as ChangeSession[];
   expect(nextStepFor(sessions, h.repoId, CHANGE, "implement")).toEqual({ promptSessionId: undefined });
   expect(nextStepFor(sessions, h.repoId, CHANGE, "draft")).toEqual({ promptSessionId: draft.id });
-  await expect(manager.prompt(draft.id, { action: "implement" })).rejects.toThrow(/drafts the proposal/);
+  await expect(manager.prompt(draft.id, { action: "implement" })).rejects.toThrow(`drafts the proposal on docs/${CHANGE}`);
 
-  const impl = await manager.open({ repoId: h.repoId, change: CHANGE, action: "implement" });
+  await expect(manager.open({ repoId: h.repoId, change: CHANGE, action: "implement" })).rejects.toThrow(`docs/${CHANGE}`);
+  expect(await stat(implPath).catch(() => undefined)).toBeUndefined();
+  expect(runningOf(manager).map((s) => s.id)).toEqual([draft.id]);
+  // Draft still goes into it.
+  expect((await manager.open({ repoId: h.repoId, change: CHANGE, action: "draft" })).id).toBe(draft.id);
+});
+
+test("asking to end the proposal session first ends it, keeps its worktree, and starts Implement from the proposal", async () => {
+  // The proposal is not on the default branch yet: the change exists only uncommitted in the main checkout.
+  const { h, manager } = await project();
+  git(h.repoPath, "rm", "-r", "-q", "--cached", `openspec/changes/${CHANGE}`);
+  git(h.repoPath, "commit", "-q", "-m", "without the change");
+  const { draft, tip } = await proposalSession(h, manager);
+  const draftHead = git(draft.worktreePath, "rev-parse", "--abbrev-ref", "HEAD");
+
+  const impl = await manager.open({ repoId: h.repoId, change: CHANGE, action: "implement", endProposal: true });
   expect(impl.id).not.toBe(draft.id);
   expect([impl.branch, impl.worktreePath, impl.adopted]).toEqual([`feat/${CHANGE}`, join(worktreesDir(), h.repoId, CHANGE), undefined]);
-  expect(git(impl.worktreePath, "rev-parse", "HEAD")).toBe(proposalTip);
+  expect(git(impl.worktreePath, "rev-parse", "HEAD")).toBe(tip);
   await started(manager, impl.id, `implement ${CHANGE}`);
-  // The proposal's worktree is neither adopted nor changed.
-  expect([git(draft.worktreePath, "rev-parse", "--abbrev-ref", "HEAD"), git(draft.worktreePath, "rev-parse", "HEAD"), git(draft.worktreePath, "status", "--porcelain")]).toEqual([draftHead, proposalTip, ""]);
-  // Both run; a further Implement or Draft returns the matching one.
+
+  // Exactly one session runs; the proposal session ended with its record, worktree and branch kept.
+  expect(runningOf(manager).map((s) => s.id)).toEqual([impl.id]);
+  const ended = manager.get(draft.id) as ChangeSession;
+  expect(ended.state).toBe("exited");
+  expect(ended.autoMergeAskedAt).toBeDefined();
+  expect([git(draft.worktreePath, "rev-parse", "--abbrev-ref", "HEAD"), git(draft.worktreePath, "rev-parse", "HEAD"), git(draft.worktreePath, "status", "--porcelain")]).toEqual([draftHead, tip, ""]);
+  expect(git(h.repoPath, "rev-parse", `refs/heads/docs/${CHANGE}`)).toBe(tip);
+
+  // Resuming the proposal session now would bring back a second console.
+  await expect(manager.resume(draft.id)).rejects.toThrow(`another session of ${CHANGE} is running on feat/${CHANGE}`);
+  expect(manager.get(draft.id).state).toBe("exited");
+  // A further Implement returns the running one.
   expect((await manager.open({ repoId: h.repoId, change: CHANGE, action: "implement" })).id).toBe(impl.id);
-  expect((await manager.open({ repoId: h.repoId, change: CHANGE, action: "draft" })).id).toBe(draft.id);
+});
+
+test("ending first applies every opening refusal before it ends anything", async () => {
+  const { h, manager } = await project();
+  const draft = await manager.open({ repoId: h.repoId, change: DRAFTS, action: "draft" });
+  expect(draft.branch).toBe(`docs/${DRAFTS}`);
+  // Implement is not available while the change is in Drafts.
+  await expect(manager.open({ repoId: h.repoId, change: DRAFTS, action: "implement", endProposal: true })).rejects.toThrow("not available");
+  // Draft and Fast-forward never end it; the flag is a boolean or nothing.
+  await expect(manager.open({ repoId: h.repoId, change: DRAFTS, action: "draft", endProposal: true })).rejects.toThrow("does not end the proposal session");
+  await expect(manager.open({ repoId: h.repoId, change: DRAFTS, action: "fastForward", endProposal: true })).rejects.toThrow("does not end the proposal session");
+  await expect(manager.open({ repoId: h.repoId, change: DRAFTS, action: "implement", endProposal: "yes" })).rejects.toThrow("endProposal must be a boolean");
+  expect(manager.get(draft.id).state).toBe("running");
+});
+
+test("when the proposal session's agent does not end, nothing is started", async () => {
+  const { h, manager } = await project();
+  const { draft } = await proposalSession(h, manager);
+  // An agent that survives End session: `close` returns with the session still running.
+  const stuck = manager as unknown as { close: (id: string) => Promise<unknown> };
+  const close = stuck.close;
+  stuck.close = async (id: string) => ({ session: manager.get(id) });
+  try {
+    await expect(manager.open({ repoId: h.repoId, change: CHANGE, action: "implement", endProposal: true })).rejects.toThrow("did not end; nothing was started");
+  } finally {
+    stuck.close = close;
+  }
+  expect(await stat(join(worktreesDir(), h.repoId, CHANGE)).catch(() => undefined)).toBeUndefined();
+  expect(runningOf(manager).map((s) => s.id)).toEqual([draft.id]);
 });
 
 test("Implement after the proposal merged starts from the default branch", async () => {
@@ -204,4 +265,85 @@ test("the proposal pull request is handed back to merge once ready, and its merg
   expect(await stat(s.worktreePath).catch(() => undefined)).toBeUndefined();
   expect(git(h.repoPath, "rev-parse", `refs/heads/docs/${CHANGE}`)).toBe(head); // the branch is kept
   expect(await gh.calls()).toEqual([]);
+});
+
+/** Draft, then Implement asking to end it: the ended proposal session and the running Implement session. */
+async function handedOver() {
+  const { h, manager, agent } = await project();
+  const { draft, tip } = await proposalSession(h, manager);
+  const impl = await manager.open({ repoId: h.repoId, change: CHANGE, action: "implement", endProposal: true });
+  const seen = await started(manager, impl.id, `implement ${CHANGE}`);
+  await gh.forget();
+  return { h, manager, agent, draft, impl, tip, seen };
+}
+
+test("an ended proposal session's ready pull request is handed to the Implement session, once per head commit", async () => {
+  const { h, manager, agent, draft, impl, tip, seen } = await handedOver();
+  const list = [pr({ head: `docs/${CHANGE}`, headOid: tip })];
+  await manager.requestReadyMerges(h.repoId, list);
+  const expected = mergePrompt(agent, CHANGE, { pr: 90, head: tip, proposal: true });
+  expect(expected).toEndWith(`This pull request is the change's proposal from branch docs/${CHANGE}, not the branch of this worktree.`);
+  await waitFor(() => seen.text().includes(`you said: ${expected}`), "the handed-over Merge prompt");
+  // Recorded on the proposal session, not on the session that received it.
+  expect((manager.get(draft.id) as ChangeSession).mergeAsked).toMatchObject({ pr: 90, head: tip, by: "dashboard", submitted: true });
+  expect((manager.get(impl.id) as ChangeSession).mergeAsked).toBeUndefined();
+
+  // Seen again at the same head commit: nothing more is typed.
+  await manager.requestReadyMerges(h.repoId, list);
+  await new Promise((r) => setTimeout(r, 300));
+  expect(seen.text().split(`you said: ${expected}`).length - 1).toBe(1);
+  expect(await gh.calls()).toEqual([]);
+});
+
+test("with no running session of the change the handed-over pull request is not sent anywhere", async () => {
+  const { h, manager, draft, impl, tip } = await handedOver();
+  await manager.close(impl.id);
+  await manager.requestReadyMerges(h.repoId, [pr({ head: `docs/${CHANGE}`, headOid: tip })]);
+  expect((manager.get(draft.id) as ChangeSession).mergeAsked).toBeUndefined();
+  expect(runningOf(manager)).toEqual([]);
+  // And Merge by hand is refused for an ended session, as for any other.
+  await expect(manager.merge(impl.id, [pr({ head: `docs/${CHANGE}`, headOid: tip })])).rejects.toThrow("not running");
+});
+
+test("Merge in the Implement session's panel targets the handed-over proposal pull request", async () => {
+  const { manager, agent, draft, impl, tip, seen } = await handedOver();
+  const result = await manager.merge(impl.id, [pr({ head: `docs/${CHANGE}`, headOid: tip })]);
+  expect(result.id).toBe(impl.id);
+  await waitFor(() => seen.text().includes(`you said: ${mergePrompt(agent, CHANGE, { pr: 90, head: tip, proposal: true })}`), "the Merge prompt");
+  expect((manager.get(draft.id) as ChangeSession).mergeAsked).toMatchObject({ pr: 90, head: tip, by: "user" });
+  // Its own branch's pull request comes first once there is one.
+  const own = pr({ number: 91, head: `feat/${CHANGE}`, headOid: "b".repeat(40) });
+  await manager.merge(impl.id, [own, pr({ head: `docs/${CHANGE}`, headOid: tip })]);
+  expect((manager.get(impl.id) as ChangeSession).mergeAsked).toMatchObject({ pr: 91, by: "user" });
+});
+
+test("once the handed-over proposal pull request merged, its worktree is removed, its branch kept, and Implement keeps running", async () => {
+  const { h, manager, draft, impl, tip } = await handedOver();
+  const mergedAt = new Date(Date.now() + 1000).toISOString();
+  await manager.endMergedAutoMerge(h.repoId, [pr({ head: `docs/${CHANGE}`, headOid: tip, state: "merged", mergedAt })]);
+  expect((manager.get(draft.id) as ChangeSession).autoEnded).toMatchObject({ pr: 90, removed: true });
+  expect(await stat(draft.worktreePath).catch(() => undefined)).toBeUndefined();
+  expect(git(h.repoPath, "rev-parse", `refs/heads/docs/${CHANGE}`)).toBe(tip);
+  expect(manager.get(impl.id).state).toBe("running");
+  expect(await gh.calls()).toEqual([]);
+});
+
+test("API: endProposal is accepted as a boolean only", async () => {
+  const { h, manager } = await project();
+  const { draft } = await proposalSession(h, manager);
+  const state: AppState = { config: h.config, scanner: new Scanner(() => h.config, { persist: false }, h.snapshot), sessions: manager };
+  const handle = createFetchHandler({ state, indexHtml: "" });
+  const post = (body: unknown) => handle(new Request("http://127.0.0.1:4173/api/sessions", { method: "POST", headers: { "content-type": "application/json", origin: "http://127.0.0.1:4173" }, body: JSON.stringify(body) }));
+  const open = { repoId: h.repoId, change: CHANGE, action: "implement" };
+
+  for (const endProposal of ["true", 1, null, {}]) {
+    const refused = await post({ ...open, endProposal });
+    expect([refused.status, ((await refused.json()) as { error: string }).error]).toEqual([400, "endProposal must be a boolean"]);
+  }
+  expect((await post({ ...open, endProposal: false })).status).toBe(409);
+  expect(manager.get(draft.id).state).toBe("running");
+  const started = await post({ ...open, endProposal: true });
+  expect(started.status).toBe(201);
+  expect(((await started.json()) as ChangeSession).branch).toBe(`feat/${CHANGE}`);
+  expect(manager.get(draft.id).state).toBe("exited");
 });

@@ -395,6 +395,22 @@ test("submissions to one session run one after another", async () => {
   expect(view.text()).toContain("you said: second message (");
 });
 
+test("a text longer than the terminal's input queue reaches a paste-detecting agent whole, shown as typed, and is submitted", async () => {
+  const h = await harness({ agent: { command: [FAKE_AGENT, "--paste-threshold", "512", "{prompt}"] } });
+  const manager = h.newManager(FAST_SUBMIT);
+  managers.push(manager);
+  const s = await manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
+  const view = await watch(manager, s.id);
+  await waitFor(() => view.text().includes("fake-agent ready"), "agent banner");
+  // Over 1024 bytes with multi-byte characters, like an Archive prompt with the docs auto-merge and record instructions.
+  const text = Array.from({ length: 24 }, (_, i) => `Sentence ${i} — of a long prompt;`).join(" ").repeat(2);
+  expect(new TextEncoder().encode(text).length).toBeGreaterThan(1024);
+  expect(await manager.submit(s.id, text)).toEqual({ submitted: true });
+  await waitFor(() => view.text().includes("received line of"), "the agent received the submitted line");
+  expect(view.text()).toContain(`received line of ${text.length} characters, hash ${Bun.hash(text).toString(16)}`);
+  expect(view.text()).not.toContain("[pasted");
+});
+
 test("submit refuses what is not plain text, and sessions that are not running", async () => {
   const h = track(await harness());
   const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });

@@ -167,7 +167,8 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           </li>
           <li>
             The agent's terminal is the <strong>Console</strong> tab of the change's detail view. What it changes is decided by
-            its own permission prompts.
+            its own permission prompts. A change has one running session at a time: while it runs, the card shows its badge
+            instead of the starters, and the console offers the next step — sent into that session, as a prompt.
           </li>
           <li>
             <strong>Open in editor</strong>, beside <strong>Copy cd</strong> in the Console tab and in Open work, opens the
@@ -195,8 +196,11 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           <li>
             In a project with <strong>Docs auto-merge</strong> on, <strong>Draft artifacts</strong> works on a branch of its
             own, <code>docs/&lt;change&gt;</code>, and asks the agent to open the proposal as a pull request of its own once
-            every artifact is written; the card labels it <strong>Proposal</strong>. <strong>Implement</strong> then starts
-            beside it on <code>feat/&lt;change&gt;</code>, from the proposal while that is not merged yet.
+            every artifact is written; the card labels it <strong>Proposal</strong>. Its console offers the next step as{" "}
+            <strong>End proposal session and implement</strong>: that session ends — its worktree and branch are kept, and
+            you are asked first only while the proposal is not pushed — and <strong>Implement</strong> starts on{" "}
+            <code>feat/&lt;change&gt;</code>, from the proposal while that is not merged yet. Once the proposal's pull
+            request is ready, the <strong>Merge</strong> prompt for it goes to the Implement session.
           </li>
           <li>
             <strong>Fast-forward</strong>, in the menu beside <strong>Draft artifacts</strong> on a change that is not planned yet,

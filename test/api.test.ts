@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { type AppState, createFetchHandler, crossSiteRefusal } from "../src/server/api.ts";
+import { type AppState, createFetchHandler, crossSiteRefusal, startingFetchHandler } from "../src/server/api.ts";
 import { readSnapshot } from "../src/server/cache.ts";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import { cachePath, configPath } from "../src/server/paths.ts";
@@ -201,6 +201,62 @@ test("a request addressed to a non-loopback host name is refused (DNS rebinding)
   expect(crossSiteRefusal(req("http://evil.example:4711/api/scan", { origin: "http://evil.example:4711" }))).toContain("loopback");
   expect(crossSiteRefusal(req("http://127.0.0.1:4711/api/scan", { origin: "http://127.0.0.1:4711" }))).toBeUndefined();
   expect(crossSiteRefusal(req("http://localhost:4711/api/scan", {}))).toBeUndefined();
+});
+
+test("every request addressed to a foreign host name is refused before any route runs (DNS rebinding)", async () => {
+  // Bun builds `req.url` from the Host header, so a Request on that URL is what a rebound page's request looks like.
+  // Any use of the state (config, scanner, sessions, the environment check's processes) is recorded.
+  const touched: PropertyKey[] = [];
+  const watched = new Proxy({} as AppState, {
+    get(_target, key) {
+      touched.push(key);
+      return undefined;
+    },
+  });
+  const handler = createFetchHandler({ state: watched, indexHtml: "<title>stub</title>" });
+  const foreign = [
+    ["GET", "/api/config"],
+    ["GET", "/api/state"],
+    ["GET", "/api/repos/abc123/changes/rotate-keys/file?path=proposal.md"],
+    ["GET", "/api/environment?force=1"],
+    ["HEAD", "/api/state"],
+    ["GET", "/api/version"],
+    ["GET", "/"],
+    ["GET", "/settings"],
+    ["POST", "/api/scan"],
+  ];
+  for (const host of ["attacker.example:4711", "127.0.0.1.attacker.example:4711", "localhost.:4711"]) {
+    for (const [method, path] of foreign) {
+      const res = await handler(new Request(`http://${host}${path}`, { method, headers: { "content-type": "application/json" } }));
+      expect([host, method, path, res.status]).toEqual([host, method, path, 403]);
+      const body = await res.text();
+      expect(body).not.toContain("stub");
+      expect(body).not.toContain("spec-control");
+      if (path.startsWith("/api/") && method !== "HEAD") expect(JSON.parse(body).error).toContain("loopback");
+    }
+  }
+  expect(touched).toEqual([]);
+});
+
+test("loopback host names are answered as before, in any case", async () => {
+  const handler = createFetchHandler({ state, indexHtml: "<title>stub</title>" });
+  for (const host of ["127.0.0.1:4711", "localhost:4711", "[::1]:4711", "LOCALHOST:4711"]) {
+    const res = await handler(new Request(`http://${host}/api/state`));
+    expect([host, res.status]).toEqual([host, 200]);
+    expect((await res.json()).repos).toBeArray();
+    expect(await (await handler(new Request(`http://${host}/`))).text()).toContain("stub");
+  }
+});
+
+test("while starting, a foreign host name gets 403, not the version", async () => {
+  const foreign = startingFetchHandler(new Request("http://attacker.example:4711/api/version"));
+  expect(foreign.status).toBe(403);
+  expect(await foreign.text()).not.toContain("spec-control");
+  expect(startingFetchHandler(new Request("http://attacker.example:4711/")).status).toBe(403);
+  const own = startingFetchHandler(new Request("http://127.0.0.1:4711/api/version"));
+  expect(own.status).toBe(200);
+  expect((await own.json()).name).toBe("spec-control");
+  expect(startingFetchHandler(new Request("http://127.0.0.1:4711/api/state")).status).toBe(503);
 });
 
 test("a snapshot cached before working-tree status existed is served on startup", async () => {

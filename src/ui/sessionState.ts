@@ -3,9 +3,9 @@ import { menuActions, type NextStep, recommendedAction } from "../shared/nextSte
 import { conflictSignal, type ConflictSignal } from "../shared/conflictSignal.ts";
 import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { relTime } from "./format.ts";
-import { isProposalSession, receivingSession } from "../shared/sessionBranch.ts";
+import { isEndedProposalSession, isProposalSession, receivingSession } from "../shared/sessionBranch.ts";
 import { mergePending, pullRequestReadiness, readinessDetail } from "../shared/pullRequestReadiness.ts";
-import { availableActions, DEFAULT_EDITOR, editorCommandLine, type EditorAvailability, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type RepoPullRequests, type Session, type SessionAction, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
+import { availableActions, DEFAULT_EDITOR, editorCommandLine, type EditorAvailability, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type RepoPullRequests, type Session, type SessionAction, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
 
 /** Session starters are shown when the feature is on, for every tracked repository that has not been switched off. */
 export function sessionsEnabledFor(config: Config | null, repoId: string): boolean {
@@ -62,11 +62,10 @@ export function cardSessionControls(
 ): { shown: ChangeSession[]; starters: SessionAction[]; main?: NextStep; menu: NextStep[] } {
   if (!sessionsEnabledFor(config, card.repoId)) return { shown: [], starters: [], menu: [] };
   const shown = sessionsForChange(sessions, card.repoId, card.name);
-  const running = shown.filter((s) => s.state === "running");
-  // A running session's badge stands in for the whole split button, pull-request steps included — except beside a session
-  // drafting the proposal on its own branch, which takes Draft only: implementing starts beside it (ship-proposals-as-docs-prs).
-  if (running.length > 0 && !running.every(isProposalSession)) return { shown, starters: [], menu: [] };
-  const starters = startersFor(config, card).filter((a) => running.length === 0 || (a !== "draft" && a !== "fastForward"));
+  // A running session's badge stands in for the whole split button, pull-request steps included — a session drafting the
+  // proposal on its own branch too: its next steps are in its console, which ends it first (one-console-per-change D1).
+  if (shown.some((s) => s.state === "running")) return { shown, starters: [], menu: [] };
+  const starters = startersFor(config, card);
   return { shown, starters, ...starterSplit(card, starters, card.pullRequest) };
 }
 
@@ -143,12 +142,43 @@ export function startShowsConsole(place: StarterPlace): boolean {
 /**
  * Where a starter goes: into the change's running session (the prompt is typed there), or into a new session. One
  * change has one console, and every action the stage allows is sent to it, Archive included — except that a session
- * drafting the proposal on its own branch takes only Draft (`receivingSession`, the rule the server applies too).
- * Without an action, any running session of the change.
+ * drafting the proposal on its own branch takes only Draft (`receivingSession`, the rule the server applies too); every
+ * other action opens a new session that ends it first (`consoleSteps`). Without an action, any running session of the change.
  */
 export function nextStepFor(sessions: ChangeSession[], repoId: string, change: string, action?: SessionAction): { promptSessionId?: string } {
   if (action) return { promptSessionId: receivingSession(sessions, repoId, change, action)?.id };
   return { promptSessionId: sessions.find((s) => s.repoId === repoId && s.change === change && s.state === "running")?.id };
+}
+
+/**
+ * What the Console tab of a running session offers as the change's next steps (change-detail: "The console tab offers
+ * the change's next step"): `into`, the starters whose prompt goes into that very session, and `endFirst`, for a session
+ * drafting the proposal on its own branch, every other starter the stage allows but Fast-forward — each opens a new
+ * session that ends the proposal session first (one-console-per-change D2). Undefined when the session receives nothing:
+ * it has ended, or another session of the change is the one that runs.
+ */
+export function consoleSteps(config: Config | null, sessions: ChangeSession[], card: Pick<ChangeSnapshot, "repoId" | "archived" | "artifacts" | "stage" | "subState" | "blocked">, session: ChangeSession): { into: SessionAction[]; endFirst: SessionAction[] } | undefined {
+  if (session.state !== "running") return undefined;
+  const receives = (action: SessionAction) => nextStepFor(sessions, session.repoId, session.change, action).promptSessionId === session.id;
+  const starters = startersFor(config, card);
+  if (isProposalSession(session)) {
+    if (!receives("draft")) return undefined;
+    return { into: starters.filter((a) => a === "draft"), endFirst: starters.filter((a) => a !== "draft" && a !== "fastForward") };
+  }
+  if (!SESSION_ACTIONS.some(receives)) return undefined;
+  return { into: starters.filter(receives), endFirst: [] };
+}
+
+/**
+ * What ending the proposal session to start the next step has to ask first: nothing while its worktree loses nothing
+ * by it — the worktree and branch are kept either way — and one confirmation while the proposal is not pushed yet, since
+ * no agent will open or update its pull request then (one-console-per-change D2).
+ */
+export function endProposalConfirmation(worktree: Pick<SessionWorktree, "work"> | undefined): string | undefined {
+  const state = worktree?.work.state;
+  if (state !== "uncommitted" && state !== "unpushed") return undefined;
+  const what = state === "uncommitted" ? "has uncommitted files" : "has commits that are not pushed";
+  return `The proposal is not pushed yet: its worktree ${what}. Ending its session means no agent will open or update the proposal's pull request. The worktree and its branch are kept.`;
 }
 
 /** When a session was last doing something: what it printed, else what happened to the record. */
@@ -608,16 +638,36 @@ export interface MergeControl {
   pr: PullRequest;
   enabled: boolean;
   title: string;
+  /** The session whose Merge record counts for this pull request: the ended proposal session for a handed-over one. */
+  recordedOn: ChangeSession;
 }
 
-export function mergeControl(session: ChangeSession | undefined, lists: readonly RepoPullRequests[] | undefined): MergeControl | undefined {
-  const pr = sessionPullRequest(session, lists);
+/**
+ * The ended proposal session whose pull request a running session receives (one-console-per-change D3): the session is
+ * the change's only running one, has a worktree of its own, and the proposal session's worktree is still listed — the
+ * same rule the server applies. Read from what the page holds.
+ */
+export function handedOverProposal(session: ChangeSession | undefined, sessions: readonly ChangeSession[], worktrees: readonly SessionWorktree[]): ChangeSession | undefined {
+  if (session?.state !== "running" || session.inPlace || session.adopted || isProposalSession(session)) return undefined;
+  const mine = sessions.filter((s) => s.repoId === session.repoId && s.change === session.change).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const running = mine.filter((s) => s.state === "running");
+  if (running.length !== 1 || running[0].id !== session.id) return undefined;
+  return mine.find((s) => isEndedProposalSession(s) && worktrees.some((w) => w.path === s.worktreePath && w.work.state !== "missing"));
+}
+
+/** `proposal`: the change's ended proposal session, whose pull request this session's Merge targets when its own branch has none. */
+export function mergeControl(session: ChangeSession | undefined, lists: readonly RepoPullRequests[] | undefined, proposal?: ChangeSession): MergeControl | undefined {
+  const own = sessionPullRequest(session, lists);
+  const handed = own ? undefined : sessionPullRequest(proposal, lists);
+  const pr = own ?? handed;
   if (!session || !pr) return undefined;
+  const recordedOn = handed && proposal ? proposal : session;
   const readiness = pullRequestReadiness(pr);
-  if (!readiness?.ready) return { pr, enabled: false, title: `${readiness ? readinessDetail(readiness) : "Not ready"}, so #${pr.number} cannot be merged yet.` };
-  if (!pr.headOid) return { pr, enabled: false, title: `The pull-request list names no head commit for #${pr.number} yet; refresh it first.` };
-  if (session.state !== "running") return { pr, enabled: false, title: RESUME_TO_MERGE };
-  return { pr, enabled: true, title: `Sends ${session.agentName} a prompt asking it to merge #${pr.number}, only if its head is still ${shortCommit(pr.headOid)}. The dashboard merges nothing itself.` };
+  if (!readiness?.ready) return { pr, recordedOn, enabled: false, title: `${readiness ? readinessDetail(readiness) : "Not ready"}, so #${pr.number} cannot be merged yet.` };
+  if (!pr.headOid) return { pr, recordedOn, enabled: false, title: `The pull-request list names no head commit for #${pr.number} yet; refresh it first.` };
+  if (session.state !== "running") return { pr, recordedOn, enabled: false, title: RESUME_TO_MERGE };
+  const which = handed ? `the proposal's pull request #${pr.number} (from ${pr.head})` : `#${pr.number}`;
+  return { pr, recordedOn, enabled: true, title: `Sends ${session.agentName} a prompt asking it to merge ${which}, only if its head is still ${shortCommit(pr.headOid)}. The dashboard merges nothing itself.` };
 }
 
 /** What the panel says next to a ready pull request whose agent has ended: nothing is merged automatically then. */

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { containsEcho, echoProbe, normalise, stripAnsi, submitText, validSubmission, type SubmitTerminal } from "../src/server/sessions/submit.ts";
+import { containsEcho, echoProbe, normalise, PIECE_BYTES, stripAnsi, submissionPieces, submitText, validSubmission, type SubmitTerminal } from "../src/server/sessions/submit.ts";
 
 const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);
@@ -118,6 +118,61 @@ test("an exit marker (empty chunk) during the wait is ignored and nothing more i
   const t = fakeTerminal((_data, emit) => setTimeout(() => emit(""), 5));
   expect(await submitText(t.terminal, "Yes, go ahead", FAST)).toEqual({ submitted: false });
   expect(t.writes).toEqual(["Yes, go ahead"]);
+});
+
+const bytes = (text: string) => new TextEncoder().encode(text).length;
+
+const piecesCases: [string, string, number][] = [
+  ["short text is one piece", "Yes, go ahead", 256],
+  ["exactly the bound is one piece", "x".repeat(256), 256],
+  ["one byte over is two pieces", "x".repeat(257), 256],
+  ["a dash on the boundary is not cut", `${"x".repeat(255)}—${"y".repeat(10)}`, 256],
+  ["an emoji (surrogate pair) on the boundary is not cut", `${"x".repeat(254)}🚀${"y".repeat(10)}`, 256],
+  ["the longest valid submission", "Archive — sync, then archive. ".repeat(136).slice(0, 4096), 256],
+];
+for (const [name, text, max] of piecesCases) {
+  test(`pieces: ${name}`, () => {
+    const pieces = submissionPieces(text, max);
+    expect(pieces.join("")).toBe(text);
+    for (const piece of pieces) {
+      expect(bytes(piece)).toBeLessThanOrEqual(max);
+      expect(piece.length).toBeGreaterThan(0);
+    }
+  });
+}
+
+test("pieces: the default bound is a quarter of a 1024-byte input queue", () => {
+  expect(PIECE_BYTES).toBe(256);
+  expect(submissionPieces("x".repeat(1200)).map(bytes)).toEqual([256, 256, 256, 256, 176]);
+});
+
+test("a long text is written in pieces of at most the bound, in order, then Enter once", async () => {
+  const text = "Ship — commit, push and open a pull request. ".repeat(27);
+  expect(bytes(text)).toBeGreaterThan(1024);
+  let typed = "";
+  const t = fakeTerminal((data, emit) => {
+    if (data === "\r") return;
+    typed += data;
+    emit(data);
+  });
+  expect(await submitText(t.terminal, text, { ...FAST, piecePauseMs: 1 })).toEqual({ submitted: true });
+  expect(t.writes.at(-1)).toBe("\r");
+  expect(t.writes.filter((w) => w === "\r").length).toBe(1);
+  expect(t.writes.slice(0, -1).join("")).toBe(text);
+  for (const piece of t.writes.slice(0, -1)) expect(bytes(piece)).toBeLessThanOrEqual(256);
+  expect(typed).toBe(text);
+});
+
+test("the echo wait starts after the last piece: an echo that only follows it still submits", async () => {
+  const text = "x".repeat(1000);
+  let pieces = 0;
+  const t = fakeTerminal((data, emit) => {
+    if (data === "\r") return;
+    // Echoed only once everything is typed, as an agent that redraws after a burst would.
+    if (++pieces === 4) setTimeout(() => emit(text), 80);
+  });
+  expect(await submitText(t.terminal, text, { ...FAST, piecePauseMs: 40 })).toEqual({ submitted: true });
+  expect(t.writes.length).toBe(5);
 });
 
 test("only sentences are valid submissions", () => {
