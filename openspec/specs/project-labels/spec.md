@@ -57,7 +57,7 @@ built-in rule table that maps the names of marker files and directories to label
 
 Detection SHALL look at the names of the entries of the project folder of the main checkout and of its immediate
 subdirectories, and nothing deeper. It SHALL skip directories whose name starts with `.` and the directories
-`node_modules`, `vendor`, `dist`, `build`, `target` and `openspec`, SHALL read at most 64 subdirectories and at most 500
+`node_modules`, `vendor`, `dist`, `build` and `target`, and the directories the framework module that reads the repository names as its own (`spec-frameworks`: "Framework file names and formats stay in the framework module"; for OpenSpec, `openspec`), SHALL read at most 64 subdirectories and at most 500
 entries per directory, and SHALL NOT follow symbolic links. Detection MUST NOT open or read any file, MUST NOT run a
 git command, MUST NOT write anything and MUST NOT contact a network. Matching SHALL be case-sensitive on file names.
 Detected labels SHALL be part of the repository's snapshot, sorted by name and without duplicates, and SHALL change
@@ -87,6 +87,10 @@ A non-git folder SHALL be detected exactly like a git repository.
 #### Scenario: Read-only
 - **WHEN** a scan detects labels in every fixture repository
 - **THEN** every fixture repository is byte-for-byte unchanged and no git process was started for detection
+
+#### Scenario: The framework's own tree is skipped
+- **WHEN** `demo-ops`, read by the OpenSpec module, has `openspec/package.json` and nothing else that is a marker
+- **THEN** its detected labels are empty, exactly as before the skipped name came from the module
 
 ### Requirement: A detected label can be hidden per repository
 
