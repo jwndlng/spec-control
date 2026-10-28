@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-28-harden-session-lifecycle",
+    date: "2026-10-28",
+    title: "Safer agent session starts and ends",
+    summary:
+      "A prompt the dashboard types is now typed as one line, and one that still cannot be typed is refused before anything starts, instead of stopping the dashboard. A worktree is never removed while another session works in it, a double-clicked start opens one agent, and a kept worktree is reused only when it is still on the session's branch.",
+  },
+  {
     id: "2026-10-28-tasks-counted-like-openspec",
     date: "2026-10-28",
     title: "Task counts match `openspec status`",

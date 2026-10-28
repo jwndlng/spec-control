@@ -223,9 +223,13 @@ test("refused when the change's worktree, or its running session, is on another 
   await ensureWorktree(h.repoPath, path, "wip/upgrade-runtime-spike");
   await expect(h.manager.open({ repoId: h.repoId, change: CHANGE, resolveConflicts: true }, listOf(h, pr()))).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/is on wip\/upgrade-runtime-spike, not on feat\/upgrade-runtime/) });
 
-  // A session started there is running on the wrong branch: nothing is typed into it.
+  // A new session does not reuse it (harden-session-lifecycle D5); one whose agent switched branch there is running on
+  // the wrong branch: nothing is typed into it.
+  await expect(h.manager.open({ repoId: h.repoId, change: CHANGE, action: "implement" })).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/is on wip\/upgrade-runtime-spike, not on feat\/upgrade-runtime/) });
+  git(h.repoPath, "worktree", "remove", path);
   const s = await h.manager.open({ repoId: h.repoId, change: CHANGE, action: "implement" });
   expect(s.worktreePath).toBe(path);
+  git(path, "checkout", "-q", "wip/upgrade-runtime-spike");
   const seen = await watch(h.manager, s.id);
   await waitFor(() => seen.text().includes("fake-agent ready"), "the agent");
   await expect(h.manager.open({ repoId: h.repoId, change: CHANGE, resolveConflicts: true }, listOf(h, pr()))).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/running on wip\/upgrade-runtime-spike/) });

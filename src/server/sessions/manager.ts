@@ -4,15 +4,15 @@
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { blockedReason } from "../../shared/dependencies.ts";
-import { availableActions, changeSessions, pastDraftingReason, isChangeless, isConsole, isIntegration, isProjectConsole, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type ChangeSnapshot, type RepoPullRequests, type RepoSnapshot, type Session, type SessionAction, type SessionWorktree, type Snapshot, type WorkStatus, type MergeAsked, type PromptResult, type PullRequest, type RepoConfig, type ShipResult, type AutoMergePromptResult, type StartResult } from "../../shared/types.ts";
+import { availableActions, changeSessions, pastDraftingReason, isChangeless, isConsole, isIntegration, isProjectConsole, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type ChangeSnapshot, type RepoPullRequests, type RepoSnapshot, type Session, type SessionAction, type SessionWorktree, type Snapshot, type WorkStatus, type MergeAsked, type PromptResult, type PullRequest, type RepoConfig, type ShipResult, type AutoMergePromptResult, type StartResult } from "../../shared/types.ts";
 import { isEndedProposalSession, isProposalSession, proposalBranch, receivingSession, runningProposalSession, sessionBranch } from "../../shared/sessionBranch.ts";
 import { isBranchName, isCleaningUp } from "../cleanup.ts";
 import { isDismissing } from "../dismissChange.ts";
 import { canonicalPath, worktreesDir } from "../paths.ts";
 import { CHANGE_NAME } from "../source.ts";
-import { agentEnv, agentFor, availability, carryOverPrompt, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, removeDuplicatePrompt, resolveConflictsPrompt, resumeLaunch, shipPrompt } from "./agents.ts";
+import { agentEnv, agentFor, availability, carryOverPrompt, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, removeDuplicatePrompt, resolveConflictsPrompt, resumeLaunch, shipPrompt, typedForm, type Launch } from "./agents.ts";
 import { consoleFolderProblem, prepareConsoleFolder } from "./consoleFolder.ts";
 import { editorArgv, EditorError, editorCommand, editorFound, openEditor } from "./editor.ts";
 import type { SessionActivity } from "../activity/events.ts";
@@ -27,7 +27,7 @@ import { frameworkById } from "../frameworks/registry.ts";
 import { conflictSignal } from "../../shared/conflictSignal.ts";
 import { linkedPullRequest } from "../../shared/pullRequestLink.ts";
 import { mergeReady, pullRequestReadiness, readinessDetail } from "../../shared/pullRequestReadiness.ts";
-import { checkWorktreeRemovable, copyChangeIfMissing, ensureWorktree, implementStartPoint, linkedWorktreeOf, NoCommitError, removeWorktree, UnknownBranchError, type Removable } from "./worktree.ts";
+import { checkWorktreeRemovable, copyChangeIfMissing, ensureWorktree, implementStartPoint, linkedWorktreeOf, NoCommitError, removeWorktree, UnknownBranchError, WorktreeMismatchError, type Removable } from "./worktree.ts";
 
 export const SCROLLBACK_BYTES = 1024 * 1024;
 const TYPE_PROMPT_DELAY_MS = 1500;
@@ -70,6 +70,39 @@ const notAChange = (session: Session) => (isIntegration(session) ? NOT_A_CHANGE_
 
 /** An adopted worktree was created outside the dashboard; removing it is its owner's call, however clean it is. */
 const NOT_OURS: Removable = { removable: false, reason: "this worktree was not created by the dashboard (the session adopted it), so it is kept" };
+
+/** Another session works in the worktree being removed: it is kept, however clean it is (harden-session-lifecycle D4). */
+const RUNNING_HERE: Removable = { removable: false, reason: "a session is running in this worktree" };
+
+/**
+ * The one-line form of a prompt the dashboard types, checked against the rules for submitted text before anything is
+ * started, restarted or recorded for it (harden-session-lifecycle D1). A prompt that cannot be typed refuses the request.
+ */
+function typable(prompt: string): string {
+  const typed = typedForm(prompt);
+  if (validSubmission(typed as unknown)) return typed;
+  const why = typed.length > 4096 ? `it is ${typed.length} characters long as one line, and at most 4096 can be typed` : typed.length === 0 ? "it is empty" : "it holds a control character";
+  throw new SessionError(400, `the prompt cannot be typed into the agent's terminal: ${why}`);
+}
+
+/** How a prompt reaches the agent — as an argument, or typed after start-up through `resume` or a command without `{prompt}`. */
+function checkedLaunch(agent: AgentProfile, prompt: string, resume?: string[]): Launch {
+  const launch = resume ? { argv: resume, typed: prompt } : launchCommand(agent, prompt);
+  return launch.typed === undefined ? launch : { ...launch, typed: typable(launch.typed) };
+}
+
+/** Whether `path` is `folder` or lies inside it; both canonical. */
+function within(path: string, folder: string): boolean {
+  return path === folder || path.startsWith(folder.endsWith(sep) ? folder : `${folder}${sep}`);
+}
+
+/** A running session as a refusal names it. */
+function describeSession(session: Session): string {
+  if (isConsole(session)) return "the main console";
+  if (isIntegration(session)) return `the integration of ${session.folder}`;
+  if (isProjectConsole(session)) return "the project's console";
+  return `a session for the change ${session.change}`;
+}
 
 /** Keeps the last `limit` bytes of terminal output, for viewers that attach later. */
 export class Scrollback {
@@ -144,6 +177,8 @@ export class SessionManager {
   private autoEnding = new Set<string>();
   /** Sessions the automatic Merge is deciding about: taken before the first await, so two queries send once (D4). */
   private merging = new Set<string>();
+  /** Per `repoId` and change, the tail of its starts and worktree removals: one at a time (harden-session-lifecycle D3). */
+  private changeLocks = new Map<string, Promise<unknown>>();
 
   constructor(private readonly deps: ManagerDeps) {
     this.store = deps.store ?? new SessionStore();
@@ -180,7 +215,31 @@ export class SessionManager {
    * `pullRequests` is the repository's cached pull-request list as the server holds it; only Resolve conflicts
    * (`resolveConflicts: true`) reads it, and nothing in the request can name a branch or a pull request instead.
    */
-  async open(input: { repoId?: unknown; change?: unknown; action?: unknown; carryOver?: unknown; removeDuplicate?: unknown; resolveConflicts?: unknown; endProposal?: unknown }, pullRequests?: RepoPullRequests): Promise<StartResult> {
+  open(input: { repoId?: unknown; change?: unknown; action?: unknown; carryOver?: unknown; removeDuplicate?: unknown; resolveConflicts?: unknown; endProposal?: unknown }, pullRequests?: RepoPullRequests): Promise<StartResult> {
+    // Taken before anything is awaited; every check runs inside it, so a second open finds the session the first started.
+    return this.withChangeLock(input.repoId, input.change, () => this.openNow(input, pullRequests));
+  }
+
+  /**
+   * Runs `run` once every start or worktree removal of the same change that began earlier has settled (D3). Not
+   * re-entrant: what runs inside calls the `…Now` variants. A rejection releases the lock like a result.
+   */
+  private withChangeLock<T>(repoId: unknown, change: unknown, run: () => Promise<T>): Promise<T> {
+    const key = `${String(repoId)}\0${String(change)}`;
+    const result = (this.changeLocks.get(key) ?? Promise.resolve()).then(run, run);
+    const tail = result.catch(() => undefined);
+    this.changeLocks.set(key, tail);
+    void tail.then(() => this.changeLocks.get(key) === tail && this.changeLocks.delete(key));
+    return result;
+  }
+
+  /** `run` under the change lock of session `id` when it is a change session; any other kind runs as it is. */
+  private lockedFor<T>(id: string, run: () => Promise<T>): Promise<T> {
+    const session = this.sessions.get(id);
+    return session && !isChangeless(session) ? this.withChangeLock(session.repoId, session.change, run) : run();
+  }
+
+  private async openNow(input: { repoId?: unknown; change?: unknown; action?: unknown; carryOver?: unknown; removeDuplicate?: unknown; resolveConflicts?: unknown; endProposal?: unknown }, pullRequests?: RepoPullRequests): Promise<StartResult> {
     const config = this.deps.getConfig();
     if (!config.agentSessions.enabled) throw new SessionError(403, "agent sessions are disabled");
     if (typeof input.change !== "string" || !CHANGE_NAME.test(input.change)) throw new SessionError(400, "invalid change name");
@@ -293,13 +352,13 @@ export class SessionManager {
         } else {
           // Implementation builds on a proposal that has not merged yet, never on its branch (D4).
           const startPoint = action === "implement" || action === "validate" ? await implementStartPoint(repo.path, change, proposalBranch(change)) : undefined;
-          await ensureWorktree(repo.path, session.worktreePath, branch, { startPoint });
+          await ensureWorktree(repo.path, session.worktreePath, branch, { startPoint, verify: "branch" });
         }
         // The change may live only in some other worktree (on another branch), not in the main checkout. A duplicate is
         // on the default branch the worktree was made from; nothing is copied into it.
         if (!duplicate) await copyChangeIfMissing(snapshot.checkout?.path ?? repo.path, session.worktreePath, change);
       } catch (err) {
-        throw new SessionError(err instanceof NoCommitError ? 409 : 500, err instanceof Error ? err.message : String(err));
+        throw new SessionError(err instanceof NoCommitError || err instanceof WorktreeMismatchError ? 409 : 500, err instanceof Error ? err.message : String(err));
       }
     }
     // Decided once the worktree exists, so a leftover archive branch with code in it is seen (archive-auto-merge-docs D4).
@@ -308,9 +367,10 @@ export class SessionManager {
       prompt = fixedPrompt({ autoMerge, record }) ?? (openingPrompt(agent, action, change, { autoMerge, proposal: autoMerge, convention: repo.prTitleConvention, record }) as string);
       session.autoMergeAskedAt = new Date().toISOString();
     }
+    // Final only now: refused before the session is registered; a worktree just made stays, as any without a record.
+    const launch = checkedLaunch(agent, prompt);
     this.sessions.set(session.id, session);
     await this.store.saveMeta(session);
-    const launch = launchCommand(agent, prompt);
     this.start(session, launch.argv, agentEnv(agent, process.env), launch.typed);
     if (session.state === "running") this.report(session, { kind: "session-started", action, agentName: session.agentName });
     for (const removed of await this.store.prune(this.list())) this.sessions.delete(removed);
@@ -384,6 +444,7 @@ export class SessionManager {
       throw new SessionError(409, `the console folder could not be created: ${err instanceof Error ? err.message : String(err)}`);
     }
     if (prepared.problem) throw new SessionError(409, prepared.problem);
+    this.refuseConsoleFolderShared(prepared.folder.path);
     const now = new Date().toISOString();
     const session: ConsoleSession = {
       id: randomUUID(),
@@ -414,9 +475,10 @@ export class SessionManager {
     if (!config.agentSessions.enabled) throw new SessionError(403, "agent sessions are disabled");
     const running = this.list().find((s): s is IntegrationSession => isIntegration(s) && s.folder === folder && OPEN_SESSION_STATES.includes(s.state));
     if (running) return { session: running, created: false };
+    this.refuseAgentInOrBelow(folder);
     const agent = defaultAgentOf(config);
     if (!agent) throw new SessionError(503, "no agent is configured");
-    const prompt = integratePrompt(agent);
+    const launch = checkedLaunch(agent, integratePrompt(agent));
     if (!Bun.which(agent.command[0])) throw new SessionError(503, `${agent.name} was not found (${agent.command[0]}); install it or change its command in Settings`);
     const now = new Date().toISOString();
     const session: IntegrationSession = {
@@ -434,7 +496,6 @@ export class SessionManager {
     };
     this.sessions.set(session.id, session);
     await this.store.saveMeta(session);
-    const launch = launchCommand(agent, prompt);
     this.start(session, launch.argv, agentEnv(agent, process.env), launch.typed);
     for (const removed of await this.store.prune(this.list())) this.sessions.delete(removed);
     return { session, created: true };
@@ -487,6 +548,25 @@ export class SessionManager {
   private runningInFolder(folder: string): Session[] {
     const path = canonicalPath(folder);
     return this.list().filter((s) => s.state === "running" && canonicalPath(s.worktreePath) === path);
+  }
+
+  /**
+   * The console never shares its folder (harden-session-lifecycle D7): refused while another agent runs in it, or an
+   * integration runs in a folder that is or holds it — once that succeeds, the console would sit in a tracked repository.
+   */
+  private refuseConsoleFolderShared(folder: string, except?: string): void {
+    const path = canonicalPath(folder);
+    const other = this.list().find((s) => s.id !== except && s.state === "running" && !isConsole(s) && (canonicalPath(s.worktreePath) === path || (isIntegration(s) && within(path, canonicalPath(s.worktreePath)))));
+    if (other) throw new SessionError(409, `${describeSession(other)} is running in the console folder; end it first`);
+  }
+
+  /** Integrate never shares a folder (D7): refused while any other session runs in `folder` or a folder inside it. */
+  private refuseAgentInOrBelow(folder: string, except?: string): void {
+    const path = canonicalPath(folder);
+    const other = this.list().find((s) => s.id !== except && s.state === "running" && within(canonicalPath(s.worktreePath), path));
+    if (!other) return;
+    const where = canonicalPath(other.worktreePath) === path ? "in this folder" : `in ${other.worktreePath}, inside this folder`;
+    throw new SessionError(409, `${describeSession(other)} is running ${where}; end it first`);
   }
 
   /** One agent per folder: an in-place change session (a folder without git, a repository with no commit) keeps any other agent out. */
@@ -564,7 +644,7 @@ export class SessionManager {
   /** An integration's folder is the repository itself: nothing to re-create, only that nothing else is running in it. */
   private prepareIntegrationRestart(session: IntegrationSession) {
     const { agent } = this.prepareAgainAnywhere(session);
-    if (this.list().some((s) => s.id !== session.id && s.worktreePath === session.worktreePath && s.state === "running")) throw new SessionError(409, "another session is running in this folder");
+    this.refuseAgentInOrBelow(session.worktreePath, session.id);
     return { agent };
   }
 
@@ -585,6 +665,7 @@ export class SessionManager {
     if (this.list().some((s) => s.id !== session.id && isConsole(s) && s.state === "running")) throw new SessionError(409, "another console is running");
     const problem = consoleFolderProblem(session.worktreePath, config);
     if (problem) throw new SessionError(409, problem);
+    this.refuseConsoleFolderShared(session.worktreePath, session.id);
     return { agent };
   }
 
@@ -594,10 +675,11 @@ export class SessionManager {
       const branch = session.branch as string;
       try {
         // An adopted worktree is not ours to re-create: if its owner removed it, the session has nowhere to continue.
-        if (!session.adopted) await ensureWorktree(repoPath, session.worktreePath, branch, { fromRemote: session.pullRequest !== undefined });
+        // Its own worktree only has to be the repository's: the agent may have checked out another branch there (D5).
+        if (!session.adopted) await ensureWorktree(repoPath, session.worktreePath, branch, { fromRemote: session.pullRequest !== undefined, verify: "repository" });
         else if ((await linkedWorktreeOf(repoPath, branch)) !== session.worktreePath) throw new Error(`the adopted worktree ${session.worktreePath} no longer exists`);
       } catch (err) {
-        throw new SessionError(err instanceof NoCommitError || err instanceof UnknownBranchError ? 409 : 500, err instanceof Error ? err.message : String(err));
+        throw new SessionError(err instanceof NoCommitError || err instanceof UnknownBranchError || err instanceof WorktreeMismatchError ? 409 : 500, err instanceof Error ? err.message : String(err));
       }
     }
     session.state = "running";
@@ -613,7 +695,11 @@ export class SessionManager {
    * gets the prompt typed into its terminal; an ended one is started again in the worktree, continuing its
    * conversation when it can, so it still knows what it did.
    */
-  async ship(id: string): Promise<ShipResult> {
+  ship(id: string): Promise<ShipResult> {
+    return this.lockedFor(id, () => this.shipNow(id));
+  }
+
+  private async shipNow(id: string): Promise<ShipResult> {
     const session = this.get(id);
     if (isChangeless(session)) throw new SessionError(409, notAChange(session));
     if (session.inPlace) throw new SessionError(400, "this session runs in a folder that is not a git repository — there is no branch to commit or push");
@@ -627,13 +713,13 @@ export class SessionManager {
     this.forgetWorktrees();
     const proc = this.live.get(id)?.proc;
     if (session.state === "running" && proc) {
+      const typed = typable(prompt);
       if (autoMerge) this.askedForAutoMerge(session);
-      const { submitted } = await this.submit(id, prompt);
+      const { submitted } = await this.submit(id, typed);
       this.report(session, { kind: "session-shipped", submitted });
       return { ...session, submitted, autoMerge };
     }
-    const resume = resumeLaunch(agent);
-    const launch = resume ? { argv: resume, typed: prompt } : launchCommand(agent, prompt);
+    const launch = checkedLaunch(agent, prompt, resumeLaunch(agent));
     if (!Bun.which(launch.argv[0])) throw new SessionError(503, `${agent.name} was not found (${launch.argv[0]})`);
     if (autoMerge) session.autoMergeAskedAt = new Date().toISOString(); // saved by `restart`
     await this.restart(session, repo.path, launch.argv, agentEnv(agent, process.env), launch.typed);
@@ -650,7 +736,11 @@ export class SessionManager {
    * The dashboard resolves nothing itself — it merges, rebases, checks out, commits and pushes nothing. It hands over
    * a prompt; the agent works under its own permission prompts.
    */
-  async resolveConflicts(id: string, pullRequests?: RepoPullRequests): Promise<PromptResult> {
+  resolveConflicts(id: string, pullRequests?: RepoPullRequests): Promise<PromptResult> {
+    return this.lockedFor(id, () => this.resolveConflictsNow(id, pullRequests));
+  }
+
+  private async resolveConflictsNow(id: string, pullRequests?: RepoPullRequests): Promise<PromptResult> {
     const session = this.get(id);
     if (isChangeless(session)) throw new SessionError(409, notAChange(session));
     if (session.inPlace) throw new SessionError(400, "this session runs in a folder that is not a git repository — there is no branch to merge");
@@ -667,12 +757,11 @@ export class SessionManager {
     this.forgetWorktrees();
     const proc = this.live.get(id)?.proc;
     if (session.state === "running" && proc) {
-      const { submitted } = await this.submit(id, prompt);
+      const { submitted } = await this.submit(id, typable(prompt));
       this.report(session, { kind: "session-conflicts-resolve", submitted });
       return { ...session, submitted };
     }
-    const resume = resumeLaunch(agent);
-    const launch = resume ? { argv: resume, typed: prompt } : launchCommand(agent, prompt);
+    const launch = checkedLaunch(agent, prompt, resumeLaunch(agent));
     if (!Bun.which(launch.argv[0])) throw new SessionError(503, `${agent.name} was not found (${launch.argv[0]})`);
     await this.restart(session, repo.path, launch.argv, agentEnv(agent, process.env), launch.typed);
     this.report(session, { kind: "session-conflicts-resolve", submitted: true });
@@ -724,11 +813,11 @@ export class SessionManager {
       const tree = trees.find((t) => t.path === running.worktreePath);
       const branch = tree?.branch ?? running.branch;
       if (pr && branch !== pr.head) throw new SessionError(409, `a session for this change is running on ${branch ?? "no branch"}, not on ${pr.head}, the branch of pull request #${pr.number}`);
-      return { ...(await this.resolveConflicts(running.id, pullRequests)), autoMerge: false };
+      return { ...(await this.resolveConflictsNow(running.id, pullRequests)), autoMerge: false };
     }
     // An existing worktree on the right branch: the latest session in it is started again there, as Ship would.
     const recorded = signal.worktree && sessions.find((s) => s.worktreePath === signal.worktree?.path);
-    if (recorded) return { ...(await this.resolveConflicts(recorded.id, pullRequests)), autoMerge: false };
+    if (recorded) return { ...(await this.resolveConflictsNow(recorded.id, pullRequests)), autoMerge: false };
     if (!pr || !signal.github) throw new SessionError(409, "there are no conflicts to resolve for this change");
     return this.startOnHeadBranch(repo, scanned, snapshot, pr, signal.worktree?.path);
   }
@@ -767,7 +856,7 @@ export class SessionManager {
     const config = this.deps.getConfig();
     const agent = agentFor(config, repo);
     if (!agent) throw new SessionError(503, "no agent is configured");
-    const prompt = resolveConflictsPrompt(agent, change, pr);
+    const launch = checkedLaunch(agent, resolveConflictsPrompt(agent, change, pr));
     if (!Bun.which(agent.command[0])) throw new SessionError(503, `${agent.name} was not found (${agent.command[0]}); install it or change its command in Settings`);
 
     const now = new Date().toISOString();
@@ -794,16 +883,15 @@ export class SessionManager {
         session.worktreePath = elsewhere;
         session.adopted = true;
       } else {
-        await ensureWorktree(repo.path, path, head, { fromRemote: true });
+        await ensureWorktree(repo.path, path, head, { fromRemote: true, verify: "branch" });
       }
       await copyChangeIfMissing(snapshot.checkout?.path ?? repo.path, session.worktreePath, change);
     } catch (err) {
       if (err instanceof SessionError) throw err;
-      throw new SessionError(err instanceof NoCommitError || err instanceof UnknownBranchError ? 409 : 500, err instanceof Error ? err.message : String(err));
+      throw new SessionError(err instanceof NoCommitError || err instanceof UnknownBranchError || err instanceof WorktreeMismatchError ? 409 : 500, err instanceof Error ? err.message : String(err));
     }
     this.sessions.set(session.id, session);
     await this.store.saveMeta(session);
-    const launch = launchCommand(agent, prompt);
     this.start(session, launch.argv, agentEnv(agent, process.env), launch.typed);
     if (session.state === "running") {
       this.report(session, { kind: "session-started", action, agentName: session.agentName });
@@ -850,7 +938,8 @@ export class SessionManager {
     const repo = config.repos.find((r) => r.id === session.repoId);
     const autoMerge = repo !== undefined && (await this.docsAutoMerge(repo, session, action));
     const record = this.recordInstruction(session.repoId, session.change, action);
-    const text = openingPrompt(agent, action, session.change, { autoMerge, proposal: autoMerge, convention: repo?.prTitleConvention, record }) as string;
+    // Checked before the action or the auto-merge record changes: a prompt that cannot be typed changes nothing (D1).
+    const text = typable(openingPrompt(agent, action, session.change, { autoMerge, proposal: autoMerge, convention: repo?.prTitleConvention, record }) as string);
     // The recorded action is what the user asked for, whether or not the agent's terminal echoed the prompt in time.
     session.action = action;
     if (autoMerge) session.autoMergeAskedAt = new Date().toISOString();
@@ -877,10 +966,16 @@ export class SessionManager {
     if (!config.agentSessions.enabled) return;
     const repo = config.repos.find((r) => r.id === repoId);
     if (repo?.agent?.autoMergeDocs !== true) return;
+    const candidate = (session: ChangeSession) => session.repoId === repoId && !session.inPlace && !session.adopted && session.autoMergeAskedAt !== undefined && !session.autoEnded && !this.autoEnding.has(session.id);
+    if (!changeSessions(this.list()).some(candidate)) return;
+    // Only the session's own pull request: not from a fork — an unknown answer counts as one — and into the default
+    // branch as known locally, read once per call (D6), as the ready-merge and Resolve conflicts already require.
+    const base = await defaultBranch(repo.path);
+    if (base === undefined) return;
     for (const session of changeSessions(this.list())) {
-      if (session.repoId !== repoId || session.inPlace || session.adopted || !session.autoMergeAskedAt || session.autoEnded || this.autoEnding.has(session.id)) continue;
-      const askedAt = Date.parse(session.autoMergeAskedAt);
-      const merged = pullRequests.find((pr) => pr.state === "merged" && pr.head === session.branch && pr.mergedAt !== undefined && Date.parse(pr.mergedAt) > askedAt);
+      if (!candidate(session)) continue;
+      const askedAt = Date.parse(session.autoMergeAskedAt as string);
+      const merged = pullRequests.find((pr) => pr.state === "merged" && pr.isCrossRepository === false && pr.base === base && pr.head === session.branch && pr.mergedAt !== undefined && Date.parse(pr.mergedAt) > askedAt);
       if (!merged) continue;
       // Taken before the first await, so a second query settling meanwhile cannot end the same session again.
       this.autoEnding.add(session.id);
@@ -1068,7 +1163,11 @@ export class SessionManager {
   }
 
   /** Continues the agent's latest conversation in the session's worktree, in the same session record. */
-  async resume(id: string): Promise<Session> {
+  resume(id: string): Promise<Session> {
+    return this.lockedFor(id, () => this.resumeNow(id));
+  }
+
+  private async resumeNow(id: string): Promise<Session> {
     const session = this.get(id);
     if (session.state === "running") return session;
     const { agent, repoPath } = isConsole(session)
@@ -1243,9 +1342,10 @@ export class SessionManager {
 
   /**
    * Sends text on the user's behalf: typed, and submitted with a separate Enter only once the agent's terminal has
-   * shown it (see submit.ts). Keystrokes never come through here — they go through `write`, unobserved.
+   * shown it (see submit.ts). Keystrokes never come through here — they go through `write`, unobserved. `async`, so a
+   * refusal is always a rejected promise: thrown synchronously from the typed-prompt timer it would end the dashboard.
    */
-  submit(id: string, text: unknown): Promise<{ submitted: boolean }> {
+  async submit(id: string, text: unknown): Promise<{ submitted: boolean }> {
     const session = this.get(id);
     if (!validSubmission(text)) throw new SessionError(400, "only plain text of at most 4096 characters can be submitted");
     const live = this.live.get(id);
@@ -1299,11 +1399,19 @@ export class SessionManager {
     } else if (options.removeWorktree && session.adopted) {
       worktree = NOT_OURS;
     } else if (options.removeWorktree) {
-      const repo = this.deps.getConfig().repos.find((r) => r.id === session.repoId);
-      worktree = repo ? await removeWorktree(repo.path, session.worktreePath, await this.isMerged(repo.path, session)) : { removable: false, reason: "the repository is no longer configured" };
-      this.forgetWorktrees();
+      // Under the change's lock, so a start reusing the worktree cannot slip in between the check and the removal (D4).
+      worktree = await this.withChangeLock(session.repoId, session.change, () => this.removeSessionWorktree(session));
     }
     return { session, worktree };
+  }
+
+  /** The ended session's worktree, removed when it is safe — and never while another session runs in it. */
+  private async removeSessionWorktree(session: ChangeSession): Promise<Removable> {
+    if (this.runningInFolder(session.worktreePath).some((s) => s.id !== session.id)) return RUNNING_HERE;
+    const repo = this.deps.getConfig().repos.find((r) => r.id === session.repoId);
+    const removed = repo ? await removeWorktree(repo.path, session.worktreePath, await this.isMerged(repo.path, session)) : { removable: false, reason: "the repository is no longer configured" };
+    this.forgetWorktrees();
+    return removed;
   }
 
   private async isMerged(repoPath: string, session: ChangeSession): Promise<boolean> {

@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { worktreesDir } from "../src/server/paths.ts";
-import { ensureWorktree, implementStartPoint, removeWorktree } from "../src/server/sessions/worktree.ts";
+import { ensureWorktree, implementStartPoint, removeWorktree, WorktreeMismatchError } from "../src/server/sessions/worktree.ts";
 import { useTempHome } from "./helpers.ts";
 import { hookLog, installRepoHooks } from "./hookHelpers.ts";
 import { git, tempGitRepo } from "./sessionHelpers.ts";
@@ -75,4 +75,33 @@ test("hooks do not run when a session worktree is created and removed", async ()
   expect(await removeWorktree(repo, path)).toEqual({ removable: true });
   expect(existsSync(path)).toBe(false);
   expect(await hookLog(log)).toEqual([]);
+});
+
+// ---- a reused directory is verified (harden-session-lifecycle D5) ----
+
+test("a reused worktree on another branch is refused for a new session and accepted for its own restart", async () => {
+  const repo = await tempGitRepo();
+  const path = join(worktreesDir(), "t-reuse", "rotate-keys");
+  await ensureWorktree(repo, path, "feat/rotate-keys");
+  git(path, "checkout", "-q", "-b", "feat/rotate-keys-v2");
+  const refs = git(repo, "for-each-ref");
+  await expect(ensureWorktree(repo, path, "feat/rotate-keys", { verify: "branch" })).rejects.toThrow(/is on feat\/rotate-keys-v2, not on feat\/rotate-keys/);
+  await expect(ensureWorktree(repo, path, "feat/rotate-keys")).rejects.toBeInstanceOf(WorktreeMismatchError); // the default
+  expect(await ensureWorktree(repo, path, "feat/rotate-keys", { verify: "repository" })).toEqual({ created: false });
+  git(path, "checkout", "-q", "--detach");
+  await expect(ensureWorktree(repo, path, "feat/rotate-keys")).rejects.toThrow(/is on no branch/);
+  expect([git(repo, "for-each-ref"), git(path, "status", "--porcelain")]).toEqual([refs, ""]); // nothing changed
+});
+
+test("a leftover folder inside another repository, or another repository's worktree, is not reused", async () => {
+  const repo = await tempGitRepo();
+  const other = await tempGitRepo();
+  const leftover = join(other, "leftover");
+  await mkdir(leftover);
+  await expect(ensureWorktree(repo, leftover, "feat/rotate-keys")).rejects.toThrow(/is not a worktree of this repository/);
+  await expect(ensureWorktree(repo, leftover, "feat/rotate-keys", { verify: "repository" })).rejects.toBeInstanceOf(WorktreeMismatchError);
+  const theirs = join(worktreesDir(), "t-theirs", "rotate-keys");
+  await ensureWorktree(other, theirs, "feat/rotate-keys");
+  await expect(ensureWorktree(repo, theirs, "feat/rotate-keys")).rejects.toThrow(/is not a worktree of this repository/);
+  expect(git(repo, "worktree", "list", "--porcelain").includes("rotate-keys")).toBe(false); // nothing created
 });

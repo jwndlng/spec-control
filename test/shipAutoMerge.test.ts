@@ -162,6 +162,15 @@ test("Ship asks for auto-merge when it starts an ended agent again, too", async 
   await waitFor(() => seen.text().includes('args=["--resumed"]') && seen.text().includes(`you said: ${withAutoMerge}`), "resume command plus the prompt");
 });
 
+test("Ship through the resume command with a prompt that cannot be typed is refused: no agent started, no record (D1)", async () => {
+  const { h, s } = await shipping(true, ["openspec/changes/upgrade-runtime/notes.md"], { resume: true });
+  h.config.agentSessions.agents[0].promptSuffixes = { ship: "x ".repeat(2100) };
+  await expect(h.manager.ship(s.id)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/4096/) });
+  expect(h.manager.get(s.id).state).toBe("exited");
+  expect(askedAt(h, s.id)).toBeUndefined();
+  expect(h.manager.anyRunning()).toBe(false);
+});
+
 test("Ship's prompt is today's when the project did not opt in, or code is shipped", async () => {
   for (const [autoMergeDocs, files] of [
     [true, ["openspec/changes/upgrade-runtime/notes.md", "src/runtime.ts"]],

@@ -339,3 +339,26 @@ test("feature off: the endpoint refuses with 403 and starts nothing", async () =
     server.stop(true);
   }
 });
+
+// ---- Integrate never shares a folder (harden-session-lifecycle D7) ----
+
+test("Integrate is refused while the console runs in the folder or below it, and the folder stays integratable", async () => {
+  const h = await harness();
+  const notes = join(h.folder, "notes");
+  await mkdir(notes);
+  for (const [folder, reason] of [
+    [h.folder, "the main console is running in this folder"],
+    [notes, `the main console is running in ${notes}, inside this folder`],
+  ] as const) {
+    h.config.agentSessions.consoleDir = folder;
+    const { session } = await h.sessions.openConsole();
+    const refused = await refusal(h.sessions.openIntegration(h.folder));
+    expect(refused.status).toBe(409);
+    expect(refused.message).toContain(reason);
+    expect(h.sessions.list().filter((s) => s.integration)).toHaveLength(0);
+    await h.sessions.close(session.id);
+  }
+  expect(h.config.repos).toEqual([]);
+  // With the console ended, Integrate starts.
+  expect((await h.sessions.openIntegration(h.folder)).created).toBe(true);
+});

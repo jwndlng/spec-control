@@ -132,16 +132,45 @@ export class UnknownBranchError extends Error {
 }
 
 /**
+ * An existing directory a session would reuse is not what it should be (harden-session-lifecycle D5): not a worktree of
+ * the session's repository, or not on the session's branch. Nothing was created, removed or changed.
+ */
+export class WorktreeMismatchError extends Error {}
+
+/** The common git directory `cwd` belongs to, as a canonical absolute path; undefined when git cannot say. Read-only. */
+async function commonDir(cwd: string): Promise<string | undefined> {
+  const common = await git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  return common.ok && common.out ? realpath(common.out).catch(() => common.out) : undefined;
+}
+
+/**
+ * Read-only: a directory to be reused must be a worktree of `repoPath` — its common git directory is the repository's —
+ * and, with `verify: "branch"`, have `branch` checked out. Throws `WorktreeMismatchError` naming what it found.
+ */
+async function verifyReused(repoPath: string, worktreePath: string, branch: string, verify: "branch" | "repository"): Promise<void> {
+  const [mine, theirs] = await Promise.all([commonDir(repoPath), commonDir(worktreePath)]);
+  if (!mine || theirs !== mine) throw new WorktreeMismatchError(`${worktreePath} exists but is not a worktree of this repository`);
+  if (verify === "repository") return;
+  const head = await git(worktreePath, ["symbolic-ref", "--quiet", "HEAD"]);
+  if (head.ok && head.out === `refs/heads/${branch}`) return;
+  const on = head.ok && head.out.startsWith("refs/heads/") ? head.out.slice("refs/heads/".length) : "no branch";
+  throw new WorktreeMismatchError(`the worktree ${worktreePath} is on ${on}, not on ${branch}; end and remove it, or work there in its own session`);
+}
+
+/**
  * `fromRemote`: the branch is a pull request's head branch, so a missing local branch is created from
  * `origin/<branch>` with it as upstream — never from the base — and refused with `UnknownBranchError` when that does
  * not exist either. An existing local branch is checked out as it is, whether or not it is level with the remote.
  * `startPoint`: where a missing branch is created instead of the default branch (`implementStartPoint`).
+ * `verify`: what an existing directory must be to be reused — on `branch` (a new session, the default) or only the
+ * repository's (a session started again in its own worktree, whose agent may have switched branch there).
  */
-export async function ensureWorktree(repoPath: string, worktreePath: string, branch: string, options: { fromRemote?: boolean; startPoint?: string } = {}): Promise<{ created: boolean; base?: string }> {
+export async function ensureWorktree(repoPath: string, worktreePath: string, branch: string, options: { fromRemote?: boolean; startPoint?: string; verify?: "branch" | "repository" } = {}): Promise<{ created: boolean; base?: string }> {
   if (await isDirectory(worktreePath)) {
     const inside = await git(worktreePath, ["rev-parse", "--is-inside-work-tree"]);
-    if (inside.ok && inside.out === "true") return { created: false };
-    throw new Error(`${worktreePath} exists but is not a git worktree`);
+    if (!inside.ok || inside.out !== "true") throw new WorktreeMismatchError(`${worktreePath} exists but is not a git worktree`);
+    await verifyReused(repoPath, worktreePath, branch, options.verify ?? "branch");
+    return { created: false };
   }
   // Everything is decided read-only first, so a refusal leaves nothing behind — not even the worktree's parent folder.
   const hasBranch = (await git(repoPath, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`])).ok;

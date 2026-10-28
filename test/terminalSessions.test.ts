@@ -414,10 +414,78 @@ test("a text longer than the terminal's input queue reaches a paste-detecting ag
 test("submit refuses what is not plain text, and sessions that are not running", async () => {
   const h = track(await harness());
   const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
-  for (const bad of ["", "two\rlines", `esc${String.fromCharCode(27)}[A`, 7, undefined]) expect(() => h.manager.submit(s.id, bad)).toThrow(expect.objectContaining({ status: 400 }));
+  // Always a rejected promise, never a synchronous throw: thrown from the typed-prompt timer it would end the dashboard.
+  for (const bad of ["", "two\rlines", `esc${String.fromCharCode(27)}[A`, 7, undefined]) await expect(h.manager.submit(s.id, bad)).rejects.toMatchObject({ status: 400 });
   h.manager.write(s.id, "exit\r");
   await waitFor(() => h.manager.get(s.id).state === "exited", "exit");
-  expect(() => h.manager.submit(s.id, "Yes, go ahead")).toThrow(expect.objectContaining({ status: 409 }));
+  await expect(h.manager.submit(s.id, "Yes, go ahead")).rejects.toMatchObject({ status: 409 });
+  await expect(h.manager.submit("no-such-session", "Yes, go ahead")).rejects.toMatchObject({ status: 404 });
+});
+
+test("a typed opening prompt is typed as one line; one that cannot be typed starts nothing and stops nothing", async () => {
+  const h = await harness({ agent: { command: [FAKE_AGENT], prompts: { draft: "draft {change}", implement: "implement {change}\nand run the tests", archive: "archive {change}" } } });
+  const manager = h.newManager(FAST_SUBMIT);
+  managers.push(manager);
+  // A second session, running all along, that must not notice anything.
+  const other = await manager.open({ repoId: h.repoId, change: "cache-api-calls", action: "implement" });
+  const s = await manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
+  const view = await watch(manager, s.id);
+  await waitFor(() => view.text().includes("you said: implement upgrade-runtime and run the tests ("), "the one-line prompt");
+
+  // Over 4096 characters even as one line: refused before anything is registered or started.
+  h.config.agentSessions.agents[0].promptSuffixes = { implement: "x ".repeat(2100) };
+  const before = manager.list().length;
+  const third = h.snapshot.repos[0].changes.find((c) => !c.archived && !["upgrade-runtime", "cache-api-calls"].includes(c.name) && availableActions(c).includes("implement") && !c.dependsOn?.length) as ChangeSnapshot;
+  await expect(manager.open({ repoId: h.repoId, change: third.name, action: "implement" })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/4096/) });
+  expect(manager.list()).toHaveLength(before);
+  expect([manager.get(other.id).state, manager.get(s.id).state]).toEqual(["running", "running"]);
+  const otherView = await watch(manager, other.id);
+  expect(await manager.submit(other.id, "still here")).toEqual({ submitted: true });
+  await waitFor(() => otherView.text().includes("you said: still here"), "the other session answering");
+});
+
+test("an agent that ends before its typed prompt is typed leaves the dashboard and every other session running", async () => {
+  const h = await harness({ agent: { command: [FAKE_AGENT] } });
+  const manager = h.newManager({ ...FAST_SUBMIT, typePromptDelayMs: 400 });
+  managers.push(manager);
+  const other = await manager.open({ repoId: h.repoId, change: "cache-api-calls", action: "implement" });
+  const s = await manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
+  manager.write(s.id, "exit\r");
+  await waitFor(() => manager.get(s.id).state === "exited", "the early exit");
+  await new Promise((r) => setTimeout(r, 600)); // past the moment the prompt would have been typed
+  expect(manager.get(other.id).state).toBe("running");
+});
+
+/** Agent processes on this machine whose command line holds `token`. */
+const agentProcesses = (token: string) =>
+  Bun.spawnSync(["ps", "-axo", "command"], { stdout: "pipe" })
+    .stdout.toString()
+    .split("\n")
+    .filter((line) => line.includes(FAKE_AGENT) && line.includes(token)).length;
+
+test("two opens at once start one agent in the kept worktree and return the same session (D3)", async () => {
+  const h = track(await harness());
+  const first = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
+  await h.manager.close(first.id);
+  const [a, b] = await Promise.all([h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" }), h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" })]);
+  expect(a.id).toBe(b.id);
+  const path = await realpath(first.worktreePath); // macOS temp folders sit behind a symlink
+  expect(await realpath(a.worktreePath)).toBe(path);
+  expect(h.manager.list().filter((s) => s.state === "running")).toHaveLength(1);
+});
+
+test("two resumes at once start one process, and ending the session leaves none of it running (D3)", async () => {
+  const token = `--resume-token-${Math.random().toString(36).slice(2, 10)}`;
+  const h = track(await harness({ agent: { resumeCommand: [FAKE_AGENT, "--resumed", token] } }));
+  const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
+  await h.manager.close(s.id);
+  const [a, b] = await Promise.all([h.manager.resume(s.id), h.manager.resume(s.id)]);
+  expect([a.id, b.id, a.state]).toEqual([s.id, s.id, "running"]);
+  const view = await watch(h.manager, s.id);
+  await waitFor(() => view.text().includes(token), "the resumed agent");
+  expect(agentProcesses(token)).toBe(1);
+  await h.manager.close(s.id);
+  await waitFor(() => agentProcesses(token) === 0, "no agent process left");
 });
 
 test("bookkeeping nobody waits for cannot take the dashboard down, and shutdown leaves no write behind", async () => {
@@ -628,4 +696,16 @@ test("an out-of-date scan of a repository without a commit refuses plainly, befo
   expect(existsSync(join(worktreesDir(), h.repoId))).toBe(false); // not even the worktrees folder
   expect(git(h.repoPath, "for-each-ref", "refs/heads")).toBe(""); // no branch
   expect(git(h.repoPath, "worktree", "list", "--porcelain").match(/^worktree /gm)).toHaveLength(1); // only the checkout
+});
+
+test("a session whose agent switched branch in its worktree resumes there; a new session is refused it (D5)", async () => {
+  const h = track(await harness());
+  const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
+  git(s.worktreePath, "checkout", "-q", "-b", "feat/upgrade-runtime-v2");
+  await h.manager.close(s.id);
+  expect((await h.manager.resume(s.id)).state).toBe("running");
+  await h.manager.close(s.id);
+  await h.manager.remove(s.id);
+  await expect(h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" })).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/is on feat\/upgrade-runtime-v2, not on feat\/upgrade-runtime/) });
+  expect(h.manager.anyRunning()).toBe(false);
 });

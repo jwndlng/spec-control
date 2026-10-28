@@ -240,7 +240,7 @@ test("Implement after the proposal merged starts from the default branch", async
 });
 
 function pr(patch: Partial<PullRequest> & { head: string }): PullRequest {
-  return { number: 90, title: `docs(openspec): add ${CHANGE}`, url: "https://github.com/acme/demo-ops/pull/90", author: "octo", base: "main", draft: false, state: "open", createdAt: new Date().toISOString(), review: "none", reviewRequestedFromViewer: false, checks: "passing", mergeable: "mergeable", docsOnly: true, ...patch };
+  return { number: 90, title: `docs(openspec): add ${CHANGE}`, url: "https://github.com/acme/demo-ops/pull/90", author: "octo", base: "main", draft: false, state: "open", isCrossRepository: false, createdAt: new Date().toISOString(), review: "none", reviewRequestedFromViewer: false, checks: "passing", mergeable: "mergeable", docsOnly: true, ...patch };
 }
 
 test("the proposal pull request is handed back to merge once ready, and its merge ends the session", async () => {
