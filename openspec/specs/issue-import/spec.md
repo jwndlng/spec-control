@@ -101,7 +101,7 @@ supported theme and MUST NOT make the browser request any host but the dashboard
 ### Requirement: Each selected issue gets a change name
 When the user checks an issue, the dialog SHALL propose a change name derived from its title: lower-cased, every run of
 characters other than `a`–`z` and `0`–`9` replaced by one `-`, leading and trailing `-` removed, and cut to at most 48
-characters at a `-` boundary where one exists; when that leaves nothing, the name SHALL be `issue-<number>`. The name
+characters at a `-` boundary where one exists; when that leaves nothing, the name SHALL be `issue-<number>`, and when it leaves a name the New change form refuses as reserved, the name SHALL be that name followed by `-<number>`. The name
 SHALL be editable per issue and SHALL be validated live exactly as the New change form validates a name. The dialog
 SHALL also refuse, as text next to the name, a name that an active or archived change of the repository already uses
 or that another checked issue uses. The import action MUST NOT be available while no issue is checked or any checked
@@ -122,6 +122,14 @@ issue's name is refused, and SHALL state how many changes it will create.
 #### Scenario: Two issues, one name
 - **WHEN** two checked issues propose the same name
 - **THEN** both names are refused as duplicates and the import action is disabled
+
+#### Scenario: Title that names the archive
+- **WHEN** the user checks issue `#12` titled `Archive`
+- **THEN** the proposed name is `archive-12`
+
+#### Scenario: Reserved name typed by hand
+- **WHEN** the user changes a checked issue's name to `archive`
+- **THEN** a message next to that name says it is reserved and the import action is disabled until it is changed
 
 ### Requirement: Importing creates one change per selected issue
 On import the dialog SHALL send `POST /api/repos/<id>/changes` once per checked issue, one request at a time, in the
