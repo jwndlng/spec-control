@@ -23,8 +23,8 @@ export const COLUMN_HELP: Record<Stage, string> = {
   drafts: "Some planning artifacts are written, but not yet every one needed to implement. The card's bar shows how many.",
   unknown: "The dashboard could not tell which artifacts the change has — for example an unknown schema. The column only appears while a change is in it.",
   ready: "Every artifact needed to implement is written and no task is ticked yet: ready to implement. Which ones are needed is up to the schema (its apply.requires) — for spec-driven only tasks, so a design is optional.",
-  implementing: "At least one task in tasks.md is ticked, or marked as awaiting validation, and others are still open.",
-  done: "Every task is ticked (- [x]) or awaiting your confirmation (- [~]). With tasks awaiting you, the card says Validate; the change is ready to archive either way.",
+  implementing: "At least one task in tasks.md is ticked, or marked as needing you (- [~]), and others are still open (- [ ]).",
+  done: "Every task is ticked (- [x]) or needs you (- [~]). With tasks that need you, the card says how many and Validate is recommended; the change is ready to archive either way.",
   archived: "The change was moved to openspec/changes/archive/, on the main checkout or on a worktree's branch that is not merged yet.",
 };
 
@@ -118,6 +118,14 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           branch merges cleanly it reads <code>ready</code> and the tint ends. Its name sweeps only while something is still
           being worked out on GitHub. The tint never changes the column, the progress or what you can start.
         </p>
+        <p>
+          A task marked <code>- [~]</code> in tasks.md <strong>needs you</strong>: the agent did every part of it it can,
+          and what is left is yours — a result to check, or a step only you can carry out, such as entering a secret,
+          signing in to an account or trying it on a real device. What exactly is on the task's own line. A card with such
+          tasks shows a <strong>Needs you</strong> badge, for example <code>2 need you</code>; hover it to read what to
+          check or do, or activate it to open the change's tasks, where the same list comes first. You confirm them with{" "}
+          <strong>Validate</strong> or when archiving; the dashboard never ticks a box itself.
+        </p>
       </>
     ),
   },
@@ -161,6 +169,16 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             The agent's terminal is the <strong>Console</strong> tab of the change's detail view. What it changes is decided by
             its own permission prompts. A change has one running session at a time: while it runs, the card shows its badge
             instead of the starters, and the console offers the next step — sent into that session, as a prompt.
+          </li>
+          <li>
+            <strong>Open in editor</strong>, beside <strong>Copy cd</strong> in the Console tab and in Open work, opens the
+            folder the change's agent works in — its worktree, or the project folder for a session without one — in your
+            editor. It runs VS Code's <code>code</code> unless you set another <strong>Editor command</strong> under{" "}
+            <AppLink path="/settings" query="?section=agents">Settings → Agent sessions</AppLink>, one argument per line,
+            with <code>{"{path}"}</code> where the folder goes (otherwise it is added last) — for example{" "}
+            <code>zed</code>, or <code>open</code>, <code>-a</code>, <code>Visual Studio Code</code>,{" "}
+            <code>{"{path}"}</code>. If <code>code</code> is not found, run <strong>Shell Command: Install 'code' command in
+            PATH</strong> from VS Code's command palette. The editor is yours: the dashboard only starts it.
           </li>
           <li>
             <strong>Ship</strong> asks the agent to commit, push and open a pull request, and to record the branch it pushes

@@ -21,6 +21,9 @@ export interface TaskProgress {
   done: number;
   /** `[~]` boxes: finished by the agent, not yet confirmed by a person. Absent in snapshots cached by older versions. */
   awaiting?: number;
+  /** The `[~]` tasks' text, in file order and bounded (`change-scanner`), so a card can say what the user has to do.
+   *  Plain text from the repository, never HTML. Absent when nothing awaits the user, and in older snapshots. */
+  awaitingTasks?: string[];
   /** Every checkbox: done, awaiting and open together. */
   total: number;
 }
@@ -510,6 +513,31 @@ export interface AgentSessionsConfig {
   shortcuts: Shortcut[];
   /** Whether Fast-forward asks for confirmation first; absent means it does. */
   confirmFastForward?: boolean;
+  /**
+   * The editor Open in editor starts (openspec/specs/editor-launch): an argument list, never shell text, whose `{path}`
+   * is replaced by the folder; without `{path}` the folder is the last argument. Absent means `DEFAULT_EDITOR`.
+   */
+  editor?: string[];
+}
+
+/** The editor command when none is configured: VS Code's `code`. */
+export const DEFAULT_EDITOR: readonly string[] = ["code"];
+
+/** The argument list that opens `folder` with `command`: `{path}` replaced where it stands, else the folder appended. */
+export function editorCommandLine(command: readonly string[], folder: string): string[] {
+  return command.some((arg) => arg.includes("{path}")) ? command.map((arg) => arg.replaceAll("{path}", folder)) : [...command, folder];
+}
+
+/** What `GET /api/sessions` says about the editor (editor-launch): the command in effect and whether it was found. */
+export interface EditorAvailability {
+  command: string[];
+  found: boolean;
+}
+
+/** What Open in editor answers once the editor was started: the argument list that ran. */
+export interface EditorStarted {
+  started: true;
+  command: string[];
 }
 
 export interface Config {

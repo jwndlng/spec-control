@@ -1851,6 +1851,13 @@ body:has(.detail-overlay) { overflow: hidden; }
 .detail-close { flex: none; font-size: 14px; line-height: 1; padding: 6px 10px; }
 .detail-meter.wide { width: 360px; max-width: 100%; margin-bottom: 20px; }
 .detail-meter .awaiting-note { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: var(--fg-subtle); }
+.detail-meter .awaiting-note p { margin: 0; }
+.detail-meter .awaiting-note strong:first-child { color: var(--warning); }
+.needs-you-list { margin: 4px 0 0; padding-left: 18px; color: var(--fg-body); overflow-wrap: anywhere; }
+/* The one badge on a card that navigates (to the change's tasks): a link, so it shows it can be activated. */
+a.badge.needs-you { text-decoration: none; cursor: pointer; }
+a.badge.needs-you:hover { border-color: var(--warning); }
+a.badge.needs-you:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 /* The third task state: neither ticked nor empty, and as inoperable as the other two. */
 .markdown li.task.awaiting > input[type="checkbox"] { accent-color: var(--warning); }
 .detail-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 calc(var(--detail-pad) - 14px); background: var(--bg-section); border-bottom: 1px solid var(--border-light); }

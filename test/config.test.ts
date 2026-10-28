@@ -560,3 +560,19 @@ test("a former preset command upgrades and keeps its launch arguments; no preset
   expect(upgraded.launchArgs).toEqual(["--mode", "auto"]);
   for (const { profile } of AGENT_PRESETS) expect(profile.launchArgs).toBeUndefined();
 });
+
+const editorOf = (editor: unknown) => validateConfig({ ...defaultConfig(), agentSessions: { ...defaultConfig().agentSessions, editor } }).agentSessions.editor;
+
+test("editor command: an argument list with an optional {path}; empty is none; other placeholders and control characters are refused", () => {
+  expect(editorOf(["code"])).toEqual(["code"]);
+  expect(editorOf(["zed"])).toEqual(["zed"]);
+  expect(editorOf(["open", "-a", "Visual Studio Code", "{path}"])).toEqual(["open", "-a", "Visual Studio Code", "{path}"]);
+  expect(editorOf([])).toBeUndefined();
+  expect(editorOf(undefined)).toBeUndefined();
+  for (const bad of [["{path}"], ["code", "{change}"], ["code", "{path}", "--goto={path}"], ["code", "a\nb"], ["code", ""]]) {
+    expect(() => editorOf(bad)).toThrow(/agentSessions\.editor.*editor command/);
+  }
+  const { editor: _, ...withoutEditor } = defaultConfig().agentSessions;
+  expect(validateConfig({ ...defaultConfig(), agentSessions: withoutEditor })).toEqual(validateConfig(defaultConfig()));
+  expect("editor" in validateConfig(defaultConfig()).agentSessions).toBe(false);
+});

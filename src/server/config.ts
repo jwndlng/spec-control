@@ -46,6 +46,21 @@ const launchArgsSchema = z
   .optional()
   .transform((args) => (args?.length ? args : undefined));
 
+// The editor is the user's program, not an agent, so no bypass check: one argument per entry, no control character, and
+// `{path}` the only placeholder, in at most one argument and never the executable. An empty list is no editor command.
+const editorSchema = z
+  .array(
+    z
+      .string()
+      .min(1, { message: "an editor command argument cannot be empty" })
+      .refine(placeholdersOnly(["{path}"]), { message: "unknown placeholder in the editor command; only {path} is supported" })
+      .refine((v) => ![...v].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127), { message: "the editor command must not contain a control character" }),
+  )
+  .optional()
+  .refine((args) => !args?.length || !args[0].includes("{"), { message: "the editor command's executable cannot be a placeholder" })
+  .refine((args) => (args ?? []).filter((a) => a.includes("{path}")).length <= 1, { message: "the editor command may hold {path} in one argument only" })
+  .transform((args) => (args?.length ? args : undefined));
+
 const promptSchema = z
   .string()
   .trim()
@@ -160,6 +175,8 @@ const agentSessionsSchema = z
     shortcuts: z.array(shortcutSchema).default(() => defaultAgentSessions().shortcuts),
     // Absent means Fast-forward asks first; only the user's "don't show this warning again" or Settings makes it false.
     confirmFastForward: z.boolean().optional(),
+    // Absent means `code` (DEFAULT_EDITOR); Settings stores a cleared field that way.
+    editor: editorSchema,
   })
   .default({})
   .superRefine((cfg, ctx) => {

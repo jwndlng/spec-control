@@ -14,6 +14,7 @@ import { canonicalPath, worktreesDir } from "../paths.ts";
 import { CHANGE_NAME } from "../source.ts";
 import { agentEnv, agentFor, availability, carryOverPrompt, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, removeDuplicatePrompt, resolveConflictsPrompt, resumeLaunch, shipPrompt } from "./agents.ts";
 import { consoleFolderProblem, prepareConsoleFolder } from "./consoleFolder.ts";
+import { editorArgv, EditorError, editorCommand, editorFound, openEditor } from "./editor.ts";
 import type { SessionActivity } from "../activity/events.ts";
 import { isBusy } from "../keepAwake.ts";
 import { readReport, STATE_FILE_ENV, terminalRepliesOnly, type Report, type ReportedState } from "./reportedState.ts";
@@ -1019,6 +1020,51 @@ export class SessionManager {
     if (work.state === "missing") throw new SessionError(404, "unknown worktree");
     this.forgetWorktrees();
     return removeWorktree(repo.path, path, work.state === "merged");
+  }
+
+  /** The editor command in effect and whether its executable is found, for the session list (editor-launch). */
+  editor(): { command: string[]; found: boolean } {
+    const command = editorCommand(this.deps.getConfig().agentSessions);
+    return { command, found: editorFound(command) };
+  }
+
+  /**
+   * Open in editor for a change session: its working directory — the worktree, or the tracked folder of an in-place
+   * session — from the session record. Running or ended alike; the session itself is not touched.
+   */
+  async openEditor(id: string): Promise<{ started: true; command: string[] }> {
+    const session = this.get(id);
+    if (isChangeless(session)) throw new SessionError(400, notAChange(session));
+    const config = this.deps.getConfig();
+    if (!config.agentSessions.enabled) throw new SessionError(403, "agent sessions are disabled");
+    const repo = config.repos.find((r) => r.id === session.repoId);
+    if (!repo) throw new SessionError(404, "unknown repository");
+    if (!repoAgentEnabled(repo)) throw new SessionError(403, "agent sessions are switched off for this repository");
+    return this.startEditor(session.worktreePath);
+  }
+
+  /** Open in editor for a session worktree, by name, resolved from the server's own session worktree list. */
+  async openWorktreeEditor(input: { repoId?: unknown; name?: unknown }): Promise<{ started: true; command: string[] }> {
+    const config = this.deps.getConfig();
+    if (!config.agentSessions.enabled) throw new SessionError(403, "agent sessions are disabled");
+    if (typeof input.name !== "string" || !WORKTREE_NAME.test(input.name)) throw new SessionError(400, "invalid worktree name");
+    const repo = config.repos.find((r) => r.id === input.repoId);
+    if (!repo) throw new SessionError(404, "unknown repository");
+    if (!repoAgentEnabled(repo)) throw new SessionError(403, "agent sessions are switched off for this repository");
+    const worktree = (await this.worktrees()).find((w) => w.repoId === repo.id && w.name === input.name);
+    if (!worktree) throw new SessionError(404, "unknown worktree");
+    return this.startEditor(worktree.path);
+  }
+
+  private async startEditor(folder: string): Promise<{ started: true; command: string[] }> {
+    const argv = editorArgv(this.deps.getConfig().agentSessions, folder);
+    try {
+      await openEditor(argv, folder);
+    } catch (err) {
+      if (err instanceof EditorError) throw new SessionError(err.status, err.message);
+      throw err;
+    }
+    return { started: true, command: argv };
   }
 
   /** Continues the agent's latest conversation in the session's worktree, in the same session record. */

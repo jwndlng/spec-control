@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE } from "../src/shared/agentDefaults.ts";
 import type { AgentAvailability, AgentProfile, AgentSessionsConfig, KeepAwakeStatus, PromptKey } from "../src/shared/types.ts";
 import { defaultConfig, validateConfig } from "../src/server/config.ts";
-import { AgentEditor, ConsoleAgentPicker, KeepAwakeSetting, keepAwakeState, PerProjectNote, PresetPicker, ShortcutEditor, withoutAgent } from "../src/ui/agentSettings.tsx";
+import { AgentEditor, ConsoleAgentPicker, EditorCommandField, KeepAwakeSetting, keepAwakeState, PerProjectNote, PresetPicker, ShortcutEditor, withoutAgent } from "../src/ui/agentSettings.tsx";
 import { byTag, elements, textOf } from "./vnode.ts";
 
 const profile = (patch: Partial<AgentProfile> = {}): AgentProfile => ({ id: "fake", name: "Fake Agent", command: ["fake", "{prompt}"], prompts: { implement: "implement {change}" }, ...patch });
@@ -304,4 +304,22 @@ test("Launch arguments are edited one per line in the Command group; clearing th
   expect(patch).toEqual({ launchArgs: ["--model", "fast"] });
   type("  \n");
   expect(patch).toEqual({ launchArgs: undefined });
+});
+
+test("the editor command field: one argument per line, empty stores nothing, and the hint names code and an example", () => {
+  let stored: string[] | undefined = ["unchanged"];
+  const field = EditorCommandField({ editor: undefined, onChange: (editor) => (stored = editor) });
+  const [area] = byTag(field, "textarea");
+  const type = (value: string) => (area.props.onInput as (e: { currentTarget: { value: string } }) => void)({ currentTarget: { value } });
+  expect(area.props.value).toBe("");
+  type("zed");
+  expect(stored).toEqual(["zed"]);
+  type("open\n-a\nVisual Studio Code\n{path}");
+  expect(stored).toEqual(["open", "-a", "Visual Studio Code", "{path}"]);
+  type("");
+  expect(stored).toBeUndefined();
+  const hint = textOf(field);
+  expect(hint).toContain("Empty uses code");
+  expect(hint).toContain('open -a "Visual Studio Code" {path}');
+  expect(byTag(EditorCommandField({ editor: ["zed", "--new"], onChange: () => {} }), "textarea")[0].props.value).toBe("zed\n--new");
 });

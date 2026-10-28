@@ -2,7 +2,7 @@
 // card shows (starter buttons, or a badge that opens the session panel).
 import { createContext, type ComponentChildren } from "preact";
 import { useCallback, useContext, useEffect, useMemo, useState } from "preact/hooks";
-import { changeSessions, isConsole, isIntegration, isProjectConsole, type AgentAvailability, type ChangeSession, type ChangeSnapshot, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleSession, type PullRequest, type SessionAction, type SessionWorktree, type Snapshot } from "../shared/types.ts";
+import { changeSessions, isConsole, isIntegration, isProjectConsole, type AgentAvailability, type ChangeSession, type ChangeSnapshot, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleSession, type PullRequest, type SessionAction, type SessionWorktree, type Snapshot, type EditorAvailability } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { EndProposalDialog } from "./endProposalDialog.tsx";
 import { FastForwardDialog, type FastForwardChoice } from "./fastForwardDialog.tsx";
@@ -12,9 +12,9 @@ import { type NextStep, type PullRequestStep, waitingLabel } from "../shared/nex
 import { isProposalPullRequest } from "../shared/pullRequestLink.ts";
 import { runningProposalSession } from "../shared/sessionBranch.ts";
 import { ActionMenu, type ActionItem, type ActionStatus } from "./actionMenu.tsx";
-import { afterStart, agentForRepo, type AutoMergeReport, cardSessionControls, conflictBadge, consoleSteps, endProposalConfirmation, openWork, pullRequestSession, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, starterSplit, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
+import { afterStart, agentForRepo, type AutoMergeReport, cardSessionControls, conflictBadge, consoleSteps, editorControl, type EditorControl, endProposalConfirmation, openWork, pullRequestSession, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, starterSplit, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
 import { boardFrom, changePath, CONSOLE_TAB, parseDetailQuery, routeFromPath, serializeDetailQuery } from "./routes.ts";
-import { currentPath, currentQuery, navigate } from "./url.ts";
+import { currentPath, currentQuery, followInApp, hrefWithQuery, navigate } from "./url.ts";
 
 const POLL_MS = 3000;
 
@@ -41,6 +41,8 @@ interface SessionUi {
   agents: AgentAvailability[];
   /** Every session worktree with what became of its work; outlives session records. */
   worktrees: SessionWorktree[];
+  /** The editor command in effect and whether it was found, for Open in editor; absent until the list was read. */
+  editor?: EditorAvailability;
   /** The session the end-session dialog is open for. */
   endingId?: string;
   /** Bumped whenever the terminal should take the keyboard (after something was typed into it for the user). */
@@ -118,6 +120,7 @@ export function SessionProvider({
   const [projectConsoles, setProjectConsoles] = useState<ProjectConsoleSession[]>([]);
   const [agents, setAgents] = useState<AgentAvailability[]>([]);
   const [worktrees, setWorktrees] = useState<SessionWorktree[]>([]);
+  const [editor, setEditor] = useState<EditorAvailability>();
   const [error, setError] = useState<string>();
 
   const refresh = useCallback(async () => {
@@ -129,6 +132,7 @@ export function SessionProvider({
       setProjectConsoles(result.sessions.filter(isProjectConsole));
       setAgents(result.agents);
       setWorktrees(result.worktrees ?? []);
+      setEditor(result.editor);
       setError(undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -224,8 +228,8 @@ export function SessionProvider({
 
   const shown = consoleOpen && enabled;
   const value = useMemo(
-    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, refresh }),
-    [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, endingId, focusTick, unsentId, autoMerge, error, openPanel, openConsole, start, refresh],
+    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, refresh }),
+    [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, autoMerge, error, openPanel, openConsole, start, refresh],
   );
   const answerFastForward = useCallback(
     (choice: FastForwardChoice | undefined) => {
@@ -326,6 +330,18 @@ function OrphanActions({ worktree }: { worktree: SessionWorktree }) {
       <button type="button" class="btn sm ghost" title={worktree.path} onClick={() => void navigator.clipboard.writeText(cdCommand(worktree.path))}>
         Copy cd
       </button>
+      <OpenInEditor
+        folder={worktree.path}
+        open={() => api.openWorktreeEditor(worktree.repoId, worktree.name)}
+        run={async (fn) => {
+          try {
+            setNote(undefined);
+            await fn();
+          } catch (err) {
+            setNote(err instanceof Error ? err.message : String(err));
+          }
+        }}
+      />
       {confirming ? (
         <button type="button" class="btn sm primary" title="Removed only if it is clean and its work is merged or exists elsewhere; the branch stays" onClick={() => void remove()}>
           Confirm remove
@@ -336,6 +352,38 @@ function OrphanActions({ worktree }: { worktree: SessionWorktree }) {
         </button>
       )}
       {note && <span class="hint">{note}</span>}
+    </>
+  );
+}
+
+/**
+ * **Open in editor** (editor-launch), beside Copy cd: starts the user's editor on a change session's folder. The browser
+ * names the session or worktree in `open`; the folder shown here is only for the tooltip. `run` reports a refusal the
+ * way the host reports its other actions. Hosts offer it only for change sessions, so consoles never get one.
+ */
+export function OpenInEditor({ folder, open, run }: { folder: string; open: () => Promise<unknown>; run: (fn: () => Promise<unknown>) => Promise<void> }) {
+  const ui = useSessionUi();
+  const [busy, setBusy] = useState(false);
+  const activate = async () => {
+    setBusy(true);
+    await run(open);
+    setBusy(false);
+  };
+  return <OpenInEditorView control={editorControl(ui.editor, folder)} busy={busy} onActivate={() => void activate()} />;
+}
+
+/** The control itself, without state: a button, and when the editor is not found, a link to change it in Settings. */
+export function OpenInEditorView({ control, busy = false, onActivate }: { control: EditorControl; busy?: boolean; onActivate: () => void }) {
+  return (
+    <>
+      <button type="button" class="btn sm ghost" disabled={!control.enabled || busy} title={control.title} onClick={onActivate}>
+        Open in editor
+      </button>
+      {control.notFound && (
+        <a class="hint" href={hrefWithQuery("/settings", "?section=agents")} onClick={(e) => followInApp(e, "/settings", "?section=agents")}>
+          {control.notFound} not found — change the editor
+        </a>
+      )}
     </>
   );
 }

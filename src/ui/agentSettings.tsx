@@ -328,6 +328,37 @@ export function ConsoleAgentPicker({ settings, onChange }: { settings: AgentSess
   );
 }
 
+/**
+ * The editor **Open in editor** starts (editor-launch): one argument per line, no shell. Empty stores no command, which
+ * means `code`.
+ */
+export function EditorCommandField({ editor, onChange }: { editor: string[] | undefined; onChange: (editor: string[] | undefined) => void }) {
+  return (
+    <>
+      <h3>Editor</h3>
+      <label class="agent-tools">
+        <span class="agent-prompt-label">Editor command</span>
+        <span class="hint">
+          <strong>Open in editor</strong>, beside <strong>Copy cd</strong>, runs this command with the folder a change's agent works in. <strong>One argument per line</strong>,
+          no shell; <code>{"{path}"}</code> marks where the folder goes, otherwise it is added last. Empty uses <code>code</code> (VS Code), e.g.{" "}
+          <code>{'open -a "Visual Studio Code" {path}'}</code> as <code>open</code>, <code>-a</code>, <code>Visual Studio Code</code>, <code>{"{path}"}</code>.
+        </span>
+        <textarea
+          class="input mono"
+          aria-label="Editor command"
+          rows={Math.max(2, editor?.length ?? 0)}
+          placeholder="code"
+          value={(editor ?? []).join("\n")}
+          onInput={(e) => {
+            const args = parseArgLines(e.currentTarget.value);
+            onChange(args.length ? args : undefined);
+          }}
+        />
+      </label>
+    </>
+  );
+}
+
 export function PerProjectNote() {
   return (
     <>
@@ -457,6 +488,8 @@ export function AgentSettings({ draft, update }: Props) {
           />
         </label>
         <ConsoleAgentPicker settings={settings} onChange={(consoleAgent) => set({ consoleAgent })} />
+
+        <EditorCommandField editor={settings.editor} onChange={(editor) => set({ editor })} />
 
         <PerProjectNote />
       </fieldset>

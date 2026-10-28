@@ -25,5 +25,5 @@
 
 - [x] 4.1 Update the session and console sections of `src/ui/helpContent.tsx`
 - [x] 4.2 Run `bun run check` and `bun run build`, and verify the compiled binary starts and serves the board
-- [~] 4.3 In a project with docs auto-merge on, run Draft then Implement from the proposal's console end to end: one console at a time, the proposal pull request merged through the Implement session, its worktree removed (needs the user's repositories)
+- [~] 4.3 In a project with docs auto-merge on, run Draft then Implement from the proposal's console end to end: one console at a time, the proposal pull request merged through the Implement session, its worktree removed (needs the user's repositories) — **you:** in such a project, Draft a change, then use **End proposal session and implement** in its Console tab; check that only the Implement session runs, that it receives the Merge prompt for the proposal pull request once that is ready, and that the `docs-<name>` worktree is gone after it merged
 - [x] 4.4 Add a What's new entry at the top of `src/ui/changelog.ts`
