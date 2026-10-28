@@ -54,7 +54,12 @@ For every dependency of an active change the scanner SHALL report one state, der
 changes only:
 - `met` — the repository's main checkout holds that change archived, or holds an active copy of it in `Done` (either
   sub-state). This means "implemented and merged", as of the main checkout's state: it reflects the user's last pull
-  and MUST NOT contact a remote. For a repository without git, the folder itself is the main checkout.
+  and MUST NOT contact a remote. For a repository without git, the folder itself is the main checkout. When the
+  repository's merged changes hold an active change of that name, that change alone decides: the dependency is `met`
+  only when the main checkout holds it in `Done`, or holds an archive of that name dated on or after that active
+  change's creation date. An archive dated before it belongs to an earlier change that reused the name and MUST NOT
+  make the dependency `met` — the same rule by which the scanner tells a new change reusing a name from a leftover of
+  the archived one.
 - `cycle` — not `met`, and following dependencies that are not `met` from that change leads back to the dependent
   change.
 - `missing` — not `met`, not part of a cycle, and the repository has no active or archived change of that name in any
@@ -80,6 +85,14 @@ is visible wherever warnings are.
 #### Scenario: Archived only on a branch
 - **WHEN** `add-billing-schema` is archived only in a linked worktree and the main checkout does not hold that archive
 - **THEN** a dependency on `add-billing-schema` is `waiting`, unless the main checkout's own active copy is in `Done`
+
+#### Scenario: A reused name is not met by its old archive
+- **WHEN** `add-billing-ui` depends on `add-billing-schema`, the main checkout holds `openspec/changes/archive/2026-09-01-add-billing-schema/`, and a new active `add-billing-schema` created `2026-10-01` is in `Drafts`
+- **THEN** that dependency is `waiting` and `add-billing-ui` is blocked
+
+#### Scenario: A reused name is met once it is done
+- **WHEN** in that situation the new `add-billing-schema` reaches `Done` in the main checkout
+- **THEN** that dependency is `met`
 
 #### Scenario: Unknown name
 - **WHEN** `add-billing-ui` depends on `add-billing-scheme` and no change of that name exists, active or archived
