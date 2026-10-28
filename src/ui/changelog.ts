@@ -22,6 +22,13 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
       "A link in an artifact to another file of the same change — `[design](./design.md)` in a proposal — now opens that file in the change's view. In the macOS app, Retry after a port change moves the window to the new port, a link that asks for a new tab opens in your browser instead of replacing the window, and quitting never leaves the server it started running.",
   },
   {
+    id: "2026-10-28-long-prompts-reach-the-agent",
+    date: "2026-10-28",
+    title: "Long prompts reach a running agent intact",
+    summary:
+      "**Archive**, **Ship** and **Merge** sent to a running agent no longer turn into `[Pasted text #1]` followed by a fragment of the prompt when the prompt is long. The text is typed in small pieces, so the agent shows it as typed and it is submitted as usual.",
+  },
+  {
     id: "2026-10-27-open-in-editor",
     date: "2026-10-27",
     title: "Open an agent's worktree in your editor",
