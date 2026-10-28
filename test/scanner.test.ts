@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { appendFile, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
+import { cachePath } from "../src/server/paths.ts";
 import type { ParsedStatus } from "../src/server/git.ts";
 import { openSpec } from "../src/server/frameworks/openspec/index.ts";
 import { MAX_INSPECTED_WORKTREES, PROMPT_LIMIT_BYTES, Scanner, scanLabels, scanRepo } from "../src/server/scanner.ts";
@@ -749,4 +750,101 @@ test("branch matching: a change that leads from a linked worktree keeps that wor
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+// --- Hostile files: links, pipes and devices made in a temporary repository (contain-repository-reads). ---
+
+test("hostile files fail only their own change, with a warning, and the scan completes", async () => {
+  const root = await tempDir();
+  const elsewhere = join(root, "elsewhere");
+  const repo = join(root, "demo-ops");
+  const changeRoot = join(repo, "openspec", "changes");
+  await mkdir(elsewhere, { recursive: true });
+  await mkdir(changeRoot, { recursive: true });
+  await writeFile(join(repo, "openspec", "config.yaml"), "schema: spec-driven\n");
+  await writeFile(join(elsewhere, "hosts"), "127.0.0.1 private-host-entry\n");
+  await writeFile(join(elsewhere, "spec.md"), "## ADDED Requirements\n\n### Requirement: Outside text\nThe outside-spec-marker SHALL appear.\n");
+  const done = "- [x] 1.1 Done\n";
+
+  await writeChange(changeRoot, "healthy", undefined, { "tasks.md": "- [x] 1.1 Done\n- [ ] 1.2 Next\n", "prompt.md": "# Prompt\n\nFine\n" });
+  await writeChange(changeRoot, "lint-rules", undefined, { "tasks.md": done });
+  await rm(join(changeRoot, "lint-rules", ".openspec.yaml"));
+  await symlink("/dev/zero", join(changeRoot, "lint-rules", ".openspec.yaml"));
+  await writeChange(changeRoot, "piped");
+  expect(Bun.spawnSync(["mkfifo", join(changeRoot, "piped", "tasks.md")]).exitCode).toBe(0);
+  await writeChange(changeRoot, "rotate-keys", undefined, { "tasks.md": done });
+  await mkdir(join(changeRoot, "rotate-keys", "specs", "auth"), { recursive: true });
+  await symlink(join(elsewhere, "spec.md"), join(changeRoot, "rotate-keys", "specs", "auth", "spec.md"));
+  await writeChange(changeRoot, "linked-prompt");
+  await symlink(join(elsewhere, "hosts"), join(changeRoot, "linked-prompt", "prompt.md"));
+  await writeChange(changeRoot, "linked-deps", undefined, { "notes.yaml": "depends_on: []\n" });
+  await symlink(join(changeRoot, "linked-deps", "notes.yaml"), join(changeRoot, "linked-deps", "depends-on.yaml"));
+  await writeChange(changeRoot, "inner-link", undefined, { "notes.md": "- [x] 1.1 Done\n- [ ] 1.2 Next\n" });
+  await symlink(join(changeRoot, "inner-link", "notes.md"), join(changeRoot, "inner-link", "tasks.md"));
+  for (const [name, schema] of [["climb-one", ".."], ["climb-two", "../../shared"]]) {
+    await writeChange(changeRoot, name);
+    await writeFile(join(changeRoot, name, ".openspec.yaml"), `schema: ${schema}\ncreated: 2026-09-01\n`);
+  }
+  await writeFile(join(repo, "openspec", "schema.yaml"), "not: a schema\n");
+
+  const config = { ...defaultConfig(), repos: [newRepoConfig(repo, true)] };
+  const scanner = new Scanner(() => config, { repoTimeoutMs: 20_000 });
+  const started = Date.now();
+  // Twice: a pipe or device that held a read would never let the second poll finish.
+  await scanner.trigger().done;
+  await scanner.trigger().done;
+  expect(Date.now() - started).toBeLessThan(40_000);
+  const [snap] = scanner.snapshot.repos;
+  expect(snap.ok).toBe(true);
+  const get = (name: string) => snap.changes.find((c) => c.name === name)!;
+  const warns = (name: string, text: string) => expect([name, get(name).warnings?.some((w) => w.includes(text))]).toEqual([name, true]);
+
+  expect(get("healthy").tasks).toMatchObject({ done: 1, total: 2 });
+  expect(get("healthy").prompt).toBe("# Prompt\n\nFine\n");
+  expect(get("healthy").warnings).toBeUndefined();
+
+  warns("lint-rules", ".openspec.yaml");
+  expect(get("lint-rules").schema).toBe("spec-driven");
+  expect(get("lint-rules").created).toBeUndefined();
+  expect(get("lint-rules").tasks).toMatchObject({ done: 1, total: 1 });
+
+  expect(get("piped").tasks).toBeNull();
+  warns("piped", "tasks.md is not a regular file");
+
+  // The library's own output glob already refuses the link, so the change is read without artifacts; the sync check's
+  // own refusal is covered in specSync.test.ts.
+  expect(get("rotate-keys").specsSynced).not.toBe(true);
+  warns("rotate-keys", "specs/auth/spec.md");
+
+  expect(get("linked-prompt").prompt).toBeUndefined();
+  warns("linked-prompt", "prompt.md");
+
+  expect(get("linked-deps").blocked).toBe(true);
+  warns("linked-deps", "could not read depends-on.yaml");
+
+  expect(get("inner-link").tasks).toMatchObject({ done: 1, total: 2 });
+
+  for (const name of ["climb-one", "climb-two"]) {
+    expect(get(name).artifacts).toEqual([]);
+    warns(name, "not a plain name");
+  }
+
+  const written = await Bun.file(cachePath()).text();
+  expect(written).not.toContain("private-host-entry");
+  expect(written).not.toContain("outside-spec-marker");
+  await rm(root, { recursive: true, force: true });
+}, 60_000);
+
+test("an oversized config.yaml is not read: a warning on the repository, changes read with the default schema", async () => {
+  const root = await tempDir();
+  const changeRoot = join(root, "openspec", "changes");
+  await mkdir(changeRoot, { recursive: true });
+  await writeFile(join(root, "openspec", "config.yaml"), `schema: lean\n# ${"x".repeat(3 * 1024 * 1024)}\n`);
+  await writeChange(changeRoot, "no-marker-schema");
+  await writeFile(join(changeRoot, "no-marker-schema", ".openspec.yaml"), "created: 2026-09-01\n");
+  const snap = await scanRepo(newRepoConfig(root, true));
+  expect(snap.ok).toBe(true);
+  expect(snap.warnings?.some((w) => w.includes("openspec/config.yaml") && w.includes("1048576"))).toBe(true);
+  expect(snap.changes[0].schema).toBe("spec-driven");
+  await rm(root, { recursive: true, force: true });
 });

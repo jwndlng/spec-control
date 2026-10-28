@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type AppState, createFetchHandler } from "../src/server/api.ts";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
@@ -186,6 +186,17 @@ test("409 when there is no openspec/ directory", async () => {
   const res = await post(h.base, `/api/repos/${h.repoId}/changes`, { name: "add-audit-trail" });
   expect(res.status).toBe(409);
   expect(await treeFingerprint(h.repoRoot)).toBe(before);
+});
+
+test("409 when openspec/changes is a symbolic link, and nothing appears in its target", async () => {
+  h = await harness();
+  const target = join(await tempDir("osd-linked-target-"), "shared");
+  await rename(join(h.repoRoot, "openspec", "changes"), target);
+  await symlink(target, join(h.repoRoot, "openspec", "changes"));
+  const before = await treeFingerprint(target);
+  const res = await post(h.base, `/api/repos/${h.repoId}/changes`, { name: "add-audit-trail" });
+  expect(res.status).toBe(409);
+  expect(await treeFingerprint(target)).toBe(before);
 });
 
 test("409 for a duplicate active name", async () => {

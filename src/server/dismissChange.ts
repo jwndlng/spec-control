@@ -6,13 +6,14 @@
 // branch, a ref or anything outside `openspec/changes/<name>/` (the changes directory of the only framework whose write
 // paths are enumerated, `writablePaths`), and nothing here commits.
 import { createHash } from "node:crypto";
-import { lstat, readdir, realpath, rm } from "node:fs/promises";
+import { lstat, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { isChangeDirName } from "../shared/changeNames.ts";
 import type { DismissFile, DismissPreview, DismissResult, RepoConfig, RepoSnapshot } from "../shared/types.ts";
 import { frameworkById, writablePaths } from "./frameworks/registry.ts";
 import { knownStatusPaths, subdirectory } from "./git.ts";
 import { gitWrite } from "./gitWrite.ts";
+import { linkedSegment } from "./source.ts";
 
 const GIT_TIMEOUT_MS = 10_000;
 
@@ -59,21 +60,17 @@ function notInMain(scanned: RepoSnapshot, name: string): DismissError {
 }
 
 /**
- * The change's directory in the main checkout: a real directory (not a symbolic link) directly inside the framework's
- * changes directory (`openspec/changes/`). Throws the reason otherwise.
+ * The change's directory in the main checkout, directly inside the framework's changes directory (`openspec/changes/`)
+ * and reached through real directories only: no segment below the repository's folder — `openspec`, `openspec/changes`,
+ * the change directory — may be a symbolic link (change-dismissal spec). Throws the reason otherwise.
  */
 async function activeDir(repo: RepoConfig, scanned: RepoSnapshot, name: string): Promise<string> {
   if (!isChangeDirName(name)) throw new DismissError(400, "invalid change name");
   const changes = changesDir(scanned);
-  const parent = join(repo.path, changes);
-  const dir = join(parent, name);
-  const info = await lstat(dir).catch(() => undefined);
-  if (!info) throw notInMain(scanned, name);
-  if (info.isSymbolicLink()) throw new DismissError(409, `${changes}/${name} is a symbolic link; only a real change directory can be dismissed`);
-  if (!info.isDirectory()) throw notInMain(scanned, name);
-  const [realDir, realParent] = await Promise.all([realpath(dir), realpath(parent)]);
-  if (realDir !== join(realParent, name)) throw new DismissError(409, `${changes}/${name} does not resolve inside ${changes}`);
-  return dir;
+  const found = await linkedSegment(repo.path, `${changes}/${name}`);
+  if (found?.reason === "symbolic link") throw new DismissError(409, `${found.segment} is a symbolic link; only a change reached through real directories can be dismissed`);
+  if (found) throw notInMain(scanned, name);
+  return join(repo.path, changes, name);
 }
 
 interface Entry {
@@ -155,16 +152,18 @@ export async function dismissChange(repo: RepoConfig, scanned: RepoSnapshot, nam
   running.add(k);
   try {
     if (hasOpenSession()) throw new DismissError(409, `an agent session is running for "${name}"; end it first`);
-    const { dir, preview } = await inspect(repo, scanned, name);
+    const { preview } = await inspect(repo, scanned, name);
     if (preview.fingerprint !== fingerprint) throw new DismissError(409, `"${name}" changed since it was shown; look at it again before dismissing`);
-    return { name, staged: await deleteAndStage(repo, scanned, dir, name) };
+    return { name, staged: await deleteAndStage(repo, scanned, name) };
   } finally {
     running.delete(k);
   }
 }
 
 /** The dismissal's one write: the directory goes, then its removal is staged, best-effort. */
-async function deleteAndStage(repo: RepoConfig, scanned: RepoSnapshot, dir: string, name: string): Promise<boolean> {
+async function deleteAndStage(repo: RepoConfig, scanned: RepoSnapshot, name: string): Promise<boolean> {
+  // Checked again immediately before the delete: a link may have replaced a directory since the preview.
+  const dir = await activeDir(repo, scanned, name);
   await rm(dir, { recursive: true });
   // The files are gone; whatever git does, the deletion has succeeded.
   return scanned.isGit ? await stageRemoval(repo.path, `${changesDir(scanned)}/${name}/`) : false;
@@ -187,15 +186,21 @@ export async function removeStaleChangeDirectory(
   if (running.has(k)) return { removed: false, reason: `"${name}" is being dismissed` };
   running.add(k);
   try {
+    const reason = (err: unknown) => ({ removed: false as const, reason: err instanceof Error ? err.message : String(err) });
     let dir: string;
     try {
       dir = await activeDir(repo, scanned, name);
     } catch (err) {
-      return { removed: false, reason: err instanceof Error ? err.message : String(err) };
+      return reason(err);
     }
     const refused = await verify(dir);
     if (refused) return { removed: false, reason: refused };
-    return { removed: true, staged: await deleteAndStage(repo, scanned, dir, name) };
+    try {
+      return { removed: true, staged: await deleteAndStage(repo, scanned, name) };
+    } catch (err) {
+      if (err instanceof DismissError) return reason(err);
+      throw err;
+    }
   } finally {
     running.delete(k);
   }

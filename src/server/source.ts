@@ -1,9 +1,9 @@
 // Where a repository's files and git facts come from (design.md D3). v0 ships a local filesystem source; a remote
 // source would implement the same interface. It knows no framework: where changes live is the caller's `ChangesLayout`,
 // supplied by the repository's framework module (`frameworks/`).
-import type { Dirent } from "node:fs";
-import { readdir, readFile, realpath, stat } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { closeSync, constants, type Dirent, fstatSync, openSync, readSync, realpathSync } from "node:fs";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { LabelEntry } from "../shared/labels.ts";
 import { CHANGE_NAME_PATTERN, type DuplicateAfterArchive, type StaleLeftovers, type StrandedArchive, type Worktree } from "../shared/types.ts";
 import { type ActiveChange, findDuplicates, findStrandedArchives, type SessionHint, type StaleInput, staleLeftovers } from "./staleChanges.ts";
@@ -44,6 +44,137 @@ export interface FileInfo {
   realPath: string;
 }
 
+/** Every repository file a scan reads that has no smaller limit of its own (contain-repository-reads design D4). */
+export const MAX_REPO_FILE_BYTES = 1024 * 1024;
+
+export interface BoundedReadOptions {
+  /** The directory whose real path the file's real path must be inside: the change directory or the checkout. */
+  within: string;
+  maxBytes: number;
+  /** Read at most `maxBytes` and report `truncated` instead of refusing a larger file. */
+  truncate?: boolean;
+  /** Only an entry directly in `within` that is itself a regular file counts, never a link (design D3). */
+  inPlace?: boolean;
+}
+
+export type BoundedReadFailure = "missing" | "outside" | "not-a-file" | "too-large" | "unreadable";
+
+export type BoundedRead = { ok: true; text: string; bytes: number; truncated: boolean } | { ok: false; reason: BoundedReadFailure };
+
+/** Why `file` was not read, for a change's or a repository's warnings; undefined for a file that simply is not there. */
+export function boundedReadWarning(file: string, read: BoundedRead, maxBytes: number): string | undefined {
+  if (read.ok) return undefined;
+  switch (read.reason) {
+    case "missing":
+      return undefined;
+    case "outside":
+      return `${file} resolves outside its directory and was not read`;
+    case "not-a-file":
+      return `${file} is not a regular file and was not read`;
+    case "too-large":
+      return `${file} is larger than ${maxBytes} bytes and was not read`;
+    case "unreadable":
+      return `${file} could not be read`;
+  }
+}
+
+function insideOrSame(dir: string, candidate: string): boolean {
+  return candidate === dir || candidate.startsWith(dir.endsWith(sep) ? dir : dir + sep);
+}
+
+const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0);
+
+/**
+ * The one way a repository file is read (contain-repository-reads design D1): the real path must lie inside `within`'s,
+ * the file is opened without blocking and without following a final link, `fstat` on that descriptor must report a
+ * regular file — a named pipe, socket or device is refused before a byte is read — and never more than `maxBytes + 1`
+ * bytes are read. The descriptor is always closed. The calls are synchronous, as the adapter's own reads of the same
+ * directories are: a scan makes hundreds of these small reads, and each asynchronous step would wait its turn in the
+ * thread pool; none of them can block, since nothing that is not a regular file is ever read.
+ */
+export async function readBounded(absPath: string, options: BoundedReadOptions): Promise<BoundedRead> {
+  return readBoundedSync(absPath, options);
+}
+
+function readBoundedSync(absPath: string, options: BoundedReadOptions): BoundedRead {
+  const { within, maxBytes } = options;
+  let realWithin: string;
+  try {
+    realWithin = realpathSync(within);
+  } catch {
+    return { ok: false, reason: "missing" };
+  }
+  let target: string;
+  if (options.inPlace) {
+    if (resolve(dirname(absPath)) !== resolve(within)) return { ok: false, reason: "outside" };
+    // Opened by its name in the real directory: O_NOFOLLOW refuses the entry when it is a link.
+    target = join(realWithin, basename(absPath));
+  } else {
+    try {
+      target = realpathSync(absPath);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") return { ok: false, reason: "unreadable" };
+      // A missing file outside says so: a path that climbs out is refused whether or not it exists.
+      return { ok: false, reason: insideOrSame(resolve(within), resolve(absPath)) || insideOrSame(realWithin, resolve(absPath)) ? "missing" : "outside" };
+    }
+    if (!insideOrSame(realWithin, target)) return { ok: false, reason: "outside" };
+  }
+  let fd: number;
+  try {
+    fd = openSync(target, OPEN_FLAGS);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return { ok: false, reason: "missing" };
+    // ELOOP (a link where O_NOFOLLOW asked for none), EISDIR and the like: not a file to read.
+    return { ok: false, reason: code === "ELOOP" || code === "EISDIR" || code === "EMLINK" || code === "EFTYPE" ? "not-a-file" : "unreadable" };
+  }
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile()) return { ok: false, reason: "not-a-file" };
+    if (info.size > maxBytes && !options.truncate) return { ok: false, reason: "too-large" };
+    const buffer = Buffer.alloc(Math.min(info.size, maxBytes) + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const bytesRead = readSync(fd, buffer, length, buffer.length - length, length);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    // The file may have grown since `fstat`; what was read past the limit decides.
+    const truncated = length > maxBytes;
+    if (truncated && !options.truncate) return { ok: false, reason: "too-large" };
+    let text = new TextDecoder().decode(buffer.subarray(0, Math.min(length, maxBytes)));
+    // A cut through a multi-byte character leaves a replacement character at the end.
+    if (truncated) text = text.replace(/\uFFFD$/, "");
+    return { ok: true, text, bytes: info.size, truncated };
+  } catch {
+    return { ok: false, reason: "unreadable" };
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {
+      // already closed
+    }
+  }
+}
+
+/**
+ * The first of `relDir`'s segments below `root` that is not a real directory — a symbolic link, a file, or missing —
+ * checked with `lstat` one by one (contain-repository-reads design D6); undefined when every one is. `root` itself may
+ * be reached through a link: the user configured it.
+ */
+export async function linkedSegment(root: string, relDir: string): Promise<{ segment: string; reason: "symbolic link" | "not a directory" | "missing" } | undefined> {
+  const segments = relDir.split(/[\\/]+/).filter(Boolean);
+  for (let i = 1; i <= segments.length; i++) {
+    const segment = segments.slice(0, i).join("/");
+    const info = await lstat(join(root, segment)).catch(() => undefined);
+    if (!info) return { segment, reason: "missing" };
+    if (info.isSymbolicLink()) return { segment, reason: "symbolic link" };
+    if (!info.isDirectory()) return { segment, reason: "not a directory" };
+  }
+  return undefined;
+}
+
 export interface ChangeListing {
   active: ChangeDirEntry[];
   archived: ChangeDirEntry[];
@@ -60,7 +191,8 @@ export interface RepoSource {
   forCheckout(path: string): RepoSource;
   /** Modification time of one directory entry itself (not its contents), in ms; undefined when it does not exist. */
   mtimeMs(absPath: string): Promise<number | undefined>;
-  readText(absPath: string): Promise<string | undefined>;
+  /** The only way a repository file's content is read: contained, non-blocking, regular files only, capped (`readBounded`). */
+  readBounded(absPath: string, options: BoundedReadOptions): Promise<BoundedRead>;
   /** Undefined when the path does not exist or a link on the way does not resolve. */
   readFileInfo(absPath: string): Promise<FileInfo | undefined>;
   /** Names of the directories directly inside `absDir`; empty when it does not exist. */
@@ -194,12 +326,8 @@ export class LocalRepoSource implements RepoSource {
     }
   }
 
-  async readText(absPath: string): Promise<string | undefined> {
-    try {
-      return await readFile(absPath, "utf8");
-    } catch {
-      return undefined;
-    }
+  readBounded(absPath: string, options: BoundedReadOptions): Promise<BoundedRead> {
+    return readBounded(absPath, options);
   }
 
   async readFileInfo(absPath: string): Promise<FileInfo | undefined> {

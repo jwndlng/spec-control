@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readdir, readFile, realpath, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { applyCleanup, applyStaleCleanup, CleanupBusyError, isBranchName, isCleaningUp, previewCleanup, previewStaleCleanup, StaleCleanupError, type StaleScope } from "../src/server/cleanup.ts";
 import { newRepoConfig } from "../src/server/config.ts";
@@ -9,7 +9,7 @@ import { worktreesDir } from "../src/server/paths.ts";
 import { scanRepo } from "../src/server/scanner.ts";
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
 import type { CleanupPreview, RepoConfig, StaleCleanupPreview, StaleCleanupRequest } from "../src/shared/types.ts";
-import { tempDir, useTempHome } from "./helpers.ts";
+import { tempDir, treeFingerprint, useTempHome } from "./helpers.ts";
 import { hookLog, installRepoHooks } from "./hookHelpers.ts";
 import { commitFiles, monorepo, squashMerge as squashMergeAt } from "./monorepoHelpers.ts";
 import { git, harness, tempGitRepo, type Harness } from "./sessionHelpers.ts";
@@ -426,6 +426,29 @@ test("the main checkout's staged copy is backed up where it differs from the arc
   expect(git(r.path, "status", "--porcelain")).toBe("");
   expect(git(r.path, "rev-parse", "HEAD")).toBe(head);
   expect(git(r.path, "branch", "--show-current")).toBe("main");
+});
+
+test("with openspec/changes a symbolic link, the main checkout's copy is kept, nothing is backed up for it, and the rest still goes", async () => {
+  const r = await staleRepo();
+  const dir = join(r.path, "openspec/changes", STALE);
+  await mkdir(dir);
+  await writeFile(join(dir, "prompt.md"), "log everything\n");
+  git(r.path, "add", "--", `openspec/changes/${STALE}/`);
+  const scope = await r.scope();
+  const preview = await previewStaleCleanup(r.repo, scope, STALE);
+  expect(preview.stale?.leftovers.map((l) => l.kind).sort()).toEqual(["branch", "main", "worktree"]);
+  // The link appears after the user looked: the removal re-checks every segment immediately before it deletes.
+  const target = join(await tempDir("osd-shared-changes-"), "shared-changes");
+  await rename(join(r.path, "openspec/changes"), target);
+  await symlink(target, join(r.path, "openspec/changes"));
+  const before = await treeFingerprint(target);
+  const result = await applyStaleCleanup(r.repo, scope, STALE, requestFor(preview, true));
+  const main = result.items.find((i) => i.kind === "main");
+  expect(main).toMatchObject({ outcome: "kept" });
+  expect(main?.reason).toContain("openspec/changes is a symbolic link");
+  expect(main?.backupDir).toBeUndefined();
+  expect(result.items.filter((i) => i.kind !== "main").map((i) => i.outcome)).toEqual(["deleted", "deleted"]);
+  expect(await treeFingerprint(target)).toEqual(before);
 });
 
 test("an item that changed since the dialog is kept, and the rest still goes", async () => {

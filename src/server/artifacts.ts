@@ -4,9 +4,9 @@ import { isAbsolute, join, normalize, relative, sep } from "node:path";
 import type { ArtifactFileContent, ChangeArtifactEntry, ChangeArtifactFile, ChangeArtifacts } from "../shared/types.ts";
 import type { SpecFramework } from "./frameworks/framework.ts";
 import { openSpec } from "./frameworks/openspec/index.ts";
-import { CHANGE_NAME, type ChangeDirEntry, type RepoSource } from "./source.ts";
+import { CHANGE_NAME, type ChangeDirEntry, MAX_REPO_FILE_BYTES, type RepoSource } from "./source.ts";
 
-export const MAX_ARTIFACT_BYTES = 1024 * 1024;
+export const MAX_ARTIFACT_BYTES = MAX_REPO_FILE_BYTES;
 
 export type ChangeDirResult = { ok: true; entry: ChangeDirEntry } | { ok: false; reason: "invalid-name" | "unknown-change" };
 
@@ -48,7 +48,7 @@ export type ArtifactFileResult =
   | { ok: true; file: ArtifactFileContent }
   | { ok: false; reason: "bad-path" | "not-found" | "too-large"; message: string };
 
-/** design.md D2: string checks first, then containment of the real path, then the size cap — all before any content is read. */
+/** design.md D2: string checks first, then the bounded read: containment of the real path, a regular file, the size cap. */
 export async function readArtifactFile(source: RepoSource, changeDir: string, path: string | null | undefined): Promise<ArtifactFileResult> {
   if (!path) return { ok: false, reason: "bad-path", message: "path is required" };
   if (path.includes("\0") || isAbsolute(path) || /^[A-Za-z]:/.test(path) || path.startsWith("\\")) return { ok: false, reason: "bad-path", message: "path must be relative to the change directory" };
@@ -57,13 +57,10 @@ export async function readArtifactFile(source: RepoSource, changeDir: string, pa
   const candidate = join(changeDir, normalized);
   if (!inside(changeDir, candidate)) return { ok: false, reason: "bad-path", message: "path escapes the change directory" };
 
-  const notFound: ArtifactFileResult = { ok: false, reason: "not-found", message: "no such file in this change" };
-  const info = await source.readFileInfo(candidate);
-  // The change directory itself may sit behind a link (a worktree, /tmp on macOS), so compare real paths on both sides.
-  const realDir = (await source.readFileInfo(changeDir))?.realPath;
-  if (!info || !realDir || !info.isFile || !inside(realDir, info.realPath)) return notFound;
-  if (info.size > MAX_ARTIFACT_BYTES) return { ok: false, reason: "too-large", message: `file is larger than ${MAX_ARTIFACT_BYTES} bytes` };
-  const text = await source.readText(info.realPath);
-  if (text === undefined) return notFound;
-  return { ok: true, file: { path: normalized.split(sep).join("/"), bytes: info.size, text } };
+  // The bounded read compares real paths (the change directory may sit behind a link: a worktree, /tmp on macOS) and
+  // refuses a pipe, device or anything else that is not a regular file before reading it.
+  const read = await source.readBounded(candidate, { within: changeDir, maxBytes: MAX_ARTIFACT_BYTES });
+  if (!read.ok && read.reason === "too-large") return { ok: false, reason: "too-large", message: `file is larger than ${MAX_ARTIFACT_BYTES} bytes` };
+  if (!read.ok) return { ok: false, reason: "not-found", message: "no such file in this change" };
+  return { ok: true, file: { path: normalized.split(sep).join("/"), bytes: read.bytes, text: read.text } };
 }

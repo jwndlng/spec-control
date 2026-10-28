@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmod, readFile } from "node:fs/promises";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, symlink, writeFile } from "node:fs/promises";
 import { createChange, stageChangeDir } from "../src/server/createChange.ts";
 import { openSpec } from "../src/server/frameworks/openspec/index.ts";
 import { writablePaths } from "../src/server/frameworks/registry.ts";
@@ -376,5 +376,18 @@ test("the user's global hooks folder never runs for the staging `git add`", asyn
   } finally {
     if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL;
     else process.env.GIT_CONFIG_GLOBAL = saved;
+  }
+});
+
+test("a linked openspec/changes or openspec is refused before anything is created in the link's target", async () => {
+  for (const rel of ["openspec/changes", "openspec"]) {
+    const root = await repoWithOpenspec("spec-driven");
+    const target = join(await tempDir("osd-linked-target-"), "shared");
+    await rename(join(root, rel), target);
+    await symlink(target, join(root, rel));
+    const result = await createChange(root, "add-audit-trail", "Log every mutation");
+    expect(result).toMatchObject({ ok: false, reason: "linked-path" });
+    expect(!result.ok && result.message.startsWith(`${rel} is a symbolic link`)).toBe(true);
+    expect(readdirSync(rel === "openspec" ? join(target, "changes") : target)).toEqual([]);
   }
 });

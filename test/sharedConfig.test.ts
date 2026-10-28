@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmod, mkdir, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { readProjectConfig } from "../node_modules/@fission-ai/openspec/dist/core/project-config.js";
@@ -16,6 +16,7 @@ import {
   MAX_CONTEXT_BYTES,
   previewFor,
   repoSharedConfig,
+  resolveProfiles,
   ruleComment,
   SharedConfigValidationError,
   saveSharedConfig,
@@ -335,5 +336,67 @@ test("applyTo: refuses a missing digest, a file changed after the preview and pr
 
   expect(await applyTo(repo, SHARED, ["base"], again.digest)).toEqual({ repoId: repo.id, result: "written" });
   expect(await readFile(file, "utf8")).toBe(again.after);
+  await rm(root, { recursive: true, force: true });
+});
+
+// ---- Apply writes only a real config file and leaves no temporary file (contain-repository-reads design D7) ----
+
+test("applyTo refuses a linked config.yaml or openspec/, and the link and its target stay as they were", async () => {
+  const elsewhere = await tempDir("osd-shared-common-");
+  await writeFile(join(elsewhere, "config.yaml"), SCAFFOLD);
+
+  const linkedFile = await repoWith(undefined);
+  await symlink(join(elsewhere, "config.yaml"), linkedFile.file);
+  const repo = newRepoConfig(linkedFile.root, true);
+  expect((await previewFor(repo, SHARED, ["base"])).refusal).toContain("openspec/config.yaml is a symbolic link");
+  const result = await previewThenApply(repo, ["base"]);
+  expect(result.result).toBe("refused");
+  expect(result.reason).toContain("symbolic link");
+  expect((await lstat(linkedFile.file)).isSymbolicLink()).toBe(true);
+  expect(await readFile(join(elsewhere, "config.yaml"), "utf8")).toBe(SCAFFOLD);
+
+  const linkedDir = await tempDir("osd-shared-linkeddir-");
+  await mkdir(join(elsewhere, "openspec"), { recursive: true });
+  await writeFile(join(elsewhere, "openspec", "config.yaml"), SCAFFOLD);
+  await symlink(join(elsewhere, "openspec"), join(linkedDir, "openspec"));
+  const dirResult = await previewThenApply(newRepoConfig(linkedDir, true), ["base"]);
+  expect([dirResult.result, dirResult.reason?.startsWith("openspec is a symbolic link")]).toEqual(["refused", true]);
+  expect(await readFile(join(elsewhere, "openspec", "config.yaml"), "utf8")).toBe(SCAFFOLD);
+  expect((await readdir(join(elsewhere, "openspec"))).sort()).toEqual(["config.yaml"]);
+
+  for (const root of [linkedFile.root, linkedDir, elsewhere]) await rm(root, { recursive: true, force: true });
+});
+
+test("applyTo still writes in place when only openspec/changes is a link", async () => {
+  const { root, file } = await repoWith(SCAFFOLD);
+  const elsewhere = await tempDir("osd-shared-changes-");
+  await rm(join(root, "openspec", "changes"), { recursive: true });
+  await symlink(elsewhere, join(root, "openspec", "changes"));
+  expect((await previewThenApply(newRepoConfig(root, true), ["base"])).result).toBe("written");
+  expect(await readFile(file, "utf8")).toContain(contextBegin("base"));
+  expect(await readdir(elsewhere)).toEqual([]);
+  for (const dir of [root, elsewhere]) await rm(dir, { recursive: true, force: true });
+});
+
+test("a failing rename refuses the apply, leaves config.yaml unchanged and no temporary file", async () => {
+  const { root, file } = await repoWith(SCAFFOLD);
+  const failing = { rename: async () => Promise.reject(new Error("disk full")) };
+  const repo = newRepoConfig(root, true);
+  const result = await applyTo(repo, SHARED, ["base"], (await previewFor(repo, SHARED, ["base"])).digest, failing);
+  expect(result).toMatchObject({ result: "refused", reason: "could not write: disk full" });
+  expect(await readFile(file, "utf8")).toBe(SCAFFOLD);
+  expect((await readdir(join(root, "openspec"))).sort()).toEqual(["changes", "config.yaml"]);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("two applies at once leave one complete config and no temporary file", async () => {
+  const { root, file } = await repoWith(SCAFFOLD);
+  const repo = newRepoConfig(root, true);
+  const [base, security] = await Promise.all([previewFor(repo, SHARED, ["base"]), previewFor(repo, SHARED, ["security"])]);
+  const results = await Promise.all([applyTo(repo, SHARED, ["base"], base.digest), applyTo(repo, SHARED, ["security"], security.digest)]);
+  expect(results.map((r) => r.result)).toEqual(["written", "written"]);
+  const text = await readFile(file, "utf8");
+  expect([applyShared(SCAFFOLD, resolveProfiles(SHARED, ["base"])), applyShared(SCAFFOLD, resolveProfiles(SHARED, ["security"]))]).toContain(text);
+  expect((await readdir(join(root, "openspec"))).sort()).toEqual(["changes", "config.yaml"]);
   await rm(root, { recursive: true, force: true });
 });
