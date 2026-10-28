@@ -10,7 +10,7 @@
 
 - [x] 2.1 Add `--paste-threshold <n>` to `test/fixtures/fake-agent.ts`: raw mode, a read larger than `n` bytes prints `[pasted N bytes]` instead of its text, smaller reads are echoed, Enter prints the whole line received; verify the existing fake-agent tests still pass
 - [x] 2.2 Add a session test that submits a prompt longer than 1024 bytes (with `—` characters) to a running fake agent started with `--paste-threshold 512` in a real pseudo-terminal, and assert `submitted: true`, no `[pasted` in the output, and the full line received equal to the prompt; verify it fails against the old single-write `submitText`
-- [~] 2.3 Manually press **Archive** in a running Claude Code session for a change with a long name in a project with docs auto-merge on, in `dist/spec-control` built with `bun run build`, and confirm the input box shows the prompt's text (not `[Pasted text #1]` plus a fragment) and that it is submitted
+- [x] 2.3 Manually press **Archive** in a running Claude Code session for a change with a long name in a project with docs auto-merge on, in `dist/spec-control` built with `bun run build`, and confirm the input box shows the prompt's text (not `[Pasted text #1]` plus a fragment) and that it is submitted
 
 ## 3. Finish
 
