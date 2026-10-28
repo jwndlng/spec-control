@@ -3,7 +3,7 @@
 // built from the configuration as it is when the user continues, and only adds or changes what the user touched.
 import { AGENT_PRESETS, CLAUDE_PROFILE } from "../shared/agentDefaults.ts";
 import { PROJECT_SETTINGS, type ProjectSetting, settingApplies, withAutoFetch, withPrTitleConvention, withRepoAgent } from "../shared/repoSettings.ts";
-import { type AgentAvailability, type AutoFetchSeconds, autoFetchInterval, type Config, type EnvironmentReport, type GithubClone, type PrTitleConvention, type RepoConfig, repoAgentEnabled } from "../shared/types.ts";
+import { type AgentAvailability, type AutoFetchSeconds, autoFetchInterval, type Config, type DiscoverResult, type EnvironmentReport, type GithubClone, type PrTitleConvention, type RepoConfig, repoAgentEnabled } from "../shared/types.ts";
 import { ConfigConflictError, revisionOf } from "./api.ts";
 import { newAgentProfile, parseArgLines } from "./sessionState.ts";
 
@@ -58,6 +58,42 @@ export function workspaceSave(current: Config, entered: readonly string[], missi
  */
 export function workspaceRootReady(configured: readonly string[], entered: readonly string[], missing: ReadonlySet<string> | ReadonlyMap<string, unknown>, toCreate: ReadonlySet<string>): boolean {
   return configured.length > 0 || entered.some((root) => !missing.has(root) || toCreate.has(root));
+}
+
+/** What the Workspace step knows of discovery: the latest result or error, and the roots (`rootsKey`) it was for. */
+export interface WorkspaceDiscovery {
+  result?: DiscoverResult;
+  running: boolean;
+  error?: string;
+  for?: string;
+}
+
+/**
+ * Whether the step is still looking for projects: a run is going, or the roots changed since the latest one — before
+ * the run for them has even started — so the result shown is not the roots' result (setup-keeps-user-choices D5).
+ */
+export function discoveryPending(discovery: WorkspaceDiscovery, rootsKey: string): boolean {
+  return discovery.running || discovery.for !== rootsKey;
+}
+
+/** Why the Workspace step cannot continue yet, if it cannot. */
+export function workspaceContinueBlocked(rootReady: boolean, discovering: boolean): string | undefined {
+  if (!rootReady) return "A workspace folder is needed: choose one or create a new one.";
+  if (discovering) return "Still looking for projects…";
+  return undefined;
+}
+
+/**
+ * The found projects Continue tracks: the latest result's candidates the user did not uncheck. The unchecked set is
+ * kept for as long as the wizard is open, so a project left out stays out after a save, a refused clone or Back.
+ */
+export function checkedProjects(result: DiscoverResult | undefined, unchecked: ReadonlySet<string>): string[] {
+  return (result?.candidates ?? []).filter((c) => !unchecked.has(c.path)).map((c) => c.path);
+}
+
+/** The clones setup started, found by the folder the server reported for each — the same for a retry of it. */
+export function setupClones(clones: readonly GithubClone[], clonePaths: readonly string[]): GithubClone[] {
+  return clones.filter((c) => clonePaths.includes(c.path));
 }
 
 /** The roots Add from GitHub may clone into from the Workspace step: configured ones, and entered ones that exist or will. */
@@ -526,6 +562,11 @@ export interface WorkspaceContinueInput {
   listed: readonly ListedRepo[];
   /** Clones started for listed paths on an earlier Continue or a retry. */
   cloneIds: Readonly<Record<string, string>>;
+  /**
+   * The folder the server reported for each of those clones, by listed path: canonical, where the listed path is built
+   * from the root as typed. Absent for clones started before it was recorded; the listed path stands in for them.
+   */
+  cloneTargets?: Readonly<Record<string, string>>;
   /** Listed paths whose clone the server refused to start; tried again on the next Continue or a retry. */
   cloneRefused: Readonly<Record<string, string>>;
 }
@@ -579,10 +620,12 @@ export interface WorkspaceContinueResult {
   rootsAdded: string[];
   tracked: number;
   cloneIds: Record<string, string>;
+  /** The server's folder for each accepted clone, by listed path. */
+  cloneTargets: Record<string, string>;
   cloneRefused: Record<string, string>;
   /** `owner/name` of the clones started for the listed repositories, once the step moves on. */
   cloned: string[];
-  /** Their target folders. */
+  /** Their target folders, as the server reported them when it accepted each clone. */
   clonePaths: string[];
 }
 
@@ -608,6 +651,7 @@ export async function continueWorkspaceStep(input: WorkspaceContinueInput, deps:
     rootsAdded: [],
     tracked: 0,
     cloneIds: { ...input.cloneIds },
+    cloneTargets: { ...input.cloneTargets },
     // A refusal of a folder no longer listed — renamed or removed since — is forgotten.
     cloneRefused: Object.fromEntries(Object.entries(input.cloneRefused).filter(([path]) => listedPaths.has(path))),
     cloned: [],
@@ -647,6 +691,7 @@ export async function continueWorkspaceStep(input: WorkspaceContinueInput, deps:
     try {
       const clone = await deps.cloneGithub(r.repo, r.root, r.name);
       result.cloneIds[r.path] = clone.id;
+      result.cloneTargets[r.path] = clone.path;
       delete result.cloneRefused[r.path];
       deps.started(clone);
     } catch (err) {
@@ -656,7 +701,7 @@ export async function continueWorkspaceStep(input: WorkspaceContinueInput, deps:
   if (Object.keys(result.cloneRefused).length > 0) return result;
   const started = input.listed.filter((r) => result.cloneIds[r.path]);
   result.cloned = started.map((r) => r.repo);
-  result.clonePaths = started.map((r) => r.path);
+  result.clonePaths = started.map((r) => result.cloneTargets[r.path] ?? r.path);
   result.outcome = "next";
   return result;
 }

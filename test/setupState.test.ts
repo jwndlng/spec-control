@@ -392,7 +392,7 @@ test("the Workspace card names created folders and cloned repositories", () => {
 
 // ---- the Workspace step's Continue with folders to create and GitHub repositories ----
 
-function continueHarness(options: { existing?: string[]; refuse?: Record<string, string>; refuseClone?: string[] } = {}) {
+function continueHarness(options: { existing?: string[]; refuse?: Record<string, string>; refuseClone?: string[]; canonical?: (root: string) => string } = {}) {
   const calls: string[] = [];
   let config: Config = { ...defaultConfig() };
   let next = 1;
@@ -419,7 +419,7 @@ function continueHarness(options: { existing?: string[]; refuse?: Record<string,
       calls.push(`clone ${repo}`);
       if (options.refuseClone?.includes(`${repo} ${name}`) || options.refuseClone?.includes(repo)) throw Object.assign(new Error(`${root}/${name} already exists`), { status: 409 });
       const id = `c${next++}`;
-      const clone: GithubClone = { id, repo, root, name, path: `${root}/${name}`, state: "cloning", startedAt: "" };
+      const clone: GithubClone = { id, repo, root, name, path: `${options.canonical?.(root) ?? root}/${name}`, state: "cloning", startedAt: "" };
       clones.set(id, clone);
       return clone;
     },
@@ -482,6 +482,21 @@ test("a refused clone keeps the step open with its reason; after a rename the ne
   expect(again.cloned).toEqual(["acme/beta-soc", "acme/chat-groups"]);
   expect(again.clonePaths).toEqual(["/home/demo/Workspace/beta-soc", "/home/demo/Workspace/chat-groups-gh"]);
   expect(h.calls.filter((c) => c.startsWith("clone"))).toEqual(["clone acme/beta-soc", "clone acme/chat-groups", "clone acme/chat-groups"]);
+});
+
+test("clone paths are the server's", async () => {
+  // The root typed in another case than the folder on a case-insensitive disk: the server reports its canonical path.
+  const h = continueHarness({ canonical: (root) => root.replace("/workspace", "/Workspace"), refuseClone: ["acme/chat-groups chat-groups"] });
+  const typed = "/home/demo/workspace";
+  const listed = [listedRepo("acme/beta-soc", typed), listedRepo("acme/chat-groups", typed)];
+  const first = await continueWorkspaceStep(workspaceInput({ listed }), h.deps);
+  expect(first.outcome).toBe("stay");
+  expect(first.cloneTargets).toEqual({ [`${typed}/beta-soc`]: "/home/demo/Workspace/beta-soc" });
+  // Accepted on an earlier Continue: its server path is carried over, not rebuilt from the typed root.
+  const renamed = [listed[0], { ...listed[1], name: "chat-groups-gh", path: `${typed}/chat-groups-gh` }];
+  const again = await continueWorkspaceStep(workspaceInput({ listed: renamed, cloneIds: first.cloneIds, cloneTargets: first.cloneTargets }), h.deps);
+  expect(again.outcome).toBe("next");
+  expect(again.clonePaths).toEqual(["/home/demo/Workspace/beta-soc", "/home/demo/Workspace/chat-groups-gh"]);
 });
 
 test("a refusal of a repository no longer listed is forgotten", async () => {
