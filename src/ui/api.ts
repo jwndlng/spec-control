@@ -11,21 +11,55 @@ export class ApiError extends Error {
   }
 }
 
+/** `PUT /api/config` refused with `412`: the configuration was saved elsewhere since the copy it was based on. */
+export class ConfigConflictError extends ApiError {
+  constructor(message: string, readonly config: Config) {
+    super(412, message);
+  }
+}
+
+/** The revision the backend reported for each config object it answered with (the `ETag` over HTTP). */
+const revisions = new WeakMap<Config, string>();
+
+/** Records `revision` as the one `config` was answered with; returns `config`. */
+export function rememberRevision(config: Config, revision: string | null | undefined): Config {
+  if (revision) revisions.set(config, revision);
+  return config;
+}
+
+/** The revision a config object was answered with, to send back as `If-Match`; undefined for a copy made in the page. */
+export function revisionOf(config: Config | null | undefined): string | undefined {
+  return config ? revisions.get(config) : undefined;
+}
+
+async function errorOf(res: Response): Promise<ApiError> {
+  let message = res.statusText;
+  let issues: string[] = [];
+  try {
+    const body = await res.json();
+    message = body.error ?? message;
+    issues = body.issues ?? [];
+  } catch {
+    // non-JSON error body
+  }
+  return new ApiError(res.status, message, issues);
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { ...init, headers: { "content-type": "application/json", ...init?.headers } });
-  if (!res.ok) {
-    let message = res.statusText;
-    let issues: string[] = [];
-    try {
-      const body = await res.json();
-      message = body.error ?? message;
-      issues = body.issues ?? [];
-    } catch {
-      // non-JSON error body
-    }
-    throw new ApiError(res.status, message, issues);
-  }
+  if (!res.ok) throw await errorOf(res);
   return res.json() as Promise<T>;
+}
+
+/** A request answered with the saved config: its `ETag` is remembered, and a `412` carries the current config. */
+async function callConfig(path: string, init?: RequestInit): Promise<Config> {
+  const res = await fetch(path, { ...init, headers: { "content-type": "application/json", ...init?.headers } });
+  if (res.status === 412) {
+    const body = (await res.json()) as { error?: string; config: Config };
+    throw new ConfigConflictError(body.error ?? res.statusText, rememberRevision(body.config, res.headers.get("etag")));
+  }
+  if (!res.ok) throw await errorOf(res);
+  return rememberRevision((await res.json()) as Config, res.headers.get("etag"));
 }
 
 /** Everything the UI asks of a backend. The demo build implements it in memory, so a new operation needs both. */
@@ -51,7 +85,11 @@ export interface Api {
   /** What the dashboard observed, newest first. Read-only history; nothing else depends on it. */
   activity(query?: ActivityQuery): Promise<ActivityPage>;
   config(): Promise<Config>;
-  saveConfig(config: Config): Promise<Config>;
+  /**
+   * Saves the whole config. `revision` is that of the copy it was based on (`revisionOf`); when the saved config has
+   * changed since, nothing is written and `ConfigConflictError` carries the current one. Undefined saves regardless.
+   */
+  saveConfig(config: Config, revision: string | undefined): Promise<Config>;
   /**
    * Enable on the projects overview, saved at once: re-enables a configured repository, or adds a discovered candidate
    * enabled with its default name. `ApiError` 404 for a path discovery does not offer.
@@ -279,21 +317,21 @@ export const httpApi: Api = {
       return call<ActivityPage>(`/api/activity${activityQueryString({ ...query, tz: undefined })}`);
     }
   },
-  config: () => call<Config>("/api/config"),
-  saveConfig: (config) => call<Config>("/api/config", { method: "PUT", body: JSON.stringify(config) }),
-  trackRepo: (path) => call<Config>("/api/repos/track", { method: "POST", body: JSON.stringify({ path }) }),
-  setRepoEnabled: (repoId, enabled) => call<Config>(`/api/repos/${encodeURIComponent(repoId)}/enabled`, { method: "POST", body: JSON.stringify({ enabled }) }),
-  ignorePath: (path) => call<Config>("/api/ignore-paths", { method: "POST", body: JSON.stringify({ path }) }),
-  renameRepo: (repoId, name) => call<Config>(`/api/repos/${encodeURIComponent(repoId)}/name`, { method: "POST", body: JSON.stringify({ name }) }),
-  setRepoAgent: (repoId, patch) => call<Config>(`/api/repos/${encodeURIComponent(repoId)}/agent`, { method: "POST", body: JSON.stringify(patch) }),
+  config: () => callConfig("/api/config"),
+  saveConfig: (config, revision) => callConfig("/api/config", { method: "PUT", body: JSON.stringify(config), headers: revision ? { "if-match": revision } : {} }),
+  trackRepo: (path) => callConfig("/api/repos/track", { method: "POST", body: JSON.stringify({ path }) }),
+  setRepoEnabled: (repoId, enabled) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/enabled`, { method: "POST", body: JSON.stringify({ enabled }) }),
+  ignorePath: (path) => callConfig("/api/ignore-paths", { method: "POST", body: JSON.stringify({ path }) }),
+  renameRepo: (repoId, name) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/name`, { method: "POST", body: JSON.stringify({ name }) }),
+  setRepoAgent: (repoId, patch) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/agent`, { method: "POST", body: JSON.stringify(patch) }),
   // An absent list is sent as an empty one: the route removes the key, which is what "no labels left" means.
-  setRepoLabels: (repoId, patch) => call<Config>(`/api/repos/${encodeURIComponent(repoId)}/labels`, { method: "POST", body: JSON.stringify(labelLists(patch)) }),
+  setRepoLabels: (repoId, patch) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/labels`, { method: "POST", body: JSON.stringify(labelLists(patch)) }),
   setRepoPrTitleConvention: (repoId, convention) =>
-    call<Config>(`/api/repos/${encodeURIComponent(repoId)}/pr-title-convention`, { method: "POST", body: JSON.stringify({ convention }) }),
-  setRepoAutoFetch: (repoId, seconds) => call<Config>(`/api/repos/${encodeURIComponent(repoId)}/auto-fetch`, { method: "POST", body: JSON.stringify({ seconds }) }),
-  setLabelColor: (label, hue) => call<Config>("/api/labels/color", { method: "POST", body: JSON.stringify({ label, hue }) }),
-  setFastForwardWarning: (show) => call<Config>("/api/agent-sessions/fast-forward-warning", { method: "POST", body: JSON.stringify({ show }) }),
-  forgetRepo: (repoId) => call<Config>(`/api/repos/${encodeURIComponent(repoId)}/forget`, { method: "POST", body: "{}" }),
+    callConfig(`/api/repos/${encodeURIComponent(repoId)}/pr-title-convention`, { method: "POST", body: JSON.stringify({ convention }) }),
+  setRepoAutoFetch: (repoId, seconds) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/auto-fetch`, { method: "POST", body: JSON.stringify({ seconds }) }),
+  setLabelColor: (label, hue) => callConfig("/api/labels/color", { method: "POST", body: JSON.stringify({ label, hue }) }),
+  setFastForwardWarning: (show) => callConfig("/api/agent-sessions/fast-forward-warning", { method: "POST", body: JSON.stringify({ show }) }),
+  forgetRepo: (repoId) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/forget`, { method: "POST", body: "{}" }),
   discover: (scanRoots, ignorePaths) =>
     call<DiscoverResult>("/api/discover", { method: "POST", body: scanRoots || ignorePaths ? JSON.stringify({ scanRoots, ignorePaths }) : undefined }),
   scan: () => call<ScanTriggerResult>("/api/scan", { method: "POST" }),
@@ -306,7 +344,7 @@ export const httpApi: Api = {
   },
   setup: () => call<SetupState>("/api/setup"),
   pickFolder: () => call<FolderPickResult>("/api/setup/folder", { method: "POST", body: "{}" }),
-  markSetupDone: () => call<Config>("/api/setup/done", { method: "POST", body: "{}" }),
+  markSetupDone: () => callConfig("/api/setup/done", { method: "POST", body: "{}" }),
   createWorkspaceFolder: (path) => call<{ path: string }>("/api/setup/workspace-folder", { method: "POST", body: JSON.stringify({ path }) }),
   listGithubRepos: (owner) => call<GithubRepoList>("/api/github/repos", { method: "POST", body: JSON.stringify(owner ? { owner } : {}) }),
   cloneGithub: (repo, root, name) => call<GithubClone>("/api/github/clone", { method: "POST", body: JSON.stringify({ repo, root, name }) }),
@@ -395,7 +433,7 @@ export const api: Api = {
   artifactFile: (...args) => current.artifactFile(...args),
   activity: (query) => current.activity(query),
   config: () => current.config(),
-  saveConfig: (config) => current.saveConfig(config),
+  saveConfig: (...args) => current.saveConfig(...args),
   trackRepo: (path) => current.trackRepo(path),
   setRepoEnabled: (...args) => current.setRepoEnabled(...args),
   ignorePath: (path) => current.ignorePath(path),

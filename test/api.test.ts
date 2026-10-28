@@ -294,3 +294,39 @@ test("a snapshot cached before working-tree status existed is served on startup"
   expect(row.workInProgress).toBeUndefined();
   expect(wipIndicator(row.workInProgress)).toBeUndefined();
 });
+
+test("a config save naming the current revision is applied; one naming an older revision is refused and writes nothing", async () => {
+  const read = await fetch(`${base}/api/config`);
+  const r1 = read.headers.get("etag");
+  expect(r1).toMatch(/^"[0-9a-f]{16}"$/);
+  const draft = await read.json();
+
+  // Up to date: saved, and the response names the new revision.
+  const saved = await send("/api/config", "PUT", JSON.stringify({ ...draft, pollIntervalSeconds: 120 }), { "if-match": r1 as string });
+  expect(saved.status).toBe(200);
+  const r2 = saved.headers.get("etag");
+  expect(r2).not.toBe(r1);
+  expect((await fetch(`${base}/api/config`)).headers.get("etag")).toBe(r2);
+
+  // A label colour chosen elsewhere answers with the next revision.
+  const coloured = await send("/api/labels/color", "POST", JSON.stringify({ label: "client", hue: 290 }));
+  const r3 = coloured.headers.get("etag");
+  expect(r3).not.toBe(r2);
+
+  // A tab still holding r2 cannot save its copy over it.
+  const stale = await send("/api/config", "PUT", JSON.stringify({ ...draft, pollIntervalSeconds: 90 }), { "if-match": r2 as string });
+  expect(stale.status).toBe(412);
+  expect(stale.headers.get("etag")).toBe(r3);
+  const body = await stale.json();
+  expect(body.error).toBeString();
+  expect(body.config.labelColors).toEqual({ client: 290 });
+  expect(state.config.labelColors).toEqual({ client: 290 });
+  expect(state.config.pollIntervalSeconds).toBe(120);
+  expect(JSON.parse(await readFile(configPath(), "utf8")).labelColors).toEqual({ client: 290 });
+
+  // Without If-Match (a command-line client) the body is applied as before.
+  const plain = await send("/api/config", "PUT", JSON.stringify({ ...draft, pollIntervalSeconds: 60 }));
+  expect(plain.status).toBe(200);
+  expect(state.config.pollIntervalSeconds).toBe(60);
+  expect(state.config.labelColors).toBeUndefined();
+});

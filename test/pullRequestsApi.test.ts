@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { rm } from "node:fs/promises";
 import { type AppState, createFetchHandler } from "../src/server/api.ts";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
+import { PullRequests } from "../src/server/pullRequests.ts";
 import { Scanner } from "../src/server/scanner.ts";
 import type { ChangeSession, PullRequestsResponse } from "../src/shared/types.ts";
 import { ghPr, installFakeGh, type GhHarness } from "./ghHelpers.ts";
@@ -117,18 +118,33 @@ test("refreshing one repository queries only its GitHub repository", async () =>
   expect(repoOf(body, id(alpha))?.status).toBe("ok");
 });
 
-test("refreshing a set of repositories queries only their GitHub repositories", async () => {
+test("refreshing a set of repositories queries only their GitHub repositories, each at most once a minute", async () => {
+  // The watch's minimum gap counts from the last query, and the tests before this one queried both: a clock of its own.
+  let now = Date.now() + 10 * 60_000;
+  state.pullRequests = new PullRequests({ now: () => now });
+  const queried = async () => (await gh.calls()).filter((c) => c.argv[0] === "pr").map((c) => c.argv[c.argv.indexOf("--repo") + 1]);
   await gh.forget();
   const { status, body } = await post("/api/pull-requests/refresh", { repoIds: [id(alpha)], force: true });
   expect(status).toBe(200);
-  const queried = (await gh.calls()).filter((c) => c.argv[0] === "pr").map((c) => c.argv[c.argv.indexOf("--repo") + 1]);
-  expect([...new Set(queried)]).toEqual(["acme/alpha-infra"]);
+  expect([...new Set(await queried())]).toEqual(["acme/alpha-infra"]);
   expect(repoOf(body, id(beta))?.status).toBe("ok");
 
+  // Another tab's watch twenty seconds later queries only what was not queried within the minute.
+  now += 20_000;
   await gh.forget();
   await post("/api/pull-requests/refresh", { repoIds: [id(alpha), id(beta)], force: true });
-  const both = (await gh.calls()).filter((c) => c.argv[0] === "pr").map((c) => c.argv[c.argv.indexOf("--repo") + 1]);
-  expect([...new Set(both)].sort()).toEqual(["acme/alpha-infra", "acme/beta-soc"]);
+  expect([...new Set(await queried())]).toEqual(["acme/beta-soc"]);
+
+  // The user's Refresh is not held back by it.
+  await gh.forget();
+  await post("/api/pull-requests/refresh", { force: true });
+  expect([...new Set(await queried())].sort()).toEqual(["acme/alpha-infra", "acme/beta-soc"]);
+
+  // A minute later the watch queries again.
+  now += 61_000;
+  await gh.forget();
+  await post("/api/pull-requests/refresh", { repoIds: [id(alpha), id(beta)], force: true });
+  expect([...new Set(await queried())].sort()).toEqual(["acme/alpha-infra", "acme/beta-soc"]);
 });
 
 test("a malformed or unknown set of repositories is refused and starts no gh", async () => {

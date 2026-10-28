@@ -41,6 +41,7 @@ import {
   type ProjectSettingsMode,
   preselectedAgent,
   projectSettingsSave,
+  saveFresh,
   SETTING_DEFAULTS,
   SETUP_STEPS,
   type SettingsDraft,
@@ -1410,10 +1411,9 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
     setBusy(true);
     setAgentsError(undefined);
     try {
-      const fresh = await api.config();
-      const next = agentsSave(fresh, agentsChoice);
-      if (next) {
-        onSaved(await api.saveConfig(next));
+      const { fresh, next, saved } = await saveFresh(api, (config) => agentsSave(config, agentsChoice));
+      if (next && saved) {
+        onSaved(saved);
         const added = next.agentSessions.agents.filter((a) => !fresh.agentSessions.agents.some((f) => f.id === a.id)).map((a) => a.name);
         setSaved((was) => ({ ...was, agentsAdded: [...was.agentsAdded, ...added] }));
         // Saved: from now on they are configured profiles, listed as such.
@@ -1433,8 +1433,8 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
     setBusy(true);
     setConsoleError(undefined);
     try {
-      const next = consoleSave(await api.config(), consoleAgent);
-      if (next) onSaved(await api.saveConfig(next));
+      const { saved } = await saveFresh(api, (config) => consoleSave(config, consoleAgent));
+      if (saved) onSaved(saved);
       setConsoleChoice(null);
       setStep(to);
     } catch (err) {
@@ -1448,10 +1448,15 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
     setBusy(true);
     setProjectsError(undefined);
     try {
-      const next = projectSettingsSave(await api.config(), mode, { all: allDraft, each: eachDraft }, (id) => isGit(id) === true);
-      if (next) {
-        onSaved(await api.saveConfig(next.config));
-        setSaved((was) => ({ ...was, projectsChanged: was.projectsChanged + next.changed }));
+      let changed = 0;
+      const { saved } = await saveFresh(api, (config) => {
+        const next = projectSettingsSave(config, mode, { all: allDraft, each: eachDraft }, (id) => isGit(id) === true);
+        changed = next?.changed ?? 0;
+        return next?.config;
+      });
+      if (saved) {
+        onSaved(saved);
+        setSaved((was) => ({ ...was, projectsChanged: was.projectsChanged + changed }));
       }
       setAllDraft({});
       setEachDraft(new Map());

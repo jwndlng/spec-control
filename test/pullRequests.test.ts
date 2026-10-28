@@ -412,6 +412,53 @@ test("a failed refresh keeps the last good list, with its age and the reason", a
   expect(after.repos[2].status).toBe("ok");
 });
 
+test("the watch queries a repository at most once a minute however many tabs ask; the user's own refresh is not held back", async () => {
+  await gh.scenario(SHARED);
+  let now = Date.parse("2026-09-29T10:00:00Z");
+  const targets = await twoClones("watch-gap");
+  const store = newStore({ now: () => now });
+  const watch = () => store.refresh(targets, { repoIds: [targets[0].id], force: true });
+
+  await gh.forget();
+  // Three tabs' watches, twenty seconds apart: one query of acme/alpha-infra (open and recently closed).
+  await watch();
+  now += 20_000;
+  await watch();
+  now += 20_000;
+  const third = await watch();
+  expect(prListCalls(await gh.calls())).toEqual(["acme/alpha-infra", "acme/alpha-infra"]);
+  // Answered from the cache meanwhile.
+  expect(third.repos[0].pullRequests.map((pr) => pr.number)).toEqual([11]);
+
+  // The user's Refresh right after still queries.
+  await gh.forget();
+  await store.refresh(targets, { repoId: targets[0].id, force: true });
+  expect(prListCalls(await gh.calls())).toEqual(["acme/alpha-infra", "acme/alpha-infra"]);
+
+  // A minute after the last query settled, the watch queries again.
+  await gh.forget();
+  now += 30_000;
+  await watch();
+  expect(await gh.calls()).toEqual([]);
+  now += 31_000;
+  await watch();
+  expect(prListCalls(await gh.calls())).toEqual(["acme/alpha-infra", "acme/alpha-infra"]);
+});
+
+test("two refreshes of different repositories finishing together leave a cache holding both lists", async () => {
+  await gh.scenario(SHARED);
+  const targets = await twoClones("persist-race");
+  await rm(pullRequestsCachePath(), { force: true });
+  const store = newStore();
+  await Promise.all([store.refresh(targets, { repoId: targets[0].id, force: true }), store.refresh(targets, { repoId: targets[2].id, force: true })]);
+  const stored = JSON.parse(await readFile(pullRequestsCachePath(), "utf8"));
+  expect(Object.keys(stored.repos).sort()).toEqual(["acme/alpha-infra", "acme/beta-soc"]);
+
+  const restarted = newStore();
+  await restarted.load();
+  expect((await restarted.list(targets)).repos.map((r) => r.pullRequests.map((pr) => pr.number))).toEqual([[11], [11], [22]]);
+});
+
 // ---- the cache (2.5) ----
 
 test("the cache survives a restart, and a deleted cache simply means never fetched", async () => {

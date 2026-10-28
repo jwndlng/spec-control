@@ -26,6 +26,11 @@ export const CLOSED_LIMIT = 50;
 export const CLOSED_WITHIN_DAYS = 7;
 /** GitHub repositories queried at the same time. */
 const CONCURRENCY = 3;
+/**
+ * The least time between two of the board's watch queries of one GitHub repository, across every tab and window: a
+ * refresh naming `repoIds` leaves out a repository whose last query settled less than this ago, `force` or not.
+ */
+export const WATCH_MIN_GAP_MS = 60_000;
 const CACHE_VERSION = 1;
 
 /** Only the documented `--json` fields; anything else is parsed defensively or ignored. */
@@ -218,6 +223,10 @@ export class PullRequests {
   private readonly origins = new Map<string, string | undefined>();
   /** One query per GitHub repository at a time; a request arriving during one awaits it instead of starting another. */
   private readonly inFlight = new Map<string, Promise<void>>();
+  /** When each GitHub repository's last query settled, successful or not; memory only, for the watch's minimum gap. */
+  private readonly lastQueriedAt = new Map<string, number>();
+  /** The tail of the cache writes: one at a time, so two refreshes finishing together cannot share the temp file. */
+  private persisting: Promise<void> = Promise.resolve();
   private viewerFetch?: Promise<void>;
   /** "Not installed" / "not signed in" applies to every repository: once seen, the rest of the round reuses it. */
   private blocked?: Failure;
@@ -329,6 +338,8 @@ export class PullRequests {
         .filter(([, group]) => options.repoId === undefined || group.some((t) => t.id === options.repoId))
         .filter(([, group]) => options.repoIds === undefined || group.some((t) => options.repoIds?.includes(t.id)))
         .filter(([github]) => options.force === true || !this.isFresh(github))
+        // The watch (`repoIds`) waits a minute per repository however many tabs ask; the user's own refresh does not.
+        .filter(([github]) => options.repoIds === undefined || !this.queriedWithin(github, WATCH_MIN_GAP_MS))
         .map(([github]) => github);
 
       if (wanted.length > 0) {
@@ -352,6 +363,11 @@ export class PullRequests {
     if (!entry?.fetchedAt || entry.error) return false;
     const at = Date.parse(entry.fetchedAt);
     return !Number.isNaN(at) && this.now() - at < FRESHNESS_MS;
+  }
+
+  private queriedWithin(github: string, ms: number): boolean {
+    const at = this.lastQueriedAt.get(github);
+    return at !== undefined && this.now() - at < ms;
   }
 
   private async runBounded(jobs: (() => Promise<void>)[]): Promise<void> {
@@ -389,7 +405,7 @@ export class PullRequests {
   private queryOnce(github: string, withFiles: boolean): Promise<void> {
     const running = this.inFlight.get(github);
     if (running) return running;
-    const done = this.query(github, withFiles);
+    const done = this.query(github, withFiles).finally(() => this.lastQueriedAt.set(github, this.now()));
     this.inFlight.set(github, done);
     return done;
   }
@@ -446,8 +462,14 @@ export class PullRequests {
     return { items, truncated };
   }
 
-  /** Temp file plus rename, as the snapshot cache does: a half-written file is never read back. */
-  private async persist(): Promise<void> {
+  /** One write at a time, each from the cache as it is when the write starts, so the last one holds every list. */
+  private persist(): Promise<void> {
+    this.persisting = this.persisting.then(() => this.writeCache());
+    return this.persisting;
+  }
+
+  /** Temp file plus rename, as the snapshot cache does: a half-written file is never read back. Never throws. */
+  private async writeCache(): Promise<void> {
     const stored: StoredCache = { version: CACHE_VERSION, viewer: this.viewer, repos: {} };
     for (const [github, entry] of this.cache) {
       if (!entry.fetchedAt) continue;

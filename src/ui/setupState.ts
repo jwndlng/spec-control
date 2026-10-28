@@ -4,6 +4,7 @@
 import { AGENT_PRESETS, CLAUDE_PROFILE } from "../shared/agentDefaults.ts";
 import { PROJECT_SETTINGS, type ProjectSetting, settingApplies, withAutoFetch, withPrTitleConvention, withRepoAgent } from "../shared/repoSettings.ts";
 import { type AgentAvailability, type AutoFetchSeconds, autoFetchInterval, type Config, type EnvironmentReport, type GithubClone, type PrTitleConvention, type RepoConfig, repoAgentEnabled } from "../shared/types.ts";
+import { ConfigConflictError, revisionOf } from "./api.ts";
 import { newAgentProfile, parseArgLines } from "./sessionState.ts";
 
 export const SETUP_STEPS = ["Welcome", "System check", "Workspace", "Agents", "Console", "Project settings", "Done"] as const;
@@ -529,10 +530,34 @@ export interface WorkspaceContinueInput {
   cloneRefused: Readonly<Record<string, string>>;
 }
 
-export interface WorkspaceContinueDeps {
-  createWorkspaceFolder(path: string): Promise<{ path: string }>;
+/** What a setup wizard save needs of the backend. */
+export interface FreshSaveDeps {
   config(): Promise<Config>;
-  saveConfig(config: Config): Promise<Config>;
+  saveConfig(config: Config, revision: string | undefined): Promise<Config>;
+}
+
+/**
+ * One setup wizard save: `compute` makes it from a fresh copy of the config, and it is sent with that copy's revision.
+ * Saved elsewhere in between, it is computed again from the current config the refusal carries and tried once more; a
+ * second refusal reaches the caller like any other error. `fresh` and `next` are those of the attempt that counted;
+ * `saved` is undefined when there was nothing to save.
+ */
+export async function saveFresh(deps: FreshSaveDeps, compute: (fresh: Config) => Config | null | undefined): Promise<{ fresh: Config; next?: Config; saved?: Config }> {
+  let fresh = await deps.config();
+  for (let attempt = 0; ; attempt++) {
+    const next = compute(fresh);
+    if (!next) return { fresh };
+    try {
+      return { fresh, next, saved: await deps.saveConfig(next, revisionOf(fresh)) };
+    } catch (err) {
+      if (!(err instanceof ConfigConflictError) || attempt > 0) throw err;
+      fresh = err.config;
+    }
+  }
+}
+
+export interface WorkspaceContinueDeps extends FreshSaveDeps {
+  createWorkspaceFolder(path: string): Promise<{ path: string }>;
   trackRepo(path: string): Promise<Config>;
   cloneGithub(repo: string, root: string, name: string): Promise<GithubClone>;
   /** Tells the clone list a clone started, so it is polled. */
@@ -603,11 +628,11 @@ export async function continueWorkspaceStep(input: WorkspaceContinueInput, deps:
   }
   if (result.createErrors.size > 0 || appeared) return result;
 
-  const fresh = await deps.config();
-  const next = workspaceSave(fresh, input.entered, new Set([...input.missing].filter((r) => !result.nowThere.includes(r) && !input.toCreate.has(r))));
+  const stillMissing = new Set([...input.missing].filter((r) => !result.nowThere.includes(r) && !input.toCreate.has(r)));
+  const { fresh, next, saved } = await saveFresh(deps, (config) => workspaceSave(config, input.entered, stillMissing));
   let current = fresh;
-  if (next) {
-    current = await deps.saveConfig(next);
+  if (next && saved) {
+    current = saved;
     deps.onSaved(current);
     result.rootsAdded = next.scanRoots.filter((r) => !fresh.scanRoots.includes(r));
   }

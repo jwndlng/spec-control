@@ -58,7 +58,8 @@ export class ActivityLog {
     const recent = retained(parsed, this.now());
     this.entries = recent.slice(-KEEP_ENTRIES);
     // Unparseable lines alone are no reason to rewrite: a newer version's lines survive a downgrade until a real compaction.
-    if (recent.length < parsed.length || this.lines > KEEP_ENTRIES) await this.enqueue(() => this.compact());
+    const upTo = this.entries;
+    if (recent.length < parsed.length || this.lines > KEEP_ENTRIES) await this.enqueue(() => this.compact(upTo));
   }
 
   /** Records events. Resolves when they are on disk (or the attempt failed — which is only reported). */
@@ -69,13 +70,16 @@ export class ActivityLog {
     if (events.length === 0) return this.queue;
     this.prune(now);
     this.entries = [...this.entries, ...events].slice(-KEEP_ENTRIES);
+    // What this job may compact to: the entries up to its own events. `entries` is replaced, never changed in place,
+    // so appends queued behind it cannot reach this array — they write their own events afterwards, exactly once.
+    const upTo = this.entries;
     const text = events.map((e) => `${JSON.stringify(e)}\n`).join("");
     return this.enqueue(async () => {
       await mkdir(dirname(this.path), { recursive: true });
       await appendFile(this.path, this.unterminated ? `\n${text}` : text, "utf8");
       this.unterminated = false;
       this.lines += events.length;
-      if (this.lines > COMPACT_ABOVE_LINES || (this.agedOut > 0 && now - this.lastCompactedAt >= AGE_COMPACT_EVERY_MS)) await this.compact();
+      if (this.lines > COMPACT_ABOVE_LINES || (this.agedOut > 0 && now - this.lastCompactedAt >= AGE_COMPACT_EVERY_MS)) await this.compact(upTo);
     });
   }
 
@@ -86,13 +90,16 @@ export class ActivityLog {
     this.entries = kept;
   }
 
-  private async compact(): Promise<void> {
-    this.prune(this.now());
+  /** Rewrites the file as `upTo` — the entries as they stood when the job was queued — without those aged out. */
+  private async compact(upTo: readonly ActivityEvent[]): Promise<void> {
+    const now = this.now();
+    this.prune(now);
+    const kept = retained(upTo, now);
     const tmp = `${this.path}.${process.pid}.tmp`;
     await mkdir(dirname(this.path), { recursive: true });
-    await writeFile(tmp, this.entries.map((e) => `${JSON.stringify(e)}\n`).join(""), "utf8");
+    await writeFile(tmp, kept.map((e) => `${JSON.stringify(e)}\n`).join(""), "utf8");
     await rename(tmp, this.path);
-    this.lines = this.entries.length;
+    this.lines = kept.length;
     this.unterminated = false;
     this.agedOut = 0;
     this.lastCompactedAt = this.now();

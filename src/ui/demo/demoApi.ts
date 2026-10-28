@@ -7,7 +7,7 @@ import { AUTO_FETCH_SECONDS, DEFAULT_AUTO_FETCH_SECONDS } from "../../shared/typ
 import type { ChangeSnapshot, Config, DismissFile, DismissPreview, FolderPickResult, GithubClone, GithubCloneProgress, GithubRepoEntry, IntegratableRepo, PullBlockingFile, PullResult, RepoConfig, RepoSharedConfig, RepoSnapshot, SharedConfigApplyResult, SharedConfigPreview, SharedProfile, Snapshot, UpdateStatus } from "../../shared/types.ts";
 import { parseGithubRepo } from "../../shared/github.ts";
 import { isProjectName } from "../../shared/types.ts";
-import { ApiError, type Api, labelLists } from "../api.ts";
+import { ApiError, type Api, ConfigConflictError, labelLists, rememberRevision } from "../api.ts";
 import { demoApply, demoBranchDeletePreview, demoDeleteBranch, demoPreview, newCleanupState, remainingWorktrees } from "./demoCleanup.ts";
 import { createDemoSessions } from "./demoSessions.ts";
 import { sampleArtifactFiles } from "./sampleArtifacts.ts";
@@ -88,6 +88,13 @@ export interface DemoApiOptions {
   clock?: Clock;
 }
 
+/** A config's revision in the demo: a hash of its JSON, like the server's, so equal configs share one. */
+function demoRevision(config: Config): string {
+  let hash = 0x811c9dc5;
+  for (const char of JSON.stringify(config)) hash = Math.imul(hash ^ char.charCodeAt(0), 0x01000193);
+  return `"${(hash >>> 0).toString(16)}"`;
+}
+
 export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoApiOptions = {}): Api {
   const sample = buildSample(now());
   let config: Config = sample.config;
@@ -95,7 +102,15 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
   // The demo's pull requests are synthetic and in memory: "refreshing" only moves this forward, nothing is fetched.
   let pullRequestsFetchedAt = now() - 2 * 60_000;
 
-  const reply = <T>(value: T): Promise<T> => new Promise((resolve) => setTimeout(() => resolve(structuredClone(value)), latencyMs));
+  // The current config's copy carries its revision, as the server's `ETag` does, so a stale save is refused here too.
+  const reply = <T>(value: T): Promise<T> =>
+    new Promise((resolve) =>
+      setTimeout(() => {
+        const copy = structuredClone(value);
+        if ((value as unknown) === config) rememberRevision(copy as Config, demoRevision(config));
+        resolve(copy);
+      }, latencyMs),
+    );
 
   /** Like `reply`, for operations that can refuse: the refusal arrives as a rejected promise, as over HTTP. */
   const attempt = <T>(operation: () => T): Promise<T> => {
@@ -492,10 +507,14 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
       attempt((): UpdateStatus => {
         throw new ApiError(409, "the demo does not check for new versions");
       }),
-    saveConfig: (next) => {
-      config = structuredClone(next);
-      return reply(config);
-    },
+    saveConfig: (next, revision) =>
+      attempt(() => {
+        if (revision !== undefined && revision !== demoRevision(config)) {
+          throw new ConfigConflictError("the configuration was changed elsewhere since it was read", rememberRevision(structuredClone(config), demoRevision(config)));
+        }
+        config = structuredClone(next);
+        return config;
+      }),
     // The overview's instant actions, on the page's own copy of the config: gone after a reload, like every edit here.
     trackRepo: (path) =>
       failing(() => {

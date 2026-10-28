@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { changeSessions, SHIPPABLE_WORK } from "../src/shared/types.ts";
-import { ApiError, type TerminalHandlers } from "../src/ui/api.ts";
+import { ApiError, revisionOf, type TerminalHandlers } from "../src/ui/api.ts";
 import { createDemoApi } from "../src/ui/demo/demoApi.ts";
 import { conflictBadge, NEEDS_YOU_AFTER_MS, openWork, resolvable, sessionBadge } from "../src/ui/sessionState.ts";
 import { pendingMergesOf } from "../src/ui/pullRequestsState.ts";
@@ -258,7 +258,7 @@ test("deleting a record leaves its worktree reported; resume and next-step promp
 test("switching sessions off hides them; nothing else breaks; callers cannot reach into the demo's state", async () => {
   const { api } = demo();
   const config = await api.config();
-  await api.saveConfig({ ...config, agentSessions: { ...config.agentSessions, enabled: false } });
+  await api.saveConfig({ ...config, agentSessions: { ...config.agentSessions, enabled: false } }, revisionOf(config));
   expect(await api.sessions()).toMatchObject({ sessions: [], worktrees: [] });
   expect(await refusal(api.openSession("a71c02e9", "migrate-to-postgres-16", "implement"))).toBe("403: agent sessions are disabled");
   expect((await api.state()).repos.flatMap((r) => r.worktrees).some((w) => w.path.includes(".spec-control"))).toBe(false);
@@ -298,7 +298,7 @@ test("the main console in the demo: one at a time, a recording in the demo's con
 test("the demo console is refused while agent sessions are off", async () => {
   const { api } = demo();
   const config = await api.config();
-  await api.saveConfig({ ...config, agentSessions: { ...config.agentSessions, enabled: false } });
+  await api.saveConfig({ ...config, agentSessions: { ...config.agentSessions, enabled: false } }, revisionOf(config));
   expect(await refusal(api.openConsole())).toBe("403: agent sessions are disabled");
 });
 
@@ -349,7 +349,7 @@ test("the demo refuses an integration for anything but a repository that is wait
   expect(await refusal(api.startIntegration("/home/demo/elsewhere"))).toContain("404");
 
   const config = await api.config();
-  await api.saveConfig({ ...config, agentSessions: { ...config.agentSessions, enabled: false } });
+  await api.saveConfig({ ...config, agentSessions: { ...config.agentSessions, enabled: false } }, revisionOf(config));
   expect(await refusal(api.startIntegration(integratable[0].path))).toBe("403: agent sessions are disabled");
   expect((await api.sessions()).sessions).toEqual([]);
 });
