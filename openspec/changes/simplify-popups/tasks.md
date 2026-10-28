@@ -16,5 +16,5 @@
 
 ## 3. Wrap-up
 
-- [ ] 3.1 Run `bun run check` and verify lint, typecheck and tests pass
+- [x] 3.1 Run `bun run check` and verify lint, typecheck and tests pass
 - [~] 3.2 Add a What's new entry at the top of `src/ui/changelog.ts` saying the end-session dialog is shorter and every option starts ticked, and verify it shows in the What's new view — **you:** open What's new and check the "A shorter dialog when you end a session" entry
