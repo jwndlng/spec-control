@@ -36,7 +36,7 @@ import { frameworkById } from "./frameworks/registry.ts";
 import type { KeepAwake } from "./keepAwake.ts";
 import type { UpdateChecker } from "./updateCheck.ts";
 import { VERSION } from "./version.ts";
-import { whichOnPath } from "./paths.ts";
+import { gitExecutable } from "./paths.ts";
 
 export interface AppState {
   config: Config;
@@ -1397,7 +1397,7 @@ function routeRequest({ state, indexHtml }: AppOptions): (req: Request, url: URL
       if (req.method === "POST" && pathname === "/api/github/repos") return postGithubRepos(state, req);
       if (req.method === "POST" && pathname === "/api/github/clone") return postGithubClone(state, req);
       // Read-only and in memory: starts no process. `gitAvailable` is a PATH lookup, so Add from GitHub can say git is missing.
-      if (req.method === "GET" && pathname === "/api/github/clones") return json({ clones: state.githubClones?.list() ?? [], gitAvailable: whichOnPath("git") !== undefined });
+      if (req.method === "GET" && pathname === "/api/github/clones") return json({ clones: state.githubClones?.list() ?? [], gitAvailable: gitExecutable() !== undefined });
       if (req.method === "POST" && pathname === "/api/github/clones/cancel") return postGithubCloneCancel(state, req);
       if (req.method === "POST" && pathname === "/api/github/clones/dismiss") return postGithubCloneDismiss(state, req);
       if (req.method === "GET" && pathname === "/api/config") return configJson(state.config);

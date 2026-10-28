@@ -5,7 +5,7 @@
 import { integrateUnavailable, isProjectName, type CreateProjectResponse } from "../shared/types.ts";
 import type { IntegrationState } from "./integration.ts";
 import { checkNewFolder, FOLDER_NAME_RULE, makeNewFolder, NewFolderError } from "./newFolder.ts";
-import { canonicalPath, whichOnPath } from "./paths.ts";
+import { canonicalPath, gitExecutable } from "./paths.ts";
 import { reasonFrom } from "./pull.ts";
 
 const GIT_INIT_TIMEOUT_MS = 10_000;
@@ -60,7 +60,7 @@ export async function createProject(state: IntegrationState, input: { root?: unk
   // The same check `openIntegration` makes, made here first so it cannot refuse after the folder exists.
   const agent = state.config.agentSessions.agents.find((a) => a.id === state.config.agentSessions.defaultAgent);
   if (agent && !Bun.which(agent.command[0])) throw new NewFolderError(503, `${agent.name} was not found (${agent.command[0]}); install it or change its command in Settings`);
-  if (!whichOnPath("git")) throw new NewFolderError(503, "git was not found on this machine");
+  if (!gitExecutable()) throw new NewFolderError(503, "git was not found on this machine");
 
   const { path } = await checkNewFolder(state.config, input.root, input.name);
   await makeNewFolder(path);

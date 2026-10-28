@@ -2,12 +2,14 @@ import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from 
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createFetchHandler } from "../src/server/api.ts";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import { cloneFailureReason, GithubClones, parseProgressLine, ProgressParser } from "../src/server/githubClone.ts";
 import { confirmIntegration } from "../src/server/integration.ts";
 import { NewFolderError } from "../src/server/newFolder.ts";
+import type { Scanner } from "../src/server/scanner.ts";
 import type { Config, GithubClone } from "../src/shared/types.ts";
-import { gitIn, tempDir, useTempHome } from "./helpers.ts";
+import { fakeMac, gitIn, tempDir, useTempHome } from "./helpers.ts";
 import { redirectGithub, type GithubRedirect } from "./githubHelpers.ts";
 
 setDefaultTimeout(30_000);
@@ -227,6 +229,31 @@ test("refusals create nothing; retry replaces the failed entry; only finished en
   // Dismissing forgets the entry, never the folder.
   expect(existsSync(join(h.root, "later-repo", ".git"))).toBe(true);
   expect(await readFile(join(h.root, "later-repo", "README.md"), "utf8")).toContain("later-repo");
+});
+
+test("on a Mac without the developer tools a clone is refused and git is not available", async () => {
+  const h = await harness();
+  const handler = createFetchHandler({ state: { config: h.config, scanner: undefined as unknown as Scanner }, indexHtml: "" });
+  const available = async () => ((await (await handler(new Request("http://127.0.0.1/api/github/clones"))).json()) as { gitAvailable: boolean }).gitAvailable;
+  expect(await available()).toBe(true);
+  const mac = await fakeMac();
+  const realPath = process.env.PATH;
+  process.env.PATH = mac.usrBin;
+  try {
+    const err = await h.clones.start({ repo: "acme/beta-soc", root: h.root, name: "beta-soc" }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(NewFolderError);
+    expect([(err as NewFolderError).status, (err as NewFolderError).message]).toEqual([503, "git was not found on this machine"]);
+    expect(await available()).toBe(false);
+  } finally {
+    process.env.PATH = realPath;
+    mac.restore();
+  }
+  expect(await readdir(h.root)).toEqual([]);
+  expect(h.clones.list()).toEqual([]);
+  expect(await mac.placeholderRuns()).toEqual([]);
 });
 
 test("clones write nothing but the target folder", async () => {

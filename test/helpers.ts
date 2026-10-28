@@ -1,6 +1,7 @@
-import { lstat, mkdtemp, readdir, readFile, realpath, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { useGitLookup } from "../src/server/paths.ts";
 
 export const FIXTURES = join(import.meta.dir, "fixtures");
 
@@ -58,4 +59,49 @@ export async function treeFingerprint(root: string): Promise<string> {
   };
   await visit(root);
   return lines.join("\n");
+}
+
+export interface FakeMac {
+  /** The folder holding the placeholder, `<root>/usr/bin`: put it on the PATH where macOS has `/usr/bin`. */
+  usrBin: string;
+  /** Every time the placeholder was run, one line of its arguments. */
+  placeholderRuns: () => Promise<string[]>;
+  /** The link `xcode-select --switch` would maintain; absent until a test makes it. */
+  selectLink: string;
+  /** Installs the command line developer tools in a folder of its own, for `DEVELOPER_DIR` or the link to name. */
+  installDeveloperTools: () => Promise<string>;
+  /** Sets `DEVELOPER_DIR` for the lookup, as a user's shell would. */
+  setDeveloperDirVariable: (dir: string) => void;
+  /** Back to this machine's own git lookup. */
+  restore: () => void;
+}
+
+/**
+ * A Mac without the command line developer tools, on any machine: a stand-in for `/usr/bin/git` that only records being
+ * run (the real one would offer to install the tools), and no developer directory at all — until a test adds one.
+ */
+export async function fakeMac(): Promise<FakeMac> {
+  const root = await tempDir("osd-mac-");
+  const usrBin = join(root, "usr", "bin");
+  const runs = join(root, "placeholder.log");
+  await mkdir(usrBin, { recursive: true });
+  await writeFile(join(usrBin, "git"), `#!/bin/sh\necho "$@" >> "${runs}"\nexit 1\n`);
+  await chmod(join(usrBin, "git"), 0o755);
+  const selectLink = join(root, "xcode_select_link");
+  const lookup = { platform: "darwin", placeholder: join(usrBin, "git"), selectLink, developerDirs: [join(root, "Xcode.app", "Contents", "Developer"), join(root, "CommandLineTools")] };
+  useGitLookup({ ...lookup, env: {} });
+  return {
+    usrBin,
+    selectLink,
+    placeholderRuns: async () => (await readFile(runs, "utf8").catch(() => "")).split("\n").filter(Boolean),
+    installDeveloperTools: async () => {
+      const dir = join(root, "tools");
+      await mkdir(join(dir, "usr", "bin"), { recursive: true });
+      await writeFile(join(dir, "usr", "bin", "git"), "#!/bin/sh\nexit 0\n");
+      await chmod(join(dir, "usr", "bin", "git"), 0o755);
+      return dir;
+    },
+    setDeveloperDirVariable: (dir) => useGitLookup({ ...lookup, env: { DEVELOPER_DIR: dir } }),
+    restore: () => useGitLookup(undefined),
+  };
 }
