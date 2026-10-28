@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "preact/hooks";
-import { CHANGE_NAME_PATTERN } from "../shared/types.ts";
+import { newChangeNameProblem } from "../shared/changeNames.ts";
 import { labelHue } from "../shared/labels.ts";
 import { api, ApiError } from "./api.ts";
 import { focusOnce } from "./focus.ts";
@@ -99,10 +99,20 @@ export function DependsOnField({ choices, selected, disabled, onToggle }: { choi
   );
 }
 
+/**
+ * Whether the form may be submitted, in every mode: the trimmed name, why it cannot be used (the server's own rule,
+ * shown as text next to the field) and the verdict, which also needs a target (`whereError` null) and no create in flight.
+ */
+export function submitState(name: string, whereError: string | null, busy: boolean): { trimmed: string; nameError: string | null; canSubmit: boolean } {
+  const trimmed = name.trim();
+  const nameError = newChangeNameProblem(trimmed);
+  return { trimmed, nameError, canSubmit: nameError === null && whereError === null && !busy };
+}
+
 const plural = (n: number) => `${n} ${n === 1 ? "project" : "projects"}`;
 
 /**
- * Small inline form: a change name (validated live against `CHANGE_NAME_PATTERN`) and an optional prompt, plus a project
+ * Small inline form: a change name (validated live with `newChangeNameProblem`, the server's own rule) and an optional prompt, plus a project
  * dropdown when opened from the combined board — or, in By label mode, the labels to target and a checklist of the
  * repositories displaying them. On success the server has already triggered a rescan; `onCreated` lets the parent pick
  * up the new state without waiting for the next poll. By label stays open on its per-repository results and asks the
@@ -146,10 +156,8 @@ export function NewChangeForm({ target, onClose, onCreated, onReload, onBusy }: 
   const checked = matches.filter((m) => m.eligible && !unchecked.has(m.id));
   const unpicked = choices.filter((c) => !labels.some((l) => l.toLowerCase() === c.toLowerCase()));
 
-  const trimmed = name.trim();
-  const nameError = trimmed === "" ? "required" : CHANGE_NAME_PATTERN.test(trimmed) ? null : "only letters, digits, dots, dashes and underscores";
   const whereError = mode === "project" ? (repoId === "" ? "choose a project" : null) : labels.length === 0 ? "choose a label" : checked.length === 0 ? "check at least one project" : null;
-  const canSubmit = nameError === null && whereError === null && !busy;
+  const { trimmed, nameError, canSubmit } = submitState(name, whereError, busy);
 
   const onSubmit = async (event: Event) => {
     event.preventDefault();

@@ -1,5 +1,6 @@
 // Changes imported from GitHub issues (openspec/specs/issue-import): the shape of `issue.yaml`, the link it stands
 // for and the change name an issue's title suggests. Shared, so the server writes and reads exactly what the UI shows.
+import { isNewChangeName } from "./changeNames.ts";
 import type { SourceIssue } from "./types.ts";
 
 /** The dashboard's own file in a change directory that records where the change came from. Not a schema artifact. */
@@ -43,7 +44,7 @@ export function toSourceIssue(raw: unknown): SourceIssue | undefined {
 /**
  * The change name an issue's title suggests: lower-cased, every run of characters other than `a`–`z` and `0`–`9` one
  * `-`, no `-` at either end, at most 48 characters cut at a `-` where there is one; `issue-<number>` when nothing is
- * left. Always a valid change name.
+ * left, and `<name>-<number>` when the name is reserved (`archive`). Always a name `isNewChangeName` accepts.
  */
 export function issueChangeName(title: string, number: number): string {
   let name = title
@@ -55,5 +56,6 @@ export function issueChangeName(title: string, number: number): string {
     const boundary = cut.lastIndexOf("-");
     name = (boundary > 0 ? cut.slice(0, boundary) : name.slice(0, MAX_ISSUE_NAME)).replace(/-+$/, "");
   }
-  return name === "" ? `issue-${number}` : name;
+  if (name === "") return `issue-${number}`;
+  return isNewChangeName(name) ? name : `${name}-${number}`;
 }

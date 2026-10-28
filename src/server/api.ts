@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { ACTIVITY_KINDS, AUTO_FETCH_SECONDS, type ActivityKind, isChangeless, UNCOMMITTED_LISTED } from "../shared/types.ts";
 import { availableName } from "../shared/nameHints.ts";
+import { isChangeDirName } from "../shared/changeNames.ts";
 import { labelKey } from "../shared/labels.ts";
 import { withAutoFetch, withPrTitleConvention, withRepoAgent } from "../shared/repoSettings.ts";
 import { MAX_PAGE, type ActivityLog, type PageQuery } from "./activity/log.ts";
@@ -15,7 +16,7 @@ import { NewFolderError } from "./newFolder.ts";
 import { ConfigValidationError, newRepoConfig, repoId, updateConfig, validateConfig, validateIgnorePaths, validateScanRoots } from "./config.ts";
 import { createChange } from "./createChange.ts";
 import { createProject, CreateProjectError } from "./createProject.ts";
-import { dismissChange, DismissError, isDismissableName, previewDismiss } from "./dismissChange.ts";
+import { dismissChange, DismissError, previewDismiss } from "./dismissChange.ts";
 import { discoverRepos } from "./discover.ts";
 import { environmentReport } from "./environment.ts";
 import { confirmIntegration, confirmPendingIntegrations, startIntegration } from "./integration.ts";
@@ -734,7 +735,7 @@ function dismissTarget(state: AppState, repoId: string, name: string): { repo: R
   if (!repo.enabled) return json({ error: "repository is disabled" }, 409);
   const scanned = state.scanner.snapshot.repos.find((r) => r.id === repoId);
   if (!scanned?.ok) return json({ error: "repository has not been successfully scanned" }, 409);
-  if (!isDismissableName(name)) return json({ error: "invalid change name" }, 400);
+  if (!isChangeDirName(name)) return json({ error: "invalid change name" }, 400);
   return { repo, scanned };
 }
 
@@ -951,7 +952,7 @@ async function postBranchDelete(state: AppState, req: Request, repoId: string): 
 async function staleTarget(state: AppState, repoId: string, name: string): Promise<{ repo: RepoConfig; scope: StaleScope } | Response> {
   const repo = cleanupTarget(state, repoId);
   if (repo instanceof Response) return repo;
-  if (!isDismissableName(name)) return json({ error: "invalid change name" }, 400);
+  if (!isChangeDirName(name)) return json({ error: "invalid change name" }, 400);
   const scanned = state.scanner.snapshot.repos.find((r) => r.id === repoId);
   if (!scanned?.ok) return json({ error: "repository has not been successfully scanned" }, 409);
   const sessions = state.sessions?.list() ?? [];

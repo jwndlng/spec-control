@@ -3,7 +3,8 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { newRepoConfig } from "../src/server/config.ts";
-import { dismissChange, DismissError, isDismissableName, isDismissing, previewDismiss } from "../src/server/dismissChange.ts";
+import { isChangeDirName } from "../src/shared/changeNames.ts";
+import { dismissChange, DismissError, isDismissing, previewDismiss } from "../src/server/dismissChange.ts";
 import { scanRepo } from "../src/server/scanner.ts";
 import type { RepoConfig, RepoSnapshot } from "../src/shared/types.ts";
 import { tempDir, treeFingerprint, useTempHome } from "./helpers.ts";
@@ -67,8 +68,8 @@ async function refused(promise: Promise<unknown>): Promise<DismissError> {
 }
 
 test("names that could leave openspec/changes are not dismissable", () => {
-  for (const bad of ["..", ".", "archive", "a/b", "", "../x"]) expect(isDismissableName(bad)).toBe(false);
-  expect(isDismissableName("add-health-endpoint")).toBe(true);
+  for (const bad of ["..", ".", "archive", "Archive", "a/b", "", "../x"]) expect(isChangeDirName(bad)).toBe(false);
+  expect(isChangeDirName("add-health-endpoint")).toBe(true);
 });
 
 test("committed files are restorable; modified, untracked and ignored files are lost", async () => {
@@ -134,6 +135,17 @@ test("an untracked change is deleted and reported as not staged", async () => {
   expect(await dismissChange(r.repo, scanned, "lint-rules", p.fingerprint)).toEqual({ name: "lint-rules", staged: false });
   expect(existsSync(changeDir(r, "lint-rules"))).toBe(false);
   expect(stagedNames(r)).toEqual([]);
+});
+
+test("an existing change whose name a new change may not have, such as .draft, can still be dismissed", async () => {
+  const r = await gitRepo();
+  await mkdir(changeDir(r, ".draft"));
+  await writeFile(join(changeDir(r, ".draft"), "proposal.md"), "# Draft\n");
+  const scanned = await r.scan();
+  expect(scanned.changes.some((c) => c.name === ".draft")).toBe(true);
+  const p = await previewDismiss(r.repo, scanned, ".draft");
+  expect(await dismissChange(r.repo, scanned, ".draft", p.fingerprint)).toEqual({ name: ".draft", staged: false });
+  expect(existsSync(changeDir(r, ".draft"))).toBe(false);
 });
 
 test("in a folder without git every file is lost, the directory is deleted and no git runs", async () => {
