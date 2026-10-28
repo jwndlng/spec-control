@@ -27,6 +27,9 @@ template: |
   $CHANGES
 
 # One rule per Conventional Commit type, with an optional scope and `!`: `feat(board)!: …` is labelled `feat`.
+# sync-labels: a label one of these rules names but the current title does not match is removed, so a retitled pull
+# request keeps only its current type. Labels no rule names (`major`, `dependencies`, …) are never touched.
+sync-labels: true
 autolabeler:
   - label: feat
     title: ['/^feat(\(.+\))?!?:/i']

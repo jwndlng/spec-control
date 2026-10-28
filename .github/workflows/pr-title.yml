@@ -31,8 +31,9 @@ jobs:
             perf
           requireScope: false
 
-  # Labels the pull request from its title type (rules in .github/release-drafter.yml); the labels drive the draft
-  # release. The only job here with a write scope: it reads the title from the event payload and checks out nothing.
+  # Labels the pull request from its title type (rules in .github/release-drafter.yml) and removes a type label the
+  # title no longer has (`sync-labels` there); the labels drive the draft release.
+  # The only job here with a write scope: it reads the title from the event payload and checks out nothing.
   # The config is read from the base branch, so a pull request cannot change the rules that label it.
   label:
     runs-on: ubuntu-latest
