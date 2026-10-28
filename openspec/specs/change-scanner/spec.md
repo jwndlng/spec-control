@@ -6,7 +6,7 @@ Defines how the scanner polls tracked repositories and derives each change's art
 ## Requirements
 
 ### Requirement: Scanner polls enabled repositories on an interval
-The scanner SHALL scan every enabled repository each `pollIntervalSeconds` (default 60) and on explicit trigger. Repositories MUST be scanned concurrently with a bounded concurrency (default 4) and a per-repository timeout. If a scan is already in flight, a trigger MUST NOT start a second concurrent full scan.
+The scanner SHALL scan every enabled repository each `pollIntervalSeconds` (default 60) and on explicit trigger. Repositories MUST be scanned concurrently with a bounded concurrency (default 4) and a per-repository timeout. If a scan is already in flight, a trigger MUST NOT start a second concurrent full scan; instead it SHALL queue exactly one follow-up scan, which starts once the running scan has finished and reads the configuration and the repositories afresh, so that whatever was written before the trigger is in the snapshot it produces. Any number of triggers while a scan is in flight SHALL queue that one follow-up and no more, and at most one scan SHALL run at any time.
 
 #### Scenario: Periodic scan
 - **WHEN** the dashboard is running with `pollIntervalSeconds: 60`
@@ -14,7 +14,15 @@ The scanner SHALL scan every enabled repository each `pollIntervalSeconds` (defa
 
 #### Scenario: Trigger while in flight
 - **WHEN** a scan is running and `POST /api/scan` is called
-- **THEN** the response is `{ started: false }` and no second scan starts
+- **THEN** the response is `{ started: false }`, no second scan starts while the first runs, and one follow-up scan starts once it has finished
+
+#### Scenario: A repository enabled during a scan
+- **WHEN** a scan of `demo-ops` is in flight with `pollIntervalSeconds: 3600` and the user enables `beta-soc`
+- **THEN** once the follow-up scan has finished the snapshot holds both `demo-ops` and `beta-soc`, without waiting for the next poll
+
+#### Scenario: Many triggers, one follow-up
+- **WHEN** three changes are created in `demo-ops` while one scan is in flight
+- **THEN** exactly one follow-up scan runs after it and its snapshot holds all three changes
 
 ### Requirement: Artifact status is computed with the OpenSpec library
 For every change directory under `openspec/changes/` (excluding `archive/`) and under `openspec/changes/archive/`, the scanner SHALL compute artifact statuses using `@fission-ai/openspec` (`resolveSchema`, `loadChangeContext`, `formatChangeStatus`) in-process. The scanner MUST NOT invoke the `openspec` CLI. Artifacts MUST be reported in schema order with status `done`, `ready` or `blocked`. Each artifact SHALL also be reported as **required** when the change's schema names it in `apply.requires`; when the schema declares no `apply.requires`, every artifact SHALL be reported as required. Being required SHALL NOT change an artifact's status: `done`, `ready` and `blocked` keep their meaning, and an artifact that is not required is still `ready` or `blocked` until it is written.
@@ -119,15 +127,31 @@ For each non-archived change and for the 25 most recently archived changes, the 
 - **THEN** `lastActivityAt` is the five-month-old commit date
 
 ### Requirement: Branch and worktree matching
-The scanner SHALL record the repository's current branch and every checkout that `git worktree list --porcelain` reports: the main checkout, flagged as such, and each linked worktree. For each checkout it SHALL record the path, the branch when one is checked out, whether HEAD is detached, whether the worktree is locked, and whether it is prunable (its directory no longer exists). A detached worktree MUST NOT be omitted. The main checkout MUST NOT be counted as a worktree: every worktree count the scanner reports SHALL count linked worktrees only. A change whose leading copy was found in a linked worktree SHALL get `branchMatch` set to that worktree's branch. Any other change SHALL get `branchMatch` set to the main checkout's branch when it is exactly one of the change's **branch candidates**, else to the branch of the first linked worktree that is exactly one of them, else none. A change's branch candidates are, in this order, its recorded implementation branch, its recorded archive branch ("The scan reports a change's recorded branches"), `feat/<name>` and `chore/archive-<name>`. Branches SHALL be compared exactly as written; a branch that merely contains the change name SHALL NOT match. Checkouts without a branch SHALL NOT take part in the matching.
+The scanner SHALL record the repository's current branch and every checkout that `git worktree list --porcelain` reports: the main checkout, flagged as such, and each linked worktree. For each checkout it SHALL record the path, the branch when one is checked out, whether HEAD is detached, whether the worktree is locked, and whether it is prunable (its directory no longer exists). A detached worktree MUST NOT be omitted. The main checkout MUST NOT be counted as a worktree: every worktree count the scanner reports SHALL count linked worktrees only. A change whose leading copy was found in a linked worktree SHALL get `branchMatch` set to that worktree's branch only when that branch is exactly one of the change's **branch candidates** or the worktree **holds work on the change**. A worktree holds work on a change when the change's directory in that worktree has uncommitted files (modified, staged or untracked), or when a file in that directory differs between the worktree's `HEAD` and the point where `HEAD` forked from the repository's base — the default branch as the repository locally knows it: `origin/HEAD` when it exists, else the main checkout's `HEAD`. Every branch carries the changes of the commit it was cut from, so a copy that is merely carried along MUST NOT give a change another change's branch; this check SHALL use read-only git only, MUST NOT contact a remote, and when it cannot be answered (no base, a failing git command) the worktree SHALL be taken to hold no work on the change. Any other change — including one whose leading copy is in a linked worktree that fails both tests — SHALL get `branchMatch` set to the main checkout's branch when it is exactly one of the change's **branch candidates**, else to the branch of the first linked worktree that is exactly one of them, else none. A change's branch candidates are, in this order, its recorded implementation branch, its recorded archive branch ("The scan reports a change's recorded branches"), `feat/<name>` and `chore/archive-<name>`. Branches SHALL be compared exactly as written; a branch that merely contains the change name SHALL NOT match. Checkouts without a branch SHALL NOT take part in the matching.
 
 #### Scenario: Feature branch checked out in a worktree
 - **WHEN** a worktree is on branch `feat/structured-report-format` and a change `structured-report-format` exists
 - **THEN** the change has `branchMatch: feat/structured-report-format`
 
 #### Scenario: Branch name does not contain the change name
-- **WHEN** change `audit-trail` exists only in a worktree on branch `wip/compliance`
+- **WHEN** change `audit-trail` exists only in a worktree on branch `wip/compliance`, which added it
 - **THEN** the change has `branchMatch: wip/compliance`
+
+#### Scenario: Another change's worktree carries the change along
+- **WHEN** the main checkout of `demo-ops` was not pulled and holds change `rotate-keys` in `Implementing`, `origin/main` holds it in `Done`, no checkout is on a branch candidate of `rotate-keys`, and a session for change `add-login` created a worktree on `feat/add-login` from `origin/main` that leaves `rotate-keys` untouched
+- **THEN** the leading copy of `rotate-keys` is the one in that worktree, and `rotate-keys` has no `branchMatch`
+
+#### Scenario: Uncommitted work on another branch
+- **WHEN** change `rotate-keys` leads from a worktree on `feat/add-login` whose copy of `openspec/changes/rotate-keys/tasks.md` has uncommitted edits
+- **THEN** `rotate-keys` has `branchMatch: feat/add-login`
+
+#### Scenario: Committed work on another branch
+- **WHEN** change `rotate-keys` leads from a worktree on `wip/keys` that has a commit, not in `origin/main`, changing `openspec/changes/rotate-keys/tasks.md`
+- **THEN** `rotate-keys` has `branchMatch: wip/keys`
+
+#### Scenario: A carried copy still finds the change's own branch
+- **WHEN** change `rotate-keys` leads from a worktree on `feat/add-login` that holds no work on it, and another linked worktree is on `feat/rotate-keys`
+- **THEN** `rotate-keys` has `branchMatch: feat/rotate-keys`
 
 #### Scenario: A sibling change's branch is not a match
 - **WHEN** change `add-validate` lives only in the main checkout on `main`, and a linked worktree is on `feat/add-validate-phase`, the branch of another change
@@ -339,7 +363,7 @@ All active copies of the same change name across a repository's checkouts SHALL 
 - **THEN** the worktree's copy leads, and the change is reported in `Drafts` with `3/4` artifacts
 
 ### Requirement: Reading worktrees is bounded and isolated
-The scanner SHALL read a repository's worktrees with bounded concurrency and SHALL read at most 12 worktrees per repository, preferring those whose `openspec/changes` directory was modified most recently; when worktrees are left out, the repository's warnings SHALL say how many. A worktree that cannot be read, or whose reading fails or times out, SHALL be skipped with a repository warning naming it, and MUST NOT fail the repository's scan or affect changes read from other checkouts. All of it SHALL run within the repository's scan timeout.
+The scanner SHALL read a repository's worktrees with bounded concurrency and SHALL read at most 12 worktrees per repository, preferring those whose `openspec/changes` directory was modified most recently; when worktrees are left out, the repository's warnings SHALL say how many. A worktree that cannot be read, or whose reading fails or times out, SHALL be skipped with a repository warning naming it, and MUST NOT fail the repository's scan or affect changes read from other checkouts. All of it SHALL run within the repository's scan timeout. The repository's snapshot SHALL list the paths of the linked worktrees that have an `openspec/changes` directory but were not read, as the same paths its changes' checkouts carry — left out by the limit, or skipped because reading failed or timed out — so that a change missing from that scan can be told from a change that is gone (`activity-feed`: "A worktree left unread is not activity"); the list SHALL be omitted when every such worktree was read. It SHALL NOT change what the board shows.
 
 #### Scenario: Worktree directory was deleted by hand
 - **WHEN** git reports a worktree as prunable because its directory no longer exists
@@ -347,11 +371,15 @@ The scanner SHALL read a repository's worktrees with bounded concurrency and SHA
 
 #### Scenario: One worktree fails
 - **WHEN** reading one worktree throws while two others are readable
-- **THEN** the repository's warnings name the failing worktree and the changes from the main checkout and the other two worktrees are reported
+- **THEN** the repository's warnings name the failing worktree, its path is listed among the worktrees not read, and the changes from the main checkout and the other two worktrees are reported
 
 #### Scenario: More worktrees than the cap
 - **WHEN** a repository has 15 linked worktrees with changes
-- **THEN** the 12 with the most recently modified `openspec/changes` are read and the warnings say that 3 were not
+- **THEN** the 12 with the most recently modified `openspec/changes` are read, the warnings say that 3 were not, and the paths of those 3 are listed among the worktrees not read
+
+#### Scenario: Every worktree read
+- **WHEN** a repository's scan reads all of its linked worktrees
+- **THEN** its snapshot lists no worktree as not read
 
 ### Requirement: The default branch and whether the main checkout is on it are reported
 For each successfully scanned git repository the scanner SHALL report `defaultBranch` — the branch that `refs/remotes/origin/HEAD` points to, or, when that ref does not exist, `main` if such a local branch exists, otherwise `master` if it exists — and `onDefaultBranch`, which is `true` when the main checkout's current branch is that branch and `false` otherwise, including when HEAD is detached. When no default branch can be determined both SHALL be omitted. Determining them MUST use only read-only git commands and MUST NOT contact a remote, and a failure to determine them MUST NOT fail the repository's scan. When a repository's scan fails, the previous values SHALL be retained.
