@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import { CLAUDE_PROFILE, CODEX_PROFILE } from "../src/shared/agentDefaults.ts";
-import type { Config, EnvironmentReport, RepoConfig } from "../src/shared/types.ts";
-import { NOTHING_SAVED } from "../src/ui/setupState.ts";
+import type { Config, DiscoverResult, EnvironmentReport, GithubClone, RepoConfig } from "../src/shared/types.ts";
+import { checkedProjects, continueWorkspaceStep, discoveryPending, NOTHING_SAVED, setupClones, type WorkspaceContinueDeps, workspaceContinueBlocked } from "../src/ui/setupState.ts";
 import {
   AgentsStep,
   type AgentsView,
@@ -573,4 +573,112 @@ test("Add from GitHub in the step is inactive with its reason", () => {
   const button = byTag(step, "button").find((b) => textOf(b) === "Add from GitHub");
   expect(button?.props.disabled).toBe(true);
   expect(textOf(step)).toContain("Add from GitHub is unavailable: git was not found on this machine.");
+});
+
+// ---- the Workspace step keeps the user's choices ----
+
+/** The backend the Workspace step's Continue talks to, recording what it was asked; `refuse` names folders taken. */
+function workspaceBackend(options: { refuse?: string[]; canonical?: (root: string) => string } = {}) {
+  const calls: string[] = [];
+  let config: Config = { ...defaultConfig(), scanRoots: ["/w/acme"] };
+  let next = 1;
+  const deps: WorkspaceContinueDeps = {
+    createWorkspaceFolder: async (path) => ({ path }),
+    config: async () => config,
+    saveConfig: async (c) => {
+      calls.push("save");
+      config = c;
+      return c;
+    },
+    trackRepo: async (path) => {
+      calls.push(`track ${path}`);
+      config = { ...config, repos: [...config.repos, newRepoConfig(path, true)] };
+      return config;
+    },
+    cloneGithub: async (repo, root, name) => {
+      if (options.refuse?.includes(name)) throw Object.assign(new Error(`${root}/${name} already exists`), { status: 409 });
+      calls.push(`clone ${repo}`);
+      return { id: `c${next++}`, repo, root, name, path: `${options.canonical?.(root) ?? root}/${name}`, state: "cloning", startedAt: "" };
+    },
+    started: noop,
+    onSaved: noop,
+  };
+  return { calls, deps };
+}
+
+const found = (...names: string[]): DiscoverResult => ({ candidates: names.map((n) => ({ id: n, path: `/w/acme/${n}`, name: n, enabled: false })), integratable: [], errors: [] });
+const continueInput = { entered: [], toCreate: new Set<string>(), missing: new Set<string>(), cloneIds: {}, cloneRefused: {} };
+
+test("an unchecked project stays unchecked after a refused clone and after Back", async () => {
+  const backend = workspaceBackend({ refuse: ["chat-groups"] });
+  const unchecked = new Set(["/w/acme/demo-ops"]); // the wizard keeps this set for as long as it is open
+  const listed = [{ repo: "acme/chat-groups", root: "/w/acme", name: "chat-groups", path: "/w/acme/chat-groups" }];
+  const first = await continueWorkspaceStep({ ...continueInput, checked: checkedProjects(found("alpha-infra", "demo-ops"), unchecked), listed }, backend.deps);
+  expect(first).toMatchObject({ outcome: "stay", saved: true, tracked: 1 });
+
+  // Discovery runs again over the saved roots: alpha-infra is tracked, demo-ops is still a candidate — and unchecked.
+  const after = found("demo-ops");
+  const step = WorkspaceStep({ view: workspace({ discovery: after, unchecked }), onInput: noop, onAdd: noop, onRemove: noop, onToggle: noop, onPick: noop });
+  const box = byTag(step, "input").find((el) => el.props.type === "checkbox");
+  expect(box?.props.checked).toBe(false);
+
+  // The folder renamed, Continue again; then Back from Agents and Continue once more.
+  const renamed = [{ ...listed[0], name: "chat-groups-gh", path: "/w/acme/chat-groups-gh" }];
+  const second = await continueWorkspaceStep({ ...continueInput, checked: checkedProjects(after, unchecked), listed: renamed, cloneRefused: first.cloneRefused }, backend.deps);
+  expect(second.outcome).toBe("next");
+  const third = await continueWorkspaceStep({ ...continueInput, checked: checkedProjects(after, unchecked), listed: [] }, backend.deps);
+  expect(third.tracked).toBe(0);
+  expect(backend.calls.filter((c) => c.startsWith("track"))).toEqual(["track /w/acme/alpha-infra"]);
+});
+
+test("the Done step lists a clone into a root typed in another case, with its failure and Retry", async () => {
+  const backend = workspaceBackend({ canonical: (root) => root.replace("/workspace", "/Workspace") });
+  const typed = "/home/demo/workspace";
+  const result = await continueWorkspaceStep(
+    { ...continueInput, checked: [], listed: [{ repo: "acme/missing-repo", root: typed, name: "missing-repo", path: `${typed}/missing-repo` }] },
+    backend.deps,
+  );
+  // The clone list, later: the clone failed, under the server's canonical path.
+  const list: GithubClone[] = [
+    { id: "c1", repo: "acme/missing-repo", root: typed, name: "missing-repo", path: "/home/demo/Workspace/missing-repo", state: "failed", reason: "Repository not found.", startedAt: "2026-10-10T10:00:00Z" },
+    { id: "c9", repo: "acme/other", root: "/w/acme", name: "other", path: "/w/acme/other", state: "cloning", startedAt: "2026-10-10T10:00:00Z" },
+  ];
+  const clones = setupClones(list, result.clonePaths);
+  expect(clones.map((c) => c.id)).toEqual(["c1"]);
+  const retried: string[] = [];
+  const actions = { busy: {}, errors: {}, cancel: noop, retry: (c: { id: string }) => retried.push(c.id), dismiss: noop };
+  const summary = { ...NOTHING_SAVED, cloned: result.cloned, clonePaths: result.clonePaths, agentSessions: false, agents: 1, checked: true, remaining: [], agentsMissing: [], clonesRunning: 0 };
+  const done = DoneStep({ summary, clones, cloneActions: actions });
+  const item = byTag(byTag(done, "section").find((el) => el.props["aria-label"] === "GitHub clones"), "li")[0];
+  expect(textOf(item)).toContain("acme/missing-repo");
+  expect(textOf(item)).toContain("Repository not found.");
+  press(byTag(item, "button").find((b) => textOf(b) === "Retry"));
+  expect(retried).toEqual(["c1"]);
+});
+
+test("Continue waits for discovery", async () => {
+  const withRoot = JSON.stringify([[], ["/w/acme", "/w/beta"]]);
+  const without = JSON.stringify([[], ["/w/beta"]]);
+  const shown = { result: found("alpha-infra"), running: false, for: withRoot };
+  expect(discoveryPending(shown, withRoot)).toBe(false);
+  expect(discoveryPending({ ...shown, running: true }, withRoot)).toBe(true);
+  // The root was removed just now: the result shown is the old roots', even before the new run has started.
+  expect(discoveryPending(shown, without)).toBe(true);
+
+  const blocked = workspaceContinueBlocked(true, discoveryPending(shown, without));
+  expect(blocked).toBe("Still looking for projects…");
+  expect(workspaceContinueBlocked(false, true)).toContain("A workspace folder is needed");
+  expect(workspaceContinueBlocked(true, false)).toBeUndefined();
+  const frame = WizardFrame({ step: 2, reachable: 4, onStep: noop, continueBlocked: blocked, onContinue: noop, onBack: noop, onSkip: noop, children: "" });
+  expect(byTag(frame, "button").find((el) => textOf(el) === "Continue")?.props.disabled).toBe(true);
+  expect(textOf(frame)).toContain("Still looking for projects…");
+  expect(byTag(byTag(frame, "ol")[0], "li").map((li) => byTag(li, "button").length > 0)).toEqual([true, true, false, false, false, false, false]);
+
+  // Once discovery has finished over the remaining roots, Continue tracks nothing under the removed one.
+  const latest = { result: { candidates: [], integratable: [], errors: [] }, running: false, for: without };
+  expect(discoveryPending(latest, without)).toBe(false);
+  const backend = workspaceBackend();
+  const result = await continueWorkspaceStep({ ...continueInput, checked: checkedProjects(latest.result, new Set()), listed: [] }, backend.deps);
+  expect(result.outcome).toBe("next");
+  expect(backend.calls.filter((c) => c.startsWith("track"))).toEqual([]);
 });

@@ -2,7 +2,7 @@
 // user's agent runs `openspec init` under its own permission prompts, which invariant 1 already covers ("starting the
 // user's agent … is not a write by the dashboard"). All this module decides is *when that worked* — `openspec/config.yaml`
 // on disk, never anything the agent printed — and it then tracks the repository, a write to `~/.spec-control/` only.
-import { integrateUnavailable, type Config, type IntegrationSession } from "../shared/types.ts";
+import { integrateUnavailable, isIntegration, type Config, type IntegrationSession } from "../shared/types.ts";
 import { availableName } from "../shared/nameHints.ts";
 import { newRepoConfig, updateConfig } from "./config.ts";
 import { discoverRepos, isSpecProject } from "./discover.ts";
@@ -63,10 +63,24 @@ export async function confirmIntegration(state: IntegrationState, folder: string
 }
 
 /**
- * Re-checks every folder an integration session ran in. Called on each discovery run, so a marker written while the
- * agent is still going is noticed as soon as the user looks, and on the session's end.
+ * Checks an integration session's folder, once: the first check that finds the marker records `confirmedAt` on the
+ * session — whether or not this check is the one that adds the repository — and a confirmed session is never checked
+ * again, so a project the user forgets stays forgotten. Returns whether the repository was added.
+ */
+export async function confirmIntegrationSession(state: IntegrationState, session: IntegrationSession): Promise<boolean> {
+  if (session.confirmedAt !== undefined) return false;
+  if (!(await isSpecProject(canonicalPath(session.folder)))) return false;
+  // Only the call that records the confirmation goes on; a concurrent check of the same session stops here.
+  if (!(await state.sessions?.recordIntegrationConfirmed(session.id))) return false;
+  return confirmIntegration(state, session.folder);
+}
+
+/**
+ * Re-checks the folder of every integration session that still runs and has not been confirmed. Called on each
+ * discovery run, so a marker written while the agent is still going is noticed as soon as the user looks; an ended
+ * session was checked once when it ended and is not checked again.
  */
 export async function confirmPendingIntegrations(state: IntegrationState): Promise<void> {
-  const folders = new Set((state.sessions?.list() ?? []).flatMap((s) => (s.integration === true ? [s.folder] : [])));
-  for (const folder of folders) await confirmIntegration(state, folder);
+  const pending = (state.sessions?.list() ?? []).filter((s): s is IntegrationSession => isIntegration(s) && s.state === "running" && s.confirmedAt === undefined);
+  for (const session of pending) await confirmIntegrationSession(state, session);
 }

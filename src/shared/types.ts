@@ -913,6 +913,11 @@ export interface IntegrationSession extends SessionBase {
   projectConsole?: undefined;
   /** Canonical path of the repository being set up; the agent's working directory. */
   folder: string;
+  /**
+   * When a check first found `openspec/config.yaml` in the folder. Set once and never checked again, so a project the
+   * user later forgets is not added back by the session that set it up (setup-keeps-user-choices D1).
+   */
+  confirmedAt?: string;
   repoId?: undefined;
   change?: undefined;
   action?: undefined;

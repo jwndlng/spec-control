@@ -205,6 +205,18 @@ export class SessionManager {
     return [...this.sessions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
+  /**
+   * Records that an integration session's folder was confirmed and saves it. Returns false when it already was, or the
+   * session is unknown: each integration session confirms its folder at most once.
+   */
+  async recordIntegrationConfirmed(id: string): Promise<boolean> {
+    const session = this.sessions.get(id);
+    if (!session || !isIntegration(session) || session.confirmedAt !== undefined) return false;
+    session.confirmedAt = new Date().toISOString();
+    await this.touch(session);
+    return true;
+  }
+
   get(id: string): Session {
     const session = this.sessions.get(id);
     if (!session) throw new SessionError(404, "unknown session");

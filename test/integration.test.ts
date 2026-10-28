@@ -4,7 +4,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type AppState, createFetchHandler } from "../src/server/api.ts";
 import { defaultAgentSessions, defaultConfig, newRepoConfig } from "../src/server/config.ts";
-import { confirmIntegration, confirmPendingIntegrations, startIntegration, type IntegrationState } from "../src/server/integration.ts";
+import { confirmIntegration, confirmIntegrationSession, confirmPendingIntegrations, startIntegration, type IntegrationState } from "../src/server/integration.ts";
+import { discoverRepos } from "../src/server/discover.ts";
 import { worktreesDir } from "../src/server/paths.ts";
 import { Scanner } from "../src/server/scanner.ts";
 import { SessionManager } from "../src/server/sessions/manager.ts";
@@ -64,7 +65,7 @@ async function harness(overrides: { enabled?: boolean; agent?: AgentProfile; rep
     getConfig: () => h.config,
     getSnapshot: () => snapshot,
     typePromptDelayMs: 150,
-    onIntegrationEnded: (session) => void confirmIntegration(h, session.folder),
+    onIntegrationEnded: (session) => void confirmIntegrationSession(h, session),
   });
   managers.push(h.sessions);
   return h;
@@ -228,7 +229,7 @@ test("an integrated repository whose name is taken is disambiguated by its paren
   expect(h.config.repos[1].name).toBe(`beta-soc (${h.root.split("/").at(-1)})`);
 });
 
-test("the folder is re-checked when the session ends, and again on every discovery run", async () => {
+test("the folder is re-checked when the session ends, and again on every discovery run while the session runs", async () => {
   const ended = await harness();
   const { session } = await startIntegration(ended, { path: ended.folder });
   await writeMarker(ended.folder); // the agent did its job
@@ -248,6 +249,80 @@ test("the folder is re-checked when the session ends, and again on every discove
   expect((started.session as IntegrationSession).state).toBe("running");
   // It is no longer offered for integration, and starting it again is refused.
   await expect(startIntegration(running, { path: running.folder })).rejects.toMatchObject({ status: 404 });
+});
+
+/** What the user's Forget leaves: the repository list without the folder. */
+function forget(h: Harness): void {
+  h.config = { ...h.config, repos: h.config.repos.filter((r) => r.path !== h.folder) };
+}
+
+async function candidatePaths(h: Harness): Promise<string[]> {
+  return (await discoverRepos(h.config.repos, h.config.scanRoots)).candidates.map((c) => c.path);
+}
+
+test("a session's confirmation is recorded once and survives a restart of the session manager", async () => {
+  const h = await harness();
+  const { session } = await startIntegration(h, { path: h.folder });
+  await confirmPendingIntegrations(h);
+  expect((h.sessions.get(session.id) as IntegrationSession).confirmedAt).toBeUndefined(); // no marker yet
+
+  await writeMarker(h.folder);
+  await confirmPendingIntegrations(h);
+  const confirmedAt = (h.sessions.get(session.id) as IntegrationSession).confirmedAt;
+  expect(confirmedAt).toBeString();
+  expect(await h.sessions.recordIntegrationConfirmed(session.id)).toBe(false);
+
+  await h.sessions.shutdown();
+  const restarted = new SessionManager({ getConfig: () => h.config, getSnapshot: () => ({ generatedAt: "", repos: [] }) });
+  managers.push(restarted);
+  await restarted.init();
+  expect((restarted.get(session.id) as IntegrationSession).confirmedAt).toBe(confirmedAt);
+});
+
+test("a forgotten integrated project stays forgotten", async () => {
+  const h = await harness();
+  const { session } = await startIntegration(h, { path: h.folder });
+  await writeMarker(h.folder);
+  await h.sessions.close(session.id);
+  await waitFor(() => h.config.repos.length === 1, "the repository to be tracked");
+  await waitFor(() => (h.sessions.get(session.id) as IntegrationSession).confirmedAt !== undefined, "the confirmation to be recorded");
+
+  forget(h);
+  await confirmPendingIntegrations(h);
+  expect(await confirmIntegrationSession(h, h.sessions.get(session.id) as IntegrationSession)).toBe(false);
+  expect(h.config.repos).toEqual([]);
+  expect(await candidatePaths(h)).toContain(h.folder);
+  expect(h.scans).toBe(1);
+});
+
+test("forgetting while the setup agent still runs", async () => {
+  const h = await harness();
+  const { session } = await startIntegration(h, { path: h.folder });
+  await writeMarker(h.folder);
+  await confirmPendingIntegrations(h);
+  expect(h.config.repos).toHaveLength(1);
+
+  forget(h);
+  await confirmPendingIntegrations(h);
+  expect(h.sessions.get(session.id).state).toBe("running");
+  expect(h.config.repos).toEqual([]);
+  expect(await candidatePaths(h)).toContain(h.folder);
+  // Nor does the session's end bring it back.
+  await h.sessions.close(session.id);
+  await waitFor(() => h.sessions.get(session.id).state === "exited", "the agent to end");
+  await confirmPendingIntegrations(h);
+  expect(h.config.repos).toEqual([]);
+});
+
+test("a marker written after the session ended without it leaves the folder an ordinary candidate", async () => {
+  const h = await harness();
+  const { session } = await startIntegration(h, { path: h.folder });
+  await h.sessions.close(session.id);
+  await waitFor(() => h.sessions.get(session.id).state === "exited", "the agent to end");
+  await writeMarker(h.folder);
+  await confirmPendingIntegrations(h);
+  expect(h.config.repos).toEqual([]);
+  expect(await candidatePaths(h)).toContain(h.folder);
 });
 
 test("an agent that exits without the marker leaves the folder integratable and nothing in the config", async () => {
