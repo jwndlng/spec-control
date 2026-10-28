@@ -12,4 +12,4 @@
 ## 3. Check
 
 - [~] 3.1 Open a throwaway pull request titled `feat: label test`, retitle it `fix: label test` and add a `major` label by hand; verify on its page that it ends with `fix` and `major` and without `feat`, then close it unmerged — **for you, after this change is merged**: the autolabeler reads its config from `main` (design D4), so it cannot be tested from this branch. Open the throwaway pull request, retitle it, add `major`, check that the `label` job's log says `Removed label 'feat'` and the page shows only `fix` and `major`, then close it unmerged
-- [ ] 3.2 Run `bun run check`; verify it passes
+- [x] 3.2 Run `bun run check`; verify it passes — passed in CI on the pull request (`check (ubuntu-latest)`); locally it timed out under machine load (load average ~23) in tests this change does not touch
