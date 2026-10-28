@@ -48,8 +48,11 @@ function Leftover({ leftover, outside }: { leftover: StaleLeftover; outside: Rea
   );
 }
 
-/** What a stale change left behind and what is kept, as the user confirms it. */
-export function StaleLeftoverList({ leftovers, kept }: { leftovers: readonly StaleLeftover[]; kept: readonly KeptLeftover[] }) {
+/**
+ * What a stale change left behind and what is kept, as the user confirms it. `compact` drops the closing note on
+ * backups, which the end-session dialog gives as its option's hover description instead.
+ */
+export function StaleLeftoverList({ leftovers, kept, compact = false }: { leftovers: readonly StaleLeftover[]; kept: readonly KeptLeftover[]; compact?: boolean }) {
   const outside = new Set(outsidePaths(leftovers));
   return (
     <>
@@ -72,7 +75,7 @@ export function StaleLeftoverList({ leftovers, kept }: { leftovers: readonly Sta
           </ul>
         </div>
       )}
-      {leftovers.length > 0 && (
+      {leftovers.length > 0 && !compact && (
         <p class="hint">
           Uncommitted files are copied under the dashboard's home first. Ignored files in a worktree (dependencies, build output, local environment files) are
           deleted without a copy. Remote branches and remote-tracking refs are never touched, and session records stay as history.
@@ -82,12 +85,21 @@ export function StaleLeftoverList({ leftovers, kept }: { leftovers: readonly Sta
   );
 }
 
+/** The files outside the change, at most three by name: "a, b, c and 2 more". */
+function namedOutside(leftovers: readonly StaleLeftover[]): string {
+  const outside = outsidePaths(leftovers);
+  const more = outside.length > 3 ? ` and ${outside.length - 3} more` : "";
+  return `${outside.slice(0, 3).join(", ")}${more}`;
+}
+
 /** The acknowledgement, naming the files outside the change that removing the leftovers deletes after a copy. */
 export function acknowledgementText(leftovers: readonly StaleLeftover[]): string {
-  const outside = outsidePaths(leftovers);
-  const named = outside.slice(0, 3).join(", ");
-  const more = outside.length > 3 ? ` and ${outside.length - 3} more` : "";
-  return `Delete ${named}${more} too — uncommitted outside the change — after a copy is kept`;
+  return `Delete ${namedOutside(leftovers)} too — uncommitted outside the change — after a copy is kept`;
+}
+
+/** The end-session dialog's one line under Clean up leftovers, where selecting the option is the acknowledgement. */
+export function outsideNote(leftovers: readonly StaleLeftover[]): string {
+  return `Also deletes ${namedOutside(leftovers)} — outside the change, copied first`;
 }
 
 /** Per item, what the cleanup did; the backup folders and the commands that restore a deleted branch. */
