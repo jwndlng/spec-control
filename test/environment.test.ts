@@ -167,6 +167,17 @@ test("a pending migration step is a warning naming the worktree and the reason",
   expect(check.remedy).toContain("next start");
 });
 
+test("a resumed migration that still has a step left says it was resumed and names the step", async () => {
+  const check = await homeCheckWith({
+    kind: "retried",
+    pending: [{ kind: "repair", worktree: "/w/u/.spec-control/worktrees/3d84480c2b4d/feat-x", error: "its repository could not be found" }],
+    resumed: { from: "/w/u/.openspec-dashboard", to: "/w/u/.spec-control" },
+  });
+  expect(check.status).toBe("warning");
+  expect(check.found).toContain("an earlier start was stopped in the middle of");
+  expect(check.found).toContain("/w/u/.spec-control/worktrees/3d84480c2b4d/feat-x");
+});
+
 test("a refused move is a warning saying the former home is in use", async () => {
   const check = await homeCheckWith({ kind: "refused", reason: "EBUSY: resource busy" });
   expect(check.status).toBe("warning");

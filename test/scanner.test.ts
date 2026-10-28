@@ -848,3 +848,90 @@ test("an oversized config.yaml is not read: a warning on the repository, changes
   expect(snap.changes[0].schema).toBe("spec-driven");
   await rm(root, { recursive: true, force: true });
 });
+
+// --- Triggers during a scan: one follow-up, never two scans at once. ---
+
+/** A scanner whose scans wait on a gate, counting how many run and how many ever ran at once. */
+function gatedScanner(getConfig: () => ReturnType<typeof defaultConfig>) {
+  let open: () => void = () => {};
+  let gate = new Promise<void>((resolve) => (open = resolve));
+  const counts = { started: 0, running: 0, maxRunning: 0 };
+  const scanner = new Scanner(getConfig, {
+    persist: false,
+    sharedConfig: async () => {
+      counts.started++;
+      counts.running++;
+      counts.maxRunning = Math.max(counts.maxRunning, counts.running);
+      await gate;
+      counts.running--;
+      return undefined;
+    },
+  });
+  const release = () => {
+    open();
+    gate = new Promise<void>((resolve) => (open = resolve));
+  };
+  return { scanner, counts, release };
+}
+
+test("a repository enabled while another is scanned is in the follow-up's snapshot", async () => {
+  let config = { ...defaultConfig(), repos: [nano] };
+  const { scanner, counts, release } = gatedScanner(() => config);
+  const first = scanner.trigger();
+  expect(first.started).toBe(true);
+  config = { ...config, repos: [nano, soc] };
+  const second = scanner.trigger();
+  expect(second.started).toBe(false);
+  release();
+  expect((await first.done).repos.map((r) => r.name)).toEqual([nano.name]);
+  await Bun.sleep(0);
+  release();
+  expect((await second.done).repos.map((r) => r.name)).toEqual([nano.name, soc.name]);
+  expect(counts.started).toBe(2);
+  expect(counts.maxRunning).toBe(1);
+  expect(scanner.scanning).toBe(false);
+}, 30_000);
+
+test("three triggers during one scan start exactly one follow-up, and scans never overlap", async () => {
+  const config = { ...defaultConfig(), repos: [nano] };
+  const { scanner, counts, release } = gatedScanner(() => config);
+  const first = scanner.trigger();
+  const queued = [scanner.trigger(), scanner.trigger(), scanner.trigger()];
+  expect(queued.map((q) => q.started)).toEqual([false, false, false]);
+  expect(new Set(queued.map((q) => q.done)).size).toBe(1);
+  release();
+  await first.done;
+  // A trigger once the follow-up runs queues the next one, not a second concurrent scan.
+  await Bun.sleep(0);
+  expect(counts.started).toBe(2);
+  const later = scanner.trigger();
+  expect(later.started).toBe(false);
+  expect(later.done).not.toBe(queued[0].done);
+  release();
+  await queued[0].done;
+  await Bun.sleep(0);
+  release();
+  await later.done;
+  expect(counts.started).toBe(3);
+  expect(counts.maxRunning).toBe(1);
+}, 30_000);
+
+test("the follow-up runs after a failed scan too", async () => {
+  const config = { ...defaultConfig(), repos: [nano] };
+  let fail = true;
+  const scanner = new Scanner(() => config, {
+    persist: false,
+    sharedConfig: async () => {
+      await Bun.sleep(5);
+      if (fail) {
+        fail = false;
+        throw new Error("shared config unreadable");
+      }
+      return undefined;
+    },
+  });
+  const first = scanner.trigger();
+  const second = scanner.trigger();
+  await expect(first.done).rejects.toThrow("shared config unreadable");
+  expect((await second.done).repos.map((r) => r.name)).toEqual([nano.name]);
+}, 30_000);

@@ -489,6 +489,8 @@ export interface ScannerOptions {
 export class Scanner {
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight: Promise<Snapshot> | undefined;
+  /** The one scan queued by triggers while another ran; not started yet, so it reads the configuration afresh. */
+  private followUp: Promise<Snapshot> | undefined;
   snapshot: Snapshot;
 
   constructor(
@@ -500,7 +502,7 @@ export class Scanner {
   }
 
   get scanning(): boolean {
-    return this.inFlight !== undefined;
+    return this.inFlight !== undefined || this.followUp !== undefined;
   }
 
   start(): void {
@@ -515,13 +517,27 @@ export class Scanner {
     this.timer = undefined;
   }
 
-  /** Starts a scan unless one is running. Returns whether a new scan started. */
+  /**
+   * Starts a scan unless one is running. Returns whether a new scan started; otherwise `done` is the one follow-up
+   * scan every trigger during the running scan shares, which starts once it has settled (design D1).
+   */
   trigger(): { started: boolean; done: Promise<Snapshot> } {
-    if (this.inFlight) return { started: false, done: this.inFlight };
-    this.inFlight = this.scanAll().finally(() => {
-      this.inFlight = undefined;
+    if (this.followUp) return { started: false, done: this.followUp };
+    if (!this.inFlight) return { started: true, done: this.run() };
+    const settled = () => {
+      this.followUp = undefined;
+      return this.run();
+    };
+    this.followUp = this.inFlight.then(settled, settled);
+    return { started: false, done: this.followUp };
+  }
+
+  private run(): Promise<Snapshot> {
+    const scan = this.scanAll().finally(() => {
+      if (this.inFlight === scan) this.inFlight = undefined;
     });
-    return { started: true, done: this.inFlight };
+    this.inFlight = scan;
+    return scan;
   }
 
   private async scanAll(): Promise<Snapshot> {

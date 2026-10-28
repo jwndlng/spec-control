@@ -397,3 +397,20 @@ test("metrics count recorded events, follow the filters and come with the first 
   expect(pageEvents(many, { repos: ["r2"] }, T0 + DAY).metrics?.repos.map((r) => r.repoId)).toEqual(["r2"]);
   expect(pageEvents(many, { kinds: ["session-started"] }, T0 + DAY).metrics?.repos).toEqual([]);
 });
+
+test("idle() resolves only once an append queued before it is on disk, and also when that append failed", async () => {
+  const path = file("idle");
+  const log = new ActivityLog(path, clock);
+  await log.load();
+  void log.append([moved(T0, "lint-rules", "Specs", "Ready")]);
+  await log.idle();
+  expect(await changesIn(path)).toEqual(["lint-rules"]);
+
+  await writeFile(join(dir, "idle-not-a-dir"), "x");
+  const broken = new ActivityLog(join(dir, "idle-not-a-dir", "activity.jsonl"), clock);
+  let appended = false;
+  void broken.append([moved(T0, "lint-rules", "Specs", "Ready")]).then(() => (appended = true));
+  await broken.idle();
+  await Promise.resolve();
+  expect(appended).toBe(true);
+});

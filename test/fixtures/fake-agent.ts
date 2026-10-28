@@ -7,8 +7,15 @@
 // `SPEC_CONTROL_STATE_FILE` names, as an agent's own hook would; "stream <ms>" prints a line every 100 ms for that long.
 // With `--paste-threshold <n>` it behaves like an agent that takes a large read for a paste: raw mode, a read of more
 // than n bytes is shown as `[pasted N bytes]` instead of its text, smaller reads are echoed, and Enter reports the line's length and hash.
+// With `--ignore-hangup` it survives `SIGHUP`, as a misbehaving agent would, and prints its pid — also into `fake-agent.pid`
+// next to `SPEC_CONTROL_STATE_FILE`, when set — so a test can check it is gone.
 const args = process.argv.slice(2);
 process.stdout.write(`fake-agent ready args=${JSON.stringify(args)} cwd=${process.cwd()} tty=${process.stdout.isTTY === true} key=${"ANTHROPIC_API_KEY" in process.env} state=${process.env.SPEC_CONTROL_STATE_FILE ?? ""}\n`);
+if (args.includes("--ignore-hangup")) {
+  process.on("SIGHUP", () => process.stdout.write("hang-up ignored\n"));
+  if (process.env.SPEC_CONTROL_STATE_FILE) await Bun.write(`${process.env.SPEC_CONTROL_STATE_FILE}.fake-agent.pid`, String(process.pid));
+  process.stdout.write(`ignoring hang-up pid=${process.pid}\n`);
+}
 process.on("SIGWINCH", () => process.stdout.write(`redrawn at ${process.stdout.columns} columns\n`));
 if (args.includes("--menu")) {
   process.stdin.setRawMode?.(true);

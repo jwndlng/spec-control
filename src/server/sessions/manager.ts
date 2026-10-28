@@ -20,7 +20,7 @@ import { isBusy } from "../keepAwake.ts";
 import { readReport, STATE_FILE_ENV, terminalRepliesOnly, type Report, type ReportedState } from "./reportedState.ts";
 import { SessionStore } from "./store.ts";
 import { submitText, validSubmission, type SubmitOptions } from "./submit.ts";
-import { spawnTerminal, type TerminalProcess } from "./terminal.ts";
+import { KILL_GRACE_MS, spawnTerminal, type TerminalProcess } from "./terminal.ts";
 import { baseRef, headCommit, listWorktrees, readWorkStatus, shipsOnlyOpenSpec, WORKTREE_NAME } from "./workStatus.ts";
 import { currentBranch, defaultBranch, hasLocalBranch, worktrees as listCheckouts } from "../git.ts";
 import { frameworkById } from "../frameworks/registry.ts";
@@ -38,6 +38,8 @@ const OUTPUT_STAMP_MS = 5000;
  */
 export const ECHO_WINDOW_MS = 2000;
 const WORKTREES_TTL_MS = 15_000;
+/** How long shutdown waits for an agent it sent `SIGKILL` before reporting it and going on. */
+const FORCED_EXIT_WAIT_MS = 1000;
 
 export class SessionError extends Error {
   constructor(
@@ -1436,19 +1438,38 @@ export class SessionManager {
     this.live.delete(id);
   }
 
-  /** Dashboard shutdown: terminals cannot outlive it, so every agent is ended and its output tail kept. */
+  /**
+   * Dashboard shutdown: terminals cannot outlive it, so every agent is ended and its output tail kept. Each agent gets
+   * the hang-up and up to `KILL_GRACE_MS` to exit; every survivor is then killed and given one more second (design
+   * D3), because the process exits right after this returns and the terminal's own `SIGKILL` timer would never fire.
+   */
   async shutdown(): Promise<void> {
-    await Promise.all(
-      this.list()
-        .filter((s) => s.state === "running")
-        .map(async (session) => {
-          const live = this.live.get(session.id);
-          const proc = live?.proc;
-          if (live) live.proc = undefined; // the exit handler must not overwrite the reason
-          proc?.kill();
-          await this.end(session, null, "the dashboard was stopped while this session was running");
-        }),
-    );
+    const running = this.list().filter((s) => s.state === "running");
+    const procs: TerminalProcess[] = [];
+    for (const session of running) {
+      const live = this.live.get(session.id);
+      const proc = live?.proc;
+      if (live) live.proc = undefined; // the exit handler must not overwrite the reason
+      if (!proc) continue;
+      proc.kill();
+      procs.push(proc);
+    }
+    const exitedWithin = (proc: TerminalProcess, ms: number) =>
+      new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), ms);
+        void proc.exited.then(() => {
+          clearTimeout(timer);
+          resolve(true);
+        });
+      });
+    const graceful = await Promise.all(procs.map((proc) => exitedWithin(proc, KILL_GRACE_MS)));
+    const forced = procs.filter((_, i) => !graceful[i]);
+    for (const proc of forced) proc.forceKill();
+    const gone = await Promise.all(forced.map((proc) => exitedWithin(proc, FORCED_EXIT_WAIT_MS)));
+    forced.forEach((proc, i) => {
+      if (!gone[i]) console.error(`agent process ${proc.pid} is still running after SIGKILL`);
+    });
+    await Promise.all(running.map((session) => this.end(session, null, "the dashboard was stopped while this session was running")));
     // Nothing of ours may still be writing once shutdown has returned (the caller may remove the directory next) —
     // including an `end` an exit handler started, whose writes are queued only as it goes.
     await Promise.all(this.ending.values());

@@ -155,11 +155,16 @@ async function main(): Promise<void> {
     state.updateChecker?.stop();
     // Before the sessions end, so no ending session can start it again; `-w` ends it with us anyway.
     state.keepAwake?.stop();
-    // Children must not outlive the dashboard; sessions in flight become `interrupted` and can be resumed.
-    void (state.sessions?.shutdown() ?? Promise.resolve()).finally(() => {
-      server.stop(true);
-      process.exit(0);
-    });
+    // Children must not outlive the dashboard; sessions in flight become `interrupted` and can be resumed. Every agent
+    // has exited (or was killed) once `shutdown` returns, and every `end` has queued its activity event: the log's
+    // queue is the last thing waited for, and it never rejects.
+    void (state.sessions?.shutdown() ?? Promise.resolve())
+      .catch((err) => console.error("could not end every session:", err))
+      .then(() => activity.idle())
+      .finally(() => {
+        server.stop(true);
+        process.exit(0);
+      });
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);

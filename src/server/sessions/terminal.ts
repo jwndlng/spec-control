@@ -13,6 +13,9 @@ export interface TerminalProcess {
   resize(cols: number, rows: number): void;
   /** Hang-up first, as closing a terminal window would; a hard kill follows if the process ignores it. */
   kill(): void;
+  /** `SIGKILL` now, for a process that outlived the hang-up's grace period when nothing may wait for the timer. */
+  forceKill(): void;
+  pid: number;
   exited: Promise<number | null>;
 }
 
@@ -22,7 +25,7 @@ interface BunTerminal {
   close(): void;
 }
 
-const KILL_GRACE_MS = 2000;
+export const KILL_GRACE_MS = 2000;
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.floor(n) || lo));
 
 export function spawnTerminal(options: TerminalOptions): TerminalProcess {
@@ -68,6 +71,8 @@ export function spawnTerminal(options: TerminalOptions): TerminalProcess {
       (timer as { unref?: () => void }).unref?.();
       void proc.exited.then(() => clearTimeout(timer));
     },
+    forceKill: () => proc.kill("SIGKILL"),
+    pid: proc.pid,
     exited,
   };
 }

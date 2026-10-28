@@ -105,6 +105,11 @@ export class ActivityLog {
     this.lastCompactedAt = this.now();
   }
 
+  /** Resolves once every write queued so far has finished or failed; never rejects. What shutdown waits for (design D4). */
+  idle(): Promise<void> {
+    return this.queue;
+  }
+
   /** One writer at a time; a failed write is reported once and never propagates. */
   private enqueue(job: () => Promise<void>): Promise<void> {
     this.queue = this.queue.then(job).catch((err) => {
