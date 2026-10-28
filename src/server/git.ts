@@ -1,6 +1,6 @@
 // Read-only git helpers. Every call sets `cwd` to the repository and passes
 // paths after `--`; nothing here ever mutates a repository.
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { CheckoutStatus, Worktree } from "../shared/types.ts";
 
@@ -125,6 +125,37 @@ export async function worktrees(cwd: string): Promise<Worktree[]> {
 /** Where `cwd` sits below its repository's top level (`""` at the top level), so the same project can be found in a linked worktree. */
 export async function subdirectory(cwd: string): Promise<string> {
   return ((await git(cwd, ["rev-parse", "--show-prefix"]))?.trim() ?? "").replace(/\/+$/, "");
+}
+
+const repositoryKeys = new Map<string, Promise<string | undefined>>();
+
+/**
+ * The real path of the repository's common git directory: the same for every project and worktree of one repository,
+ * which is what locks over a repository are keyed by. Undefined when git cannot say. Remembered per folder once found,
+ * and one lookup is shared by concurrent callers, so they resume in the order they asked — a lock taken right after
+ * another is still seen as taken.
+ */
+export function repositoryKey(cwd: string): Promise<string | undefined> {
+  let pending = repositoryKeys.get(cwd);
+  if (!pending) {
+    pending = readRepositoryKey(cwd);
+    repositoryKeys.set(cwd, pending);
+    // Not a repository (yet): asked again next time.
+    void pending.then((key) => {
+      if (key === undefined) repositoryKeys.delete(cwd);
+    });
+  }
+  return pending;
+}
+
+async function readRepositoryKey(cwd: string): Promise<string | undefined> {
+  const out = (await git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).catch(() => undefined))?.trim();
+  if (!out) return undefined;
+  try {
+    return await realpath(out);
+  } catch {
+    return out;
+  }
 }
 
 /** Committer date (ISO 8601) of the last commit touching `relPath`, or undefined if none. */

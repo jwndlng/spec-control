@@ -1,12 +1,14 @@
 // Resolve and pull: the only thing the dashboard removes from a tracked repository, and only after it has re-proved the
 // whole claim (openspec/specs/repository-pull: "Change leftovers blocking a pull are resolved on confirmation").
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { newRepoConfig } from "../src/server/config.ts";
 import { backupDirName, pullBackupsDir, PullBusyError, pullRepository, resolvePullRepository } from "../src/server/pull.ts";
-import type { PullResolve, PullResult } from "../src/shared/types.ts";
+import type { PullBlockingFile, PullResolve, PullResult, RepoConfig } from "../src/shared/types.ts";
 import { useTempHome } from "./helpers.ts";
+import { hookLog, installRepoHooks } from "./hookHelpers.ts";
+import { commitFiles, type Monorepo, monorepo } from "./monorepoHelpers.ts";
 import { type Fixture, fixture, git, localChange, remoteChange, remoteCommits } from "./pullHelpers.ts";
 
 setDefaultTimeout(60_000);
@@ -226,4 +228,86 @@ test("a repository id never becomes a path of its own", () => {
   expect(backupDirName("..")).toBe("repo");
   expect(backupDirName("")).toBe("repo");
   expect(backupDirName("a".repeat(200))).toHaveLength(120);
+});
+
+test("hooks do not run for the leftover removal, the fast-forward or anything else of a Resolve and pull", async () => {
+  const f = await make();
+  const refused = await blocked(f);
+  const log = await installRepoHooks(f.repo);
+  expect(await resolve(f, refused.resolvable as PullResolve)).toMatchObject({ update: "fast-forwarded", commits: 1 });
+  expect(tracked(f, "openspec/changes/add-login/prompt.md")).toBe("openspec/changes/add-login/prompt.md");
+  expect(await hookLog(log)).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// A project in a subfolder of its repository (repository-pull: "Blocking files are classified from a project in a
+// subfolder"): paths are relative to the top level and read and touched that way.
+// ---------------------------------------------------------------------------------------------------------------------
+
+const TOOLS_CHANGE = "packages/tools/openspec/changes/add-login";
+
+/** The monorepo's `packages/tools` with `add-login` created and staged here, and merged upstream with another prompt. */
+async function blockedSubfolder(): Promise<{ m: Monorepo; repo: RepoConfig; refused: PullResult }> {
+  const m = await monorepo();
+  bases.push(m.base);
+  await commitFiles(m.other, { [`${TOOLS_CHANGE}/.openspec.yaml`]: "schema: spec-driven\n", [`${TOOLS_CHANGE}/prompt.md`]: "the prompt as it was merged\n" });
+  git(m.other, "push", "-q");
+  await mkdir(join(m.top, TOOLS_CHANGE), { recursive: true });
+  await writeFile(join(m.top, TOOLS_CHANGE, ".openspec.yaml"), "schema: spec-driven\n");
+  await writeFile(join(m.top, TOOLS_CHANGE, "prompt.md"), "the prompt as it was typed here\n");
+  git(m.project(), "add", "--", "openspec/changes/add-login/");
+  const repo = newRepoConfig(m.project(), true);
+  return { m, repo, refused: await pullRepository(repo) };
+}
+
+test("in a subfolder project, a staged leftover is listed from the top level, offered and resolved", async () => {
+  const { m, repo, refused } = await blockedSubfolder();
+  expect(refused.blocking).toMatchObject([
+    { path: `${TOOLS_CHANGE}/.openspec.yaml`, kind: "leftover", differs: false },
+    { path: `${TOOLS_CHANGE}/prompt.md`, kind: "leftover", differs: true },
+  ]);
+  expect(refused.resolvable).toBeDefined();
+
+  const resolved = await resolvePullRepository(repo, refused.resolvable as PullResolve);
+  expect(resolved).toMatchObject({ update: "fast-forwarded", commits: 1 });
+  expect(await readFile(join(m.top, TOOLS_CHANGE, "prompt.md"), "utf8")).toBe("the prompt as it was merged\n");
+  expect(git(m.top, "status", "--porcelain")).toBe("");
+  const copy = resolved.resolved?.find((r) => r.path.endsWith("prompt.md"))?.copy as string;
+  expect(await readFile(copy, "utf8")).toBe("the prompt as it was typed here\n");
+});
+
+test("in a subfolder project, the same relative path at the top level is local work and is never touched", async () => {
+  const m = await monorepo();
+  bases.push(m.base);
+  await commitFiles(m.other, { "openspec/changes/add-login/prompt.md": "merged at the top\n", [`${TOOLS_CHANGE}/prompt.md`]: "merged in tools\n" });
+  git(m.other, "push", "-q");
+  for (const [path, content] of [
+    ["openspec/changes/add-login/prompt.md", "typed at the top\n"],
+    [`${TOOLS_CHANGE}/prompt.md`, "typed in tools\n"],
+  ]) {
+    await mkdir(join(m.top, path, ".."), { recursive: true });
+    await writeFile(join(m.top, path), content);
+  }
+  git(m.top, "add", "-A");
+  const before = { head: git(m.top, "rev-parse", "HEAD"), status: git(m.top, "status", "--porcelain"), index: await readFile(join(m.top, ".git", "index")) };
+  const repo = newRepoConfig(m.project(), true);
+
+  const refused = await pullRepository(repo);
+  expect(refused.blocking).toMatchObject([
+    { path: "openspec/changes/add-login/prompt.md", kind: "local-work" },
+    { path: `${TOOLS_CHANGE}/prompt.md`, kind: "leftover" },
+  ]);
+  expect(refused.resolvable).toBeUndefined();
+
+  // A claim that calls the top-level file a leftover is refused as well, and nothing moves.
+  const leftover = refused.blocking?.[1] as PullBlockingFile;
+  const claim: PullResolve = {
+    upstream: git(m.top, "rev-parse", "origin/main"),
+    files: [{ ...leftover, path: "openspec/changes/add-login/prompt.md" }, leftover],
+  };
+  expect(await resolvePullRepository(repo, claim)).toMatchObject({ update: "refused" });
+  expect({ head: git(m.top, "rev-parse", "HEAD"), status: git(m.top, "status", "--porcelain"), index: await readFile(join(m.top, ".git", "index")) }).toEqual(before);
+  expect(await readFile(join(m.top, "openspec/changes/add-login/prompt.md"), "utf8")).toBe("typed at the top\n");
+  expect(await readFile(join(m.top, TOOLS_CHANGE, "prompt.md"), "utf8")).toBe("typed in tools\n");
+  expect(await readdir(pullBackupsDir()).catch(() => [])).not.toContain(backupDirName(repo.id));
 });

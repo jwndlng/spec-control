@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmod, readFile } from "node:fs/promises";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -7,8 +7,16 @@ import { createChange, stageChangeDir } from "../src/server/createChange.ts";
 import { openSpec } from "../src/server/frameworks/openspec/index.ts";
 import { writablePaths } from "../src/server/frameworks/registry.ts";
 import { parseDependsOn, parseIssueFile } from "../src/server/scanner.ts";
-import { tempDir } from "./helpers.ts";
+import { tempDir, useTempHome } from "./helpers.ts";
+import { hookLog, writeHooks } from "./hookHelpers.ts";
 import { git, tempGitRepo } from "./sessionHelpers.ts";
+
+// Staging runs git through `gitWrite`, whose empty hooks folder lives under the dashboard home.
+let cleanupHome: () => Promise<void>;
+beforeAll(async () => {
+  ({ cleanup: cleanupHome } = await useTempHome());
+});
+afterAll(() => cleanupHome());
 
 async function repoWithOpenspec(schema?: string): Promise<string> {
   const root = await tempDir();
@@ -158,8 +166,9 @@ test("createChange's only subprocess is one `git add -- <dir>` (static check)", 
   for (const forbidden of ["child_process", "execSync", "execFile", "execFileSync", "Bun.$", "Bun.spawnSync"]) {
     expect([forbidden, src.includes(forbidden)]).toEqual([forbidden, false]);
   }
-  expect(src.match(/Bun\.spawn\(/g)?.length).toBe(1);
-  expect(src.match(/git\(repoPath, \[/g)?.length).toBe(1);
+  // The one git command runs through `gitWrite` (no hooks), never a spawn of its own.
+  expect(src.match(/Bun\.spawn\(/g)).toBeNull();
+  expect(src.match(/gitWrite\(repoPath, \[/g)?.length).toBe(1);
   // The directory comes from the writable layout, which for OpenSpec — the only framework offered writes — is `openspec/changes`.
   expect(src).toMatch(/\["add", "--", `\$\{layout\.changesDir\}\/\$\{name\}\/`\]/);
   expect(writablePaths(openSpec)?.changesDir).toBe("openspec/changes");
@@ -333,4 +342,23 @@ test("an invalid issue, or one for a repository off GitHub, is refused and nothi
   expect(await createChange(repo, "from-issue", undefined, undefined, { number: 1 })).toMatchObject({ ok: false, reason: "not-on-github" });
   expect(readFileSync(join(repo, ".git", "index")).equals(index)).toBe(true);
   expect(porcelain(repo)).toEqual([]);
+});
+
+test("the user's global hooks folder never runs for the staging `git add`", async () => {
+  const repo = await tempGitRepo();
+  const base = await tempDir("osd-hooks-");
+  const log = join(base, "hook-log.txt");
+  await writeHooks(join(base, "hooks"), log);
+  await writeFile(join(base, "gitconfig"), `[core]\n\thooksPath = ${join(base, "hooks")}\n`);
+  const saved = process.env.GIT_CONFIG_GLOBAL;
+  process.env.GIT_CONFIG_GLOBAL = join(base, "gitconfig");
+  try {
+    const result = await createChange(repo, "add-audit-trail", "Log every mutation");
+    expect(result).toMatchObject({ ok: true, staged: true });
+    expect(porcelain(repo)).toEqual(["A  openspec/changes/add-audit-trail/.openspec.yaml", "A  openspec/changes/add-audit-trail/prompt.md"]);
+    expect(await hookLog(log)).toEqual([]);
+  } finally {
+    if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = saved;
+  }
 });

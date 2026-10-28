@@ -1,12 +1,20 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { chmod, lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MIGRATION_RECORD, migrateHome, startHomeMigration } from "../src/server/homeMigration.ts";
 import { dashboardHome, useFallbackHome } from "../src/server/paths.ts";
-import { gitIn, tempDir, treeFingerprint } from "./helpers.ts";
+import { gitIn, tempDir, treeFingerprint, useTempHome } from "./helpers.ts";
+import { hookLog, installRepoHooks } from "./hookHelpers.ts";
 
 const SESSION_A = "0a7081db-fe14-4e65-b5de-9cfa1bf49c67";
 const SESSION_B = "17f50d9a-7625-404b-93d8-7405183287d2";
+
+// The repair runs git through `gitWrite`, whose empty hooks folder lives under the dashboard home: never the real one.
+let cleanupHome: () => Promise<void>;
+beforeAll(async () => {
+  ({ cleanup: cleanupHome } = await useTempHome());
+});
+afterAll(() => cleanupHome());
 
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => {
@@ -250,4 +258,13 @@ test("a start with nothing to migrate runs no git at all", async () => {
     process.env.PATH = previous;
   }
   expect(await exists(log)).toBe(false);
+});
+
+test("hooks do not run for the repair of a moved session worktree", async () => {
+  const w = await world();
+  const log = await installRepoHooks(w.repo);
+  const outcome = await migrateHome(w.oldHome, w.newHome);
+  expect(outcome).toMatchObject({ kind: "migrated", pending: [] });
+  expect(await git(w.repo, "worktree", "list", "--porcelain")).toContain(`worktree ${w.sessionWorktree.replace(w.oldHome, w.newHome)}\n`);
+  expect(await hookLog(log)).toEqual([]);
 });

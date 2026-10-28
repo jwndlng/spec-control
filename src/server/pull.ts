@@ -16,7 +16,8 @@ import { constants } from "node:fs";
 import { access, chmod, copyFile, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { PullBlockingFile, PullResolve, PullResult, RepoConfig } from "../shared/types.ts";
-import { defaultBranch } from "./git.ts";
+import { defaultBranch, repositoryKey } from "./git.ts";
+import { gitWrite } from "./gitWrite.ts";
 import { dashboardHome } from "./paths.ts";
 import { OPENSPEC_PATHS } from "./frameworks/registry.ts";
 import { CHANGE_NAME } from "./source.ts";
@@ -34,13 +35,17 @@ interface Run {
   timedOut: boolean;
 }
 
+/** SSH in batch mode — unless the user brought their own `GIT_SSH_COMMAND`, which is theirs to keep. */
+function sshEnv(): Record<string, string> {
+  return process.env.GIT_SSH_COMMAND ? {} : { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" };
+}
+
 /**
- * git without a shell. Never prompts: no terminal prompt, no stdin, and SSH in batch mode — unless the user brought
- * their own `GIT_SSH_COMMAND`, which is theirs to keep. Credentials stay entirely with git.
+ * Read-only git without a shell. Never prompts: no terminal prompt, no stdin, and SSH in batch mode. Credentials stay
+ * entirely with git. Every command here that writes goes through `gitWrite` instead (`writeGit`).
  */
 async function git(cwd: string, args: string[], timeoutMs = LOCAL_TIMEOUT_MS): Promise<Run> {
-  const env: Record<string, string | undefined> = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" };
-  if (!env.GIT_SSH_COMMAND) env.GIT_SSH_COMMAND = "ssh -o BatchMode=yes";
+  const env: Record<string, string | undefined> = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", ...sshEnv() };
   let timedOut = false;
   try {
     const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env });
@@ -57,6 +62,24 @@ async function git(cwd: string, args: string[], timeoutMs = LOCAL_TIMEOUT_MS): P
   } catch (e) {
     return { ok: false, out: "", rawOut: "", err: String(e), timedOut };
   }
+}
+
+/** A writing command: no hooks, no automatic maintenance (`gitWrite`), and the same prompt-less environment. */
+function writeGit(cwd: string, args: string[], timeoutMs = LOCAL_TIMEOUT_MS): Promise<Run> {
+  return gitWrite(cwd, args, { env: sshEnv(), timeoutMs });
+}
+
+/**
+ * The fast-forward, pinned against configuration: `--no-autostash` overrides `merge.autoStash`, and submodules are
+ * never updated whatever `submodule.recurse` says. Hooks are off through `gitWrite`.
+ */
+function fastForward(cwd: string, upstream: string): Promise<Run> {
+  return writeGit(cwd, ["-c", "submodule.recurse=false", "merge", "--ff-only", "--no-autostash", "--quiet", upstream]);
+}
+
+/** A pathspec for a path relative to the top level, taken literally: the same file from any working directory. */
+export function topLiteral(path: string): string {
+  return `:(top,literal)${path}`;
 }
 
 /** `https://user:secret@host/…` must never reach the browser. */
@@ -196,6 +219,14 @@ export function isChangeLeftoverPath(path: string): boolean {
     .every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
+/**
+ * `isChangeLeftoverPath` for a path relative to the repository's top level, in a project whose folder is `prefix` below
+ * it (`rev-parse --show-prefix`, `""` at the top level, else ending in `/`). Paths elsewhere are never a leftover.
+ */
+export function isProjectLeftoverPath(path: string, prefix: string): boolean {
+  return path.startsWith(prefix) && isChangeLeftoverPath(path.slice(prefix.length));
+}
+
 /** What is known about one blocking path, gathered by `blockingReport`. */
 export interface BlockingFacts {
   /** The blob the incoming commit has at this path, when it has one at all. */
@@ -213,10 +244,10 @@ export interface BlockingFacts {
  * commits bring along: inside a change directory, new (staged or untracked, never also deleted), an ordinary file both
  * locally and upstream, and present upstream. Anything that fails any part of that is the user's own work.
  */
-export function classifyBlocking(path: string, state: string, facts: BlockingFacts): PullBlockingFile {
+export function classifyBlocking(path: string, state: string, facts: BlockingFacts, prefix = ""): PullBlockingFile {
   const { incoming, staged, worktree } = facts;
   const leftover =
-    isChangeLeftoverPath(path) &&
+    isProjectLeftoverPath(path, prefix) &&
     LEFTOVER_STATES.has(state) &&
     incoming !== undefined &&
     REGULAR_MODES.has(incoming.mode) &&
@@ -234,57 +265,74 @@ function sameClaim(a: PullBlockingFile, b: PullBlockingFile): boolean {
 }
 
 interface BlockingReport {
+  /** Paths relative to the repository's top level, as git reports them. */
   files: PullBlockingFile[];
+  /** The repository's top level in the project's own spelling: what every blocking path is read and touched against. */
+  top: string;
   /** The full commit the classification was made against; the claim a confirmation has to still match. */
   upstream: string;
   /** More blocking files than `MAX_BLOCKING_FILES`: the list is cut short, so nothing is offered. */
   capped: boolean;
 }
 
-/** Read-only throughout: `rev-parse`, `diff`, `status`, `ls-tree`, `ls-files` and `hash-object` without `-w`. */
+/**
+ * Read-only throughout: `rev-parse`, `diff`, `status`, `ls-tree`, `ls-files` and `hash-object` without `-w`. Every path
+ * is relative to the repository's top level and read that way by every command and file operation, so in a project in a
+ * subfolder the file that is judged is the file that is touched.
+ */
 async function blockingReport(repoPath: string, upstreamRef: string): Promise<BlockingReport | undefined> {
-  const at = await git(repoPath, ["rev-parse", "--verify", "--quiet", `${upstreamRef}^{commit}`]);
-  if (!at.ok || !/^[0-9a-f]{40,64}$/.test(at.out)) return undefined;
+  const [at, cdup, prefixed] = await Promise.all([
+    git(repoPath, ["rev-parse", "--verify", "--quiet", `${upstreamRef}^{commit}`]),
+    git(repoPath, ["rev-parse", "--show-cdup"]),
+    git(repoPath, ["rev-parse", "--show-prefix"]),
+  ]);
+  if (!at.ok || !/^[0-9a-f]{40,64}$/.test(at.out) || !cdup.ok || !prefixed.ok) return undefined;
+  // `--show-cdup` keeps the project's own spelling (`--show-toplevel` would resolve symlinks).
+  const top = join(repoPath, cdup.out);
+  const prefix = prefixed.out;
   const [incoming, status] = await Promise.all([
-    git(repoPath, ["diff", "--name-only", "-z", "--no-renames", "HEAD", at.out]),
-    git(repoPath, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"]),
+    git(top, ["diff", "--name-only", "-z", "--no-relative", "--no-renames", "HEAD", at.out]),
+    git(top, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"]),
   ]);
   if (!incoming.ok || !status.ok) return undefined;
   const states = parseStatusStates(status.rawOut);
   const all = blockingSet(parseNulList(incoming.rawOut), states);
   const paths = all.slice(0, MAX_BLOCKING_FILES);
-  if (paths.length === 0) return { files: [], upstream: at.out, capped: false };
+  if (paths.length === 0) return { files: [], top, upstream: at.out, capped: false };
 
-  const [tree, index] = await Promise.all([git(repoPath, ["ls-tree", "-z", "-r", at.out, "--", ...paths]), git(repoPath, ["ls-files", "-s", "-z", "--", ...paths])]);
+  const specs = paths.map(topLiteral);
+  const [tree, index] = await Promise.all([
+    git(top, ["ls-tree", "--full-name", "-z", "-r", at.out, "--", ...specs]),
+    git(top, ["ls-files", "--full-name", "-s", "-z", "--", ...specs]),
+  ]);
   const upstreamBlobs = tree.ok ? parseBlobEntries(tree.rawOut) : new Map<string, BlobEntry>();
   const stagedBlobs = index.ok ? parseBlobEntries(index.rawOut) : new Map<string, BlobEntry>();
   const files: PullBlockingFile[] = [];
   for (const path of paths) {
     const state = states.get(path) as string;
     // Only a candidate leftover is looked at any closer; anything else is local work and is never touched.
-    const candidate = isChangeLeftoverPath(path) && LEFTOVER_STATES.has(state) && upstreamBlobs.has(path);
+    const candidate = isProjectLeftoverPath(path, prefix) && LEFTOVER_STATES.has(state) && upstreamBlobs.has(path);
     if (!candidate) {
       files.push({ path, kind: "local-work" });
       continue;
     }
-    const absolute = join(repoPath, ...path.split("/"));
+    const absolute = join(top, ...path.split("/"));
     let regularFile = false;
     try {
       regularFile = (await lstat(absolute)).isFile();
     } catch {
       regularFile = false;
     }
-    const hashed = regularFile ? await git(repoPath, ["hash-object", `--path=${path}`, "--", path]) : undefined;
-    files.push(
-      classifyBlocking(path, state, {
-        incoming: upstreamBlobs.get(path),
-        staged: stagedBlobs.get(path),
-        worktree: hashed?.ok && /^[0-9a-f]{40,64}$/.test(hashed.out) ? hashed.out : undefined,
-        regularFile,
-      }),
-    );
+    const hashed = regularFile ? await git(top, ["hash-object", `--path=${path}`, "--", path]) : undefined;
+    const facts: BlockingFacts = {
+      incoming: upstreamBlobs.get(path),
+      staged: stagedBlobs.get(path),
+      worktree: hashed?.ok && /^[0-9a-f]{40,64}$/.test(hashed.out) ? hashed.out : undefined,
+      regularFile,
+    };
+    files.push(classifyBlocking(path, state, facts, prefix));
   }
-  return { files, upstream: at.out, capped: all.length > paths.length };
+  return { files, top, upstream: at.out, capped: all.length > paths.length };
 }
 
 /** The refusal a blocked fast-forward becomes: git's reason, the blocking files, and only then an offer. */
@@ -301,11 +349,18 @@ function refusalFrom(report: BlockingReport | undefined, reason: string): Pick<P
 }
 
 /**
- * One fetch per repository at a time, whoever started it. A pull that finds an automatic fetch running waits for it
- * rather than being refused for something the user did not start; a second pull is refused, and an automatic fetch
- * that finds anything running is skipped (repository-pull: "An automatic fetch and a pull never overlap").
+ * One fetch per git repository at a time, whoever started it and for whichever of its tracked projects. A pull that
+ * finds an automatic fetch running waits for it rather than being refused for something the user did not start; a
+ * second pull is refused, and an automatic fetch that finds anything running is skipped (repository-pull: "An
+ * automatic fetch and a pull never overlap", "Pulls and fetches are serialised per git repository").
  */
 const inFlight = new Map<string, { kind: "pull" | "auto"; done: Promise<unknown> }>();
+
+/** The repository's git common directory; a project whose git directory cannot be read keeps its id. */
+async function lockKey(repo: RepoConfig): Promise<string> {
+  const key = await repositoryKey(repo.path);
+  return key ? `git:${key}` : `id:${repo.id}`;
+}
 
 export class PullBusyError extends Error {
   constructor() {
@@ -313,23 +368,24 @@ export class PullBusyError extends Error {
   }
 }
 
-async function exclusively<T>(repoId: string, run: () => Promise<T>): Promise<T> {
-  for (let running = inFlight.get(repoId); running; running = inFlight.get(repoId)) {
+async function exclusively<T>(repo: RepoConfig, run: () => Promise<T>): Promise<T> {
+  const key = await lockKey(repo);
+  for (let running = inFlight.get(key); running; running = inFlight.get(key)) {
     if (running.kind === "pull") throw new PullBusyError();
     await running.done.catch(() => undefined);
   }
   const done = run();
-  inFlight.set(repoId, { kind: "pull", done });
+  inFlight.set(key, { kind: "pull", done });
   try {
     return await done;
   } finally {
-    inFlight.delete(repoId);
+    inFlight.delete(key);
   }
 }
 
 /** `repo` must come from the dashboard config — never a path from a request. */
 export function pullRepository(repo: RepoConfig, options: { fetchTimeoutMs?: number } = {}): Promise<PullResult> {
-  return exclusively(repo.id, () => pull(repo, options.fetchTimeoutMs ?? FETCH_TIMEOUT_MS));
+  return exclusively(repo, () => pull(repo, options.fetchTimeoutMs ?? FETCH_TIMEOUT_MS));
 }
 
 export interface FetchOutcome {
@@ -348,13 +404,14 @@ export interface FetchOutcome {
  * `repo` must come from the dashboard config. Skipped, running no git, while anything else fetches the repository.
  */
 export async function fetchRepository(repo: RepoConfig, options: { fetchTimeoutMs?: number } = {}): Promise<FetchOutcome> {
-  if (inFlight.has(repo.id)) return { skipped: true, ok: false, at: new Date().toISOString(), moved: false };
+  const key = await lockKey(repo);
+  if (inFlight.has(key)) return { skipped: true, ok: false, at: new Date().toISOString(), moved: false };
   const done = autoFetch(repo, options.fetchTimeoutMs ?? FETCH_TIMEOUT_MS);
-  inFlight.set(repo.id, { kind: "auto", done });
+  inFlight.set(key, { kind: "auto", done });
   try {
     return await done;
   } finally {
-    inFlight.delete(repo.id);
+    inFlight.delete(key);
   }
 }
 
@@ -374,12 +431,13 @@ async function remoteRefs(repoPath: string): Promise<string> {
 }
 
 /**
- * Refs, FETCH_HEAD and objects only. No auto-maintenance: a click (or a timer) must not turn into a repack. Submodules
- * are left alone. The remote is the upstream's, else `origin`.
+ * Refs, FETCH_HEAD and objects only. No auto-maintenance and no hooks (`gitWrite`): a click (or a timer) must not turn
+ * into a repack or a repository's script. Submodules are left alone, and nothing is pruned whatever `fetch.prune`,
+ * `fetch.pruneTags` or `remote.<name>.prune` say. The remote is the upstream's, else `origin`.
  */
 function fetchRemote(repoPath: string, inspection: Inspection, fetchTimeoutMs: number): Promise<Run> {
   const remote = inspection.remote ?? "origin";
-  return git(repoPath, ["-c", "gc.auto=0", "-c", "maintenance.auto=false", "fetch", "--no-recurse-submodules", "--quiet", remote], fetchTimeoutMs);
+  return writeGit(repoPath, ["fetch", "--no-recurse-submodules", "--no-prune", "--no-prune-tags", "--quiet", remote], fetchTimeoutMs);
 }
 
 async function pull(repo: RepoConfig, fetchTimeoutMs: number): Promise<PullResult> {
@@ -401,7 +459,7 @@ async function pull(repo: RepoConfig, fetchTimeoutMs: number): Promise<PullResul
   if (now.ahead > 0) return { ...result, update: "refused", reason: `local and remote have diverged (${now.ahead} ahead, ${now.behind} behind)`, hint: DIVERGED_HINT };
 
   // Fast-forward or nothing. Hooks off: a plain merge would run the repository's post-merge hook.
-  const merged = await git(path, ["-c", "core.hooksPath=/dev/null", "merge", "--ff-only", "--quiet", now.upstream]);
+  const merged = await fastForward(path, now.upstream);
   if (!merged.ok) return { ...result, ...refusalFrom(await blockingReport(path, now.upstream), reasonFrom(merged.err)) };
   return { ...result, update: "fast-forwarded", commits: now.behind, hooksSkipped: (await hasPostMergeHook(path)) || undefined };
 }
@@ -457,11 +515,14 @@ async function blobBytes(repoPath: string, id: string): Promise<Uint8Array | und
   }
 }
 
-/** Puts every held leftover back — content, mode and staged state — and names the ones that could not be restored. */
-async function putBack(repoPath: string, held: Held[], stagedPaths: string[]): Promise<string[]> {
+/**
+ * Puts every held leftover back — content, mode and staged state — and names the ones that could not be restored.
+ * `top` is the repository's top level; the paths are relative to it.
+ */
+async function putBack(top: string, held: Held[], stagedPaths: string[]): Promise<string[]> {
   const failed: string[] = [];
   for (const { file, bytes, mode } of held) {
-    const absolute = join(repoPath, ...file.path.split("/"));
+    const absolute = join(top, ...file.path.split("/"));
     try {
       await mkdir(dirname(absolute), { recursive: true });
       await writeFile(absolute, bytes);
@@ -472,7 +533,7 @@ async function putBack(repoPath: string, held: Held[], stagedPaths: string[]): P
   }
   const restage = stagedPaths.filter((path) => !failed.includes(path));
   if (restage.length > 0) {
-    const added = await git(repoPath, ["add", "--", ...restage]);
+    const added = await writeGit(top, ["add", "--", ...restage.map(topLiteral)]);
     if (!added.ok) failed.push(...restage);
   }
   return failed;
@@ -480,7 +541,7 @@ async function putBack(repoPath: string, held: Held[], stagedPaths: string[]): P
 
 /** `repo` must come from the dashboard config; `claim` is only ever a claim, re-checked here before anything moves. */
 export function resolvePullRepository(repo: RepoConfig, claim: PullResolve, options: ResolveOptions = {}): Promise<PullResult> {
-  return exclusively(repo.id, () => resolvePull(repo, claim, options));
+  return exclusively(repo, () => resolvePull(repo, claim, options));
 }
 
 async function resolvePull(repo: RepoConfig, claim: PullResolve, options: ResolveOptions): Promise<PullResult> {
@@ -511,6 +572,8 @@ async function resolvePull(repo: RepoConfig, claim: PullResolve, options: Resolv
   }
 
   const leftovers = report.files;
+  // Every leftover path is relative to the top level, which in a project in a subfolder is not `path`.
+  const top = report.top;
   // A copy first: anything whose local content is not what the fast-forward will write is kept before it is removed.
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backups = join(pullBackupsDir(), backupDirName(repo.id), stamp);
@@ -520,7 +583,7 @@ async function resolvePull(repo: RepoConfig, claim: PullResolve, options: Resolv
     const target = join(backups, ...file.path.split("/"));
     try {
       await mkdir(dirname(target), { recursive: true });
-      await copyFile(join(path, ...file.path.split("/")), target);
+      await copyFile(join(top, ...file.path.split("/")), target);
       // A staged version that is neither the working tree's nor the incoming one is a third state worth keeping too.
       if (file.staged !== undefined && file.staged !== file.worktree && file.staged !== file.incoming) {
         const bytes = await blobBytes(path, file.staged);
@@ -536,7 +599,7 @@ async function resolvePull(repo: RepoConfig, claim: PullResolve, options: Resolv
   // Held before anything is removed: these exact bytes are what a failed fast-forward puts back.
   const held: Held[] = [];
   for (const file of leftovers) {
-    const absolute = join(path, ...file.path.split("/"));
+    const absolute = join(top, ...file.path.split("/"));
     try {
       held.push({ file, bytes: await readFile(absolute), mode: (await lstat(absolute)).mode & 0o777 });
     } catch (err) {
@@ -546,20 +609,20 @@ async function resolvePull(repo: RepoConfig, claim: PullResolve, options: Resolv
 
   // The working tree first, then the index: `git rm --cached` refuses an edited staged file while it is still on disk,
   // and forcing it is not on the table. Directories stay: the fast-forward refills them, and git ignores empty ones.
-  for (const { file } of held) await rm(join(path, ...file.path.split("/")), { force: true });
+  for (const { file } of held) await rm(join(top, ...file.path.split("/")), { force: true });
   const stagedPaths = leftovers.filter((file) => file.staged !== undefined).map((file) => file.path);
   if (stagedPaths.length > 0) {
-    const unstaged = await git(path, ["rm", "--cached", "--quiet", "--", ...stagedPaths]);
+    const unstaged = await writeGit(top, ["rm", "--cached", "--quiet", "--", ...stagedPaths.map(topLiteral)]);
     if (!unstaged.ok) {
-      const lost = await putBack(path, held, stagedPaths);
+      const lost = await putBack(top, held, stagedPaths);
       return again(`nothing was pulled: ${reasonFrom(unstaged.err)}${restoreNote(lost, backups, copies.size)}`);
     }
   }
 
   if (options.beforeRetry) await options.beforeRetry();
-  const merged = await git(path, ["-c", "core.hooksPath=/dev/null", "merge", "--ff-only", "--quiet", now.upstream]);
+  const merged = await fastForward(path, now.upstream);
   if (!merged.ok) {
-    const lost = await putBack(path, held, stagedPaths);
+    const lost = await putBack(top, held, stagedPaths);
     return refuse(reasonFrom(merged.err), { blocking: leftovers, hint: `Nothing was pulled.${restoreNote(lost, backups, copies.size)}` });
   }
   return {
