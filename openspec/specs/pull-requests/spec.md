@@ -280,6 +280,21 @@ The link SHALL be derived when it is displayed, from the snapshot and the cached
 - **WHEN** a change gains a linked open pull request that GitHub reports as conflicting
 - **THEN** the server offers and refuses every action other than Resolve conflicts exactly as without the link
 
+### Requirement: Another change's branch never links a pull request
+A change's `branchMatch` is one of its candidate branches ("A pull request is linked to a change by its head branch"), so the branch of a worktree that merely carries a copy of the change along — a worktree made for another change, cut from a commit that already held this one — MUST NOT become a candidate branch of this change: the scanner gives a change a linked worktree's branch only as "Branch and worktree matching" of the `change-scanner` capability allows. Showing another change's pull request is worse than showing none, because the link decides the card's recommended step and the branch **Resolve conflicts** starts on. A change left without a `branchMatch` this way SHALL still be linked through its recorded branches and the branches the dashboard's own sessions create for it, exactly as before.
+
+#### Scenario: A carried copy does not take the other change's pull request
+- **WHEN** change `rotate-keys` of `demo-ops` is `Done` on `origin/main` and `Implementing` in a main checkout that was not pulled, it records no branch, its merged pull request `#10` has head `feat/rotate-keys`, and a session for `add-login` made a worktree on `feat/add-login` from `origin/main` whose open pull request `#20` has head `feat/add-login`
+- **THEN** `#10` is shown as the pull request of `rotate-keys`, `#20` only as that of `add-login`
+
+#### Scenario: Another change's conflict is not offered
+- **WHEN** in that situation `#20` is open and GitHub reports it as conflicting
+- **THEN** the card of `rotate-keys` does not recommend **Resolve conflicts**, and no session for `rotate-keys` is started on `feat/add-login`
+
+#### Scenario: Work on another branch still links it
+- **WHEN** change `rotate-keys` leads from a worktree on `wip/keys` whose branch has commits changing `openspec/changes/rotate-keys/`, and a cached open pull request `#31` has head `wip/keys`
+- **THEN** `#31` is shown as the pull request of `rotate-keys`
+
 ### Requirement: A linked open pull request has a readiness
 The dashboard SHALL derive, for display only, the **readiness** of an `open` pull request (drafts included) from its cached fields: it is **ready** when it is not a draft, its checks summary is `passing` or `none`, and its mergeability is `mergeable`; otherwise it is **not ready** with exactly one reason, the first that applies in this order: `draft`, `conflicts` (mergeability `conflicting`), `checks failing`, `checks running` (checks `pending`), `mergeability unknown`. A merged or closed pull request SHALL have no readiness. The review decision SHALL NOT enter into readiness. A not-ready pull request is **in progress** when its reason is `checks running` or `mergeability unknown` — something on GitHub is still being computed — and **waiting** otherwise. The rule SHALL be one shared rule, so that the card, the detail header and the watch never disagree, and like the link it SHALL be derived on display and never stored, logged or used as an input to scanning, columns, counts, filters or actions — with one exception: a linked open pull request whose mergeability is `conflicting` is the **GitHub signal** that offers Resolve conflicts, as the `agent-sessions` capability specifies. It changes nothing else about the change, and in particular not its column, sub-state or starters.
 
