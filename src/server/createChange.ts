@@ -1,6 +1,7 @@
 import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+import { isNewChangeName, newChangeNameProblem } from "../shared/changeNames.ts";
 import { ISSUE_FILE, isIssueNumber, MAX_ISSUE_TITLE } from "../shared/issues.ts";
 import type { SourceIssue } from "../shared/types.ts";
 import type { SpecFramework } from "./frameworks/framework.ts";
@@ -50,11 +51,12 @@ export function validateDependsOn(name: string, dependsOn: unknown): { ok: true;
 /**
  * Stages the new change directory — and only it — so git tracks the change from the moment it exists. The path
  * goes after `--` and is the directory, not `.` or `-A`: whatever else the user has modified or left untracked stays
- * out of the index. Best-effort: `false` means the change is on disk but untracked.
+ * out of the index. Best-effort: `false` means the change is on disk but untracked. A name `isNewChangeName` refuses
+ * is never staged, so this can never stage the archive root.
  */
 export async function stageChangeDir(repoPath: string, name: string, timeoutMs = GIT_TIMEOUT_MS, framework: SpecFramework = openSpec): Promise<boolean> {
   const layout = writablePaths(framework);
-  if (!layout || !CHANGE_NAME.test(name)) return false;
+  if (!layout || !isNewChangeName(name)) return false;
   // The one writing git command creating a change runs: no hooks, no prompt, no stdin (`gitWrite`). A missing git, a
   // non-zero exit or a timeout all resolve to `false` — never a throw, because by now the change exists on disk.
   return (await gitWrite(repoPath, ["add", "--", `${layout.changesDir}/${name}/`], { timeoutMs })).ok;
@@ -100,13 +102,15 @@ async function isDirectory(path: string): Promise<boolean> {
  * anything is created). The issue's repository is the one the repository's own `origin` names, read with the
  * read-only `git config --get`; it is never taken from the request.
  *
+ * The name must pass `isNewChangeName` (`src/shared/changeNames.ts`); the refusal names the rule it breaks.
  * Writes only inside that new directory and never invokes the `openspec` CLI. A failed write after `mkdir` removes
  * the just-created directory so a half-empty change never remains. Once both writes have succeeded, and only then,
  * the directory is staged with one `git add` (see `stageChangeDir`); a refused create runs no git at all.
  */
 export async function createChange(repoPath: string, name: string, prompt?: string, dependsOn?: unknown, issue?: unknown, framework: SpecFramework = openSpec): Promise<CreateChangeResult> {
-  if (typeof name !== "string" || !CHANGE_NAME.test(name)) {
-    return { ok: false, reason: "invalid-name", message: "change name must match ^[A-Za-z0-9._-]+$" };
+  const problem = typeof name === "string" ? newChangeNameProblem(name) : "must be a string";
+  if (problem !== null) {
+    return { ok: false, reason: "invalid-name", message: `invalid change name: ${problem}` };
   }
   if (prompt !== undefined && prompt !== null && typeof prompt !== "string") {
     return { ok: false, reason: "invalid-prompt", message: "prompt must be a string" };

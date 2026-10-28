@@ -157,7 +157,7 @@ The dashboard SHALL be built with `bun build --compile` into one executable name
 - **THEN** the response is `400` with a message
 
 ### Requirement: Create-change endpoint
-`POST /api/repos/<id>/changes` SHALL create a new OpenSpec change in the repository identified by `<id>`. The request body SHALL be JSON `{ name, prompt?, dependsOn?, issue? }`, where `name` is a valid change name (`^[A-Za-z0-9._-]+$`), `prompt` is an optional string and `dependsOn` is an optional list of at most 32 distinct valid change names, none of them equal to `name`, and `issue` is an optional `{ number, title? }` naming the GitHub issue the change is imported from, with `number` a positive integer and `title` a string of at most 256 characters; with `issue` the server writes `issue.yaml` as the `change-creation` capability specifies, deriving the GitHub repository from the repository's `origin` remote. The names in `dependsOn` need not exist: a name that does not is reported as a `missing` dependency once the change is scanned. On success the response is `201` with `{ name, staged }`, where `staged` says whether the new directory was staged in the repository's index, and the repository is rescanned. On failure the response is `400` (invalid body, invalid name, a `dependsOn` that is not such a list, or an invalid `issue`), `404` (unknown repository) or `409` (repository disabled, last scan failed, no `openspec/` parent, an active or archived change already uses that name, or an `issue` was given for a repository whose `origin` is not on `github.com`) with a JSON message. The endpoint MUST NOT write anything to the repository unless the request succeeds; a failed request MUST leave the repository byte-for-byte unchanged, its index and refs included. A failure to stage a successfully created change MUST NOT fail the request. The endpoint is mutating and MUST pass the same-origin protection.
+`POST /api/repos/<id>/changes` SHALL create a new OpenSpec change in the repository identified by `<id>`. The request body SHALL be JSON `{ name, prompt?, dependsOn?, issue? }`, where `name` is a name the `change-creation` capability accepts for a new change ("Reserved and unusable change names are refused": `^[A-Za-z0-9._-]+$`, at most 128 characters, not starting with `.` or `-`, no `..`, not ending in `.` or `.lock`, and not `archive` in any letter case), `prompt` is an optional string and `dependsOn` is an optional list of at most 32 distinct valid change names, none of them equal to `name`, and `issue` is an optional `{ number, title? }` naming the GitHub issue the change is imported from, with `number` a positive integer and `title` a string of at most 256 characters; with `issue` the server writes `issue.yaml` as the `change-creation` capability specifies, deriving the GitHub repository from the repository's `origin` remote. The names in `dependsOn` need not exist: a name that does not is reported as a `missing` dependency once the change is scanned. On success the response is `201` with `{ name, staged }`, where `staged` says whether the new directory was staged in the repository's index, and the repository is rescanned. On failure the response is `400` (invalid body, invalid name, a `dependsOn` that is not such a list, or an invalid `issue`), `404` (unknown repository) or `409` (repository disabled, last scan failed, no `openspec/` parent, an active or archived change already uses that name, or an `issue` was given for a repository whose `origin` is not on `github.com`) with a JSON message. The endpoint MUST NOT write anything to the repository unless the request succeeds; a failed request MUST leave the repository byte-for-byte unchanged, its index and refs included. A failure to stage a successfully created change MUST NOT fail the request. The endpoint is mutating and MUST pass the same-origin protection.
 
 #### Scenario: Successful create
 - **WHEN** `POST /api/repos/<id>/changes` is called with `{ "name": "add-audit-trail" }` for an enabled, successfully scanned repository that has no `add-audit-trail` change
@@ -194,6 +194,10 @@ The dashboard SHALL be built with `bun build --compile` into one executable name
 #### Scenario: Invalid issue
 - **WHEN** the request body's `issue` has a `number` that is not a positive integer, or a `title` longer than 256 characters
 - **THEN** the response is `400` and nothing is written
+
+#### Scenario: Reserved name
+- **WHEN** the request body is `{ "name": "archive" }`
+- **THEN** the response is `400` with a message saying the name is reserved, and nothing is written
 
 ### Requirement: Issue endpoint
 `POST /api/repos/<id>/issues` SHALL run the issue query of the `issue-import` capability for the enabled repository `<id>` and return `{ status, github?, reason?, fetchedAt?, truncated?, issues: [...] }`, where `status` is `ok`, `unavailable` or `failed`, `github` is the repository's `owner/name` when its `origin` is on `github.com`, `reason` explains `unavailable` and `failed` with credentials masked, and `issues` holds the open issues as that capability specifies (empty unless `ok`). An unknown or disabled `<id>` SHALL be refused with `404` without starting a process. A repository that is not a git repository or not on GitHub SHALL be answered `unavailable` without starting a `gh` process. Concurrent requests for the same repository SHALL share one running query. The endpoint is a POST because it starts a process that contacts GitHub; it is a mutating request under the same-origin protection, even though it changes nothing. It SHALL NOT trigger a scan and MUST NOT write anything to disk. No GET endpoint SHALL start the issue query.
@@ -1507,3 +1511,29 @@ to every mutating API request. `GET /api/sessions` SHALL additionally return `ed
 #### Scenario: Editor routes are same-origin only
 - **WHEN** a page from another origin sends `POST /api/worktrees/editor`
 - **THEN** the response is `403` and no process is started
+
+### Requirement: Writing git commands run no hooks and ignore configuration that would widen them
+Every git command the dashboard runs that writes to a tracked repository, as enumerated in "The dashboard never writes
+to tracked repositories" — the pull action's and the automatic fetch's `fetch`, the fast-forward `merge`, the leftover
+`rm --cached` and restoring `add`, the create-change and dismissal `add`, `branch -D`, and `worktree add`, `remove`,
+`unlock`, `prune` and `repair` — SHALL run with `core.hooksPath` pointed at an empty folder under the dashboard home and
+with automatic maintenance off, so that no hook of the repository, of the user's global hooks folder or of a git
+template runs. Where a configuration setting of the system, the user or the repository would make such a command do
+more than its requirement allows, the command SHALL be given the command-line option that overrides it, as specified per
+command in the `repository-pull` capability. These are options and `-c` settings of the subcommands already enumerated;
+they MUST NOT add a subcommand. `git init` of a new project and the GitHub clone keep their own requirements.
+
+#### Scenario: A reference-transaction hook
+- **WHEN** a tracked repository has an executable `reference-transaction` hook that appends to a log file, and the user
+  pulls it, an automatic fetch runs, a session worktree is created and later removed, and a cleanup deletes a merged
+  branch
+- **THEN** the log file is empty and every one of those actions has its usual outcome
+
+#### Scenario: A global hooks folder
+- **WHEN** the user's global configuration sets `core.hooksPath` to a folder holding an executable `post-index-change`
+  hook, and the user creates a change and then dismisses another
+- **THEN** the hook never runs, and both directories are staged as before
+
+#### Scenario: No new subcommand
+- **WHEN** every git invocation of a pull, a Resolve and pull, a cleanup and a stale cleanup is recorded
+- **THEN** each writing invocation's subcommand is one of those already enumerated, preceded only by `-c` settings

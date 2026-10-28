@@ -22,6 +22,13 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
       "A card's task count is now exactly what the `openspec` CLI counts: a link bullet such as `- [x](notes.md)` is no longer a task, and `-[ ] task` without a space is. A change can no longer reach **Done** early on a ticked link.",
   },
   {
+    id: "2026-10-28-shorter-end-session-dialog",
+    date: "2026-10-28",
+    title: "A shorter dialog when you end a session",
+    summary:
+      "Ending or cleaning up a session now shows a headline, one line and short options — **Remove worktree**, **Clean up leftovers**, **Pull** — with the details on hover. Every option starts ticked, **Clean up leftovers** too when it also deletes files outside the change, which are named beside it and copied first.",
+  },
+  {
     id: "2026-10-28-apply-what-was-previewed",
     date: "2026-10-28",
     title: "Shared config applies exactly what you previewed",
