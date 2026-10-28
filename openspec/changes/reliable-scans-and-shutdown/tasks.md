@@ -22,4 +22,4 @@
 
 ## 4. Wrap-up
 
-- [ ] 4.1 Run `bun run check`, and run `bun run build` then stop `dist/spec-control` with `SIGTERM` while a session whose agent ignores `SIGHUP` runs, confirming no agent process remains
+- [x] 4.1 Run `bun run check`, and run `bun run build` then stop `dist/spec-control` with `SIGTERM` while a session whose agent ignores `SIGHUP` runs, confirming no agent process remains

@@ -74,7 +74,7 @@ test("enabling a repo persists and triggers a scan that populates state", async 
   expect(snap.repos[0].changes.length).toBeGreaterThan(8);
   expect((await (await send("/api/scan", "POST")).json()).started).toBe(true);
   while (state.scanner.scanning) await Bun.sleep(10);
-});
+}, 30_000); // the scan request during the first scan queues a follow-up: three full scans of the fixture
 
 test("changing only labels saves without a scan; an invalid label is refused and changes nothing", async () => {
   const [repo] = state.config.repos;
