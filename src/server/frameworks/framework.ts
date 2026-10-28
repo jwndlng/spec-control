@@ -20,6 +20,8 @@ export interface FrameworkLayout extends ChangesLayout {
 export interface FrameworkProject {
   /** The project's default schema or workflow, when the framework has such a notion. */
   schema?: string;
+  /** Why the project's own settings could not be read; shown on the repository. */
+  warnings?: string[];
 }
 
 /** One change as the board needs it. Problems are warnings, never a throw. */

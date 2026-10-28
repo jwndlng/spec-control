@@ -6,12 +6,13 @@
 // repository carries, and whether they are current, is therefore derived from the repository alone, and everything
 // outside the markers stays the project's own. Applying is the only operation here that writes to a tracked
 // repository; it touches nothing but those sections of that one file.
-import { createHash } from "node:crypto";
-import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { isMap, isScalar, isSeq, parseDocument, Scalar, YAMLSeq } from "yaml";
 import type { AppliedProfile, RepoConfig, RepoSharedConfig, SharedConfig, SharedConfigApplyResult, SharedConfigPreview, SharedProfile } from "../shared/types.ts";
 import { sharedConfigPath } from "./paths.ts";
+import { boundedReadWarning, linkedSegment, MAX_REPO_FILE_BYTES, readBounded } from "./source.ts";
 
 export const MARKER = "spec-control:shared";
 /** Written by versions before the rename. Still read as a managed section; never written. */
@@ -274,12 +275,50 @@ function configYaml(repo: RepoConfig): string {
   return join(repo.path, "openspec", "config.yaml");
 }
 
-async function readConfigYaml(repo: RepoConfig): Promise<string | undefined> {
+/**
+ * Why apply must not write this repository's config: `openspec/` must be a real directory and `openspec/config.yaml` a
+ * regular file, neither a symbolic link (shared-config spec), checked with `lstat`. Undefined when it may, or when the
+ * file is missing — reading it says so.
+ */
+async function linkRefusal(repo: RepoConfig): Promise<string | undefined> {
+  const linked = await linkedSegment(repo.path, "openspec");
+  if (linked?.reason === "missing") return undefined;
+  if (linked) return `openspec is ${linked.reason === "symbolic link" ? "a symbolic link" : "not a directory"}; only a real openspec/config.yaml is written`;
+  const info = await lstat(configYaml(repo)).catch(() => undefined);
+  if (info?.isSymbolicLink()) return "openspec/config.yaml is a symbolic link; only a regular file is written";
+  if (info && !info.isFile()) return "openspec/config.yaml is not a regular file";
+  return undefined;
+}
+
+/** The config's text through the scanner's bounded read, or why it cannot be read. */
+async function readConfigYaml(repo: RepoConfig): Promise<{ text?: string; refusal?: string }> {
+  const read = await readBounded(configYaml(repo), { within: repo.path, maxBytes: MAX_REPO_FILE_BYTES });
+  if (read.ok) return { text: read.text };
+  return { refusal: boundedReadWarning("openspec/config.yaml", read, MAX_REPO_FILE_BYTES) ?? "openspec/config.yaml does not exist or cannot be read" };
+}
+
+/**
+ * Renames a new file over `path` (`openspec/config.yaml`): written first to a temporary file beside it whose name is
+ * this write's own and that is created exclusively, so two applies never share one; removed whenever the rename did not
+ * happen. Nothing else is ever created or removed (dashboard-api "never writes", exception 1).
+ */
+async function replaceViaTemporary(path: string, content: string, mode: number, io: ApplyIo): Promise<void> {
+  const tmp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
+  let created = false;
   try {
-    return await readFile(configYaml(repo), "utf8");
-  } catch {
-    return undefined;
+    await writeFile(tmp, content, { encoding: "utf8", flag: "wx", mode });
+    created = true;
+    await chmod(tmp, mode);
+    await io.rename(tmp, path);
+  } catch (err) {
+    if (created) await unlink(tmp).catch(() => undefined);
+    throw err;
   }
+}
+
+/** File operations apply uses that a test may replace to make one fail. */
+export interface ApplyIo {
+  rename: (from: string, to: string) => Promise<void>;
 }
 
 /** Resolves ids to profiles in dashboard order; unknown ids are an error, not silently dropped. */
@@ -298,10 +337,11 @@ export const CHANGED_SINCE_PREVIEW = "the file or the profiles changed since the
 
 /** What apply would do to one repository. Reads only. `repo` must come from the dashboard config, never a request. */
 export async function previewFor(repo: RepoConfig, shared: SharedConfig, profileIds: string[]): Promise<SharedConfigPreview> {
-  const before = await readConfigYaml(repo);
+  const linked = await linkRefusal(repo);
+  const { text: before, refusal } = linked ? { text: undefined, refusal: linked } : await readConfigYaml(repo);
   const base = { repoId: repo.id, current: repoSharedConfig(before, shared), before: before ?? "" };
   const withDigest = (preview: Omit<SharedConfigPreview, "digest">): SharedConfigPreview => ({ ...preview, digest: previewDigest(preview.before, preview.after) });
-  if (before === undefined) return withDigest({ ...base, after: "", refusal: "openspec/config.yaml does not exist or cannot be read" });
+  if (before === undefined) return withDigest({ ...base, after: "", refusal });
   try {
     return withDigest({ ...base, after: applyShared(before, resolveProfiles(shared, profileIds)) });
   } catch (err) {
@@ -313,14 +353,17 @@ export async function previewFor(repo: RepoConfig, shared: SharedConfig, profile
  * Writes the managed sections into one repository's `openspec/config.yaml`. Re-reads the file and never trusts a
  * preview's text: it writes only what it computes now, and only when that matches the preview's `digest`.
  */
-export async function applyTo(repo: RepoConfig, shared: SharedConfig, profileIds: string[], digest: string | undefined): Promise<SharedConfigApplyResult> {
+export async function applyTo(repo: RepoConfig, shared: SharedConfig, profileIds: string[], digest: string | undefined, io: ApplyIo = { rename }): Promise<SharedConfigApplyResult> {
   const preview = await previewFor(repo, shared, profileIds);
   if (preview.refusal) return { repoId: repo.id, result: "refused", reason: preview.refusal };
   if (digest !== preview.digest) return { repoId: repo.id, result: "refused", reason: CHANGED_SINCE_PREVIEW };
   if (preview.after === preview.before) return { repoId: repo.id, result: "unchanged" };
+  // Checked again immediately before writing: a link may have replaced the file or `openspec/` since the read.
+  const linked = await linkRefusal(repo);
+  if (linked) return { repoId: repo.id, result: "refused", reason: linked };
   try {
-    const mode = (await stat(configYaml(repo))).mode & 0o777;
-    await writeAtomic(configYaml(repo), preview.after, mode);
+    const mode = (await lstat(configYaml(repo))).mode & 0o777;
+    await replaceViaTemporary(configYaml(repo), preview.after, mode, io);
     return { repoId: repo.id, result: "written" };
   } catch (err) {
     return { repoId: repo.id, result: "refused", reason: `could not write: ${err instanceof Error ? err.message : String(err)}` };

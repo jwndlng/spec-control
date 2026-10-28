@@ -10,11 +10,11 @@ import { writablePaths } from "./frameworks/registry.ts";
 import { githubRepoFromRemote } from "./gh.ts";
 import { originUrl } from "./git.ts";
 import { gitWrite } from "./gitWrite.ts";
-import { CHANGE_NAME, LocalRepoSource } from "./source.ts";
+import { CHANGE_NAME, LocalRepoSource, linkedSegment } from "./source.ts";
 
 export type CreateChangeResult =
   | { ok: true; name: string; dir: string; wrotePrompt: boolean; staged: boolean }
-  | { ok: false; reason: "invalid-name" | "invalid-prompt" | "invalid-dependencies" | "invalid-issue" | "not-writable" | "not-on-github" | "no-openspec-dir" | "duplicate-active" | "duplicate-archived"; message: string };
+  | { ok: false; reason: "invalid-name" | "invalid-prompt" | "invalid-dependencies" | "invalid-issue" | "not-writable" | "not-on-github" | "no-openspec-dir" | "linked-path" | "duplicate-active" | "duplicate-archived"; message: string };
 
 const ARCHIVE_PREFIX = /^(\d{4}-\d{2}-\d{2})-(.+)$/;
 const GIT_TIMEOUT_MS = 10_000;
@@ -136,6 +136,12 @@ export async function createChange(repoPath: string, name: string, prompt?: stri
     if (!github) return { ok: false, reason: "not-on-github", message: "the repository's origin is not on GitHub, so it has no issues to import from" };
     source = { github, ...imported.issue };
   }
+
+  // Immediately before the create: `openspec/` and `openspec/changes/` must be real directories, or the new change would
+  // land in a link's target, outside the repository (dashboard-api "never writes", exception 4).
+  const linked = await linkedSegment(repoPath, layout.changesDir);
+  if (linked?.reason === "symbolic link") return { ok: false, reason: "linked-path", message: `${linked.segment} is a symbolic link; changes are created only in a real ${layout.changesDir} directory` };
+  if (linked) return { ok: false, reason: "no-openspec-dir", message: `repository has no ${layout.changesDir} directory` };
 
   const dir = join(repoPath, layout.changesDir, name);
   try {

@@ -738,7 +738,7 @@ async function postCreateChange(state: AppState, req: Request, repoId: string): 
   if (!framework) return json({ error: "repository has not been successfully scanned" }, 409);
   const result = await createChange(repo.path, name, typeof prompt === "string" ? prompt : undefined, body.dependsOn, body.issue, framework);
   if (!result.ok) {
-    const status = result.reason === "invalid-name" || result.reason === "invalid-prompt" || result.reason === "invalid-dependencies" || result.reason === "invalid-issue" ? 400 : result.reason === "not-writable" || result.reason === "not-on-github" || result.reason === "no-openspec-dir" || result.reason === "duplicate-active" || result.reason === "duplicate-archived" ? 409 : 500;
+    const status = result.reason === "invalid-name" || result.reason === "invalid-prompt" || result.reason === "invalid-dependencies" || result.reason === "invalid-issue" ? 400 : result.reason === "not-writable" || result.reason === "not-on-github" || result.reason === "no-openspec-dir" || result.reason === "linked-path" || result.reason === "duplicate-active" || result.reason === "duplicate-archived" ? 409 : 500;
     return json({ error: result.message }, status);
   }
   state.scanner.trigger();

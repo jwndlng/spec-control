@@ -1,6 +1,6 @@
 // The framework module contract and registry (spec-frameworks spec; support-spec-frameworks design D1, D2, D5).
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { listArtifactFiles, readArtifactFile } from "../src/server/artifacts.ts";
 import { newRepoConfig } from "../src/server/config.ts";
@@ -211,4 +211,95 @@ test("scanning, listing artifacts and reading files through the modules leaves e
     }
   }
   expect(await Promise.all(fixtures.map(treeFingerprint))).toEqual(before);
+});
+
+// ---- Schema names and tracked tasks stay inside (contain-repository-reads design D5) ----
+
+/** A valid schema with one artifact; `tracks` sets `apply.tracks`. */
+const schemaYaml = (tracks?: string) =>
+  [
+    "name: checklist-flow",
+    "version: 1",
+    "artifacts:",
+    "  - id: brief",
+    "    generates: brief.md",
+    "    description: Brief",
+    "    template: brief.md",
+    "    requires: []",
+    ...(tracks ? ["apply:", "  requires: [brief]", `  tracks: ${tracks}`] : []),
+    "",
+  ].join("\n");
+
+async function schemaProject(): Promise<{ base: string; repo: string; changes: string }> {
+  const base = await tempDir("osd-schema-names-");
+  const repo = join(base, "demo-ops");
+  const changes = join(repo, "openspec", "changes");
+  await mkdir(changes, { recursive: true });
+  await writeFile(join(repo, "openspec", "config.yaml"), "schema: spec-driven\n");
+  return { base, repo, changes };
+}
+
+async function change(changes: string, name: string, schema: string, files: Record<string, string> = {}): Promise<void> {
+  await mkdir(join(changes, name), { recursive: true });
+  await writeFile(join(changes, name, ".openspec.yaml"), `schema: ${schema}\ncreated: 2026-09-01\n`);
+  for (const [file, text] of Object.entries(files)) await writeFile(join(changes, name, file), text);
+}
+
+test("a schema name that is not one plain segment is an unknown schema with a warning, and nothing outside openspec/schemas/ is opened", async () => {
+  const { base, repo, changes } = await schemaProject();
+  // Valid schemas exactly where `..` and `../../shared` would lead: were they opened, the changes would have artifacts.
+  await writeFile(join(repo, "openspec", "schema.yaml"), schemaYaml());
+  await mkdir(join(base, "shared"), { recursive: true });
+  await writeFile(join(base, "shared", "schema.yaml"), schemaYaml());
+  await change(changes, "climb-one", "..", { "brief.md": "# Brief\n" });
+  await change(changes, "climb-two", "../../shared", { "brief.md": "# Brief\n" });
+  try {
+    const snap = await scanRepo(newRepoConfig(repo, true));
+    for (const name of ["climb-one", "climb-two"]) {
+      const c = snap.changes.find((x) => x.name === name)!;
+      expect([name, c.artifacts, c.schema]).toEqual([name, [], "unknown"]);
+      expect(c.warnings?.some((w) => w.includes("is not a plain name"))).toBe(true);
+    }
+    // The same rule for a name from openspec/config.yaml.
+    await writeFile(join(repo, "openspec", "config.yaml"), "schema: ../..\n");
+    await mkdir(join(changes, "plain"), { recursive: true });
+    const plain = (await scanRepo(newRepoConfig(repo, true))).changes.find((x) => x.name === "plain")!;
+    expect(plain.artifacts).toEqual([]);
+    expect(plain.warnings?.some((w) => w.includes("is not a plain name"))).toBe(true);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("a project-local schema is read with the bounded read, and apply.tracks must stay in the change directory", async () => {
+  const { base, repo, changes } = await schemaProject();
+  const local = (name: string) => join(repo, "openspec", "schemas", name);
+  await mkdir(local("checklist-flow"), { recursive: true });
+  await writeFile(join(local("checklist-flow"), "schema.yaml"), schemaYaml("checklist.md"));
+  await mkdir(local("escaping"), { recursive: true });
+  await writeFile(join(local("escaping"), "schema.yaml"), schemaYaml("../../../outside.md").replace("checklist-flow", "escaping"));
+  await mkdir(local("endless"), { recursive: true });
+  await symlink("/dev/zero", join(local("endless"), "schema.yaml"));
+  await writeFile(join(repo, "openspec", "outside.md"), "- [x] 1.1 Not this change's\n");
+  await change(changes, "local-ok", "checklist-flow", { "brief.md": "# Brief\n", "checklist.md": "- [x] 1.1 One\n- [ ] 1.2 Two\n" });
+  await change(changes, "escapes", "escaping", { "brief.md": "# Brief\n" });
+  await change(changes, "linked-out", "checklist-flow", { "brief.md": "# Brief\n" });
+  await symlink(join(repo, "openspec", "outside.md"), join(changes, "linked-out", "checklist.md"));
+  await change(changes, "zero", "endless", { "brief.md": "# Brief\n" });
+  try {
+    const snap = await scanRepo(newRepoConfig(repo, true));
+    const get = (name: string) => snap.changes.find((x) => x.name === name)!;
+    expect(get("local-ok").artifacts.map((a) => a.id)).toEqual(["brief"]);
+    expect(get("local-ok").tasks).toMatchObject({ done: 1, total: 2 });
+    // The library's schema parser refuses a path that climbs out; either way there are no tasks and a warning.
+    expect(get("escapes").tasks).toBeNull();
+    expect(get("escapes").warnings?.some((w) => w.includes("apply.tracks"))).toBe(true);
+    // A tracked file that is a link out of the change is refused by the bounded read.
+    expect(get("linked-out").tasks).toBeNull();
+    expect(get("linked-out").warnings?.some((w) => w.includes("checklist.md resolves outside"))).toBe(true);
+    expect(get("zero").artifacts).toEqual([]);
+    expect(get("zero").warnings?.some((w) => w.includes("openspec/schemas/endless/schema.yaml"))).toBe(true);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
 });

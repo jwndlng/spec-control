@@ -1,7 +1,7 @@
 // Whether a change's delta specs are already reflected in the main specs. Nothing on disk records a sync, so it is
 // derived by checking each delta against `openspec/specs/<capability>/spec.md`. Read-only.
 import { join } from "node:path";
-import { CHANGE_NAME, type RepoSource } from "../../source.ts";
+import { boundedReadWarning, CHANGE_NAME, MAX_REPO_FILE_BYTES, type RepoSource } from "../../source.ts";
 import type { SpecSyncResult } from "../framework.ts";
 import { extractRequirementsSection, normalizeRequirementName, parseDeltaSpec } from "./adapter.ts";
 
@@ -45,11 +45,23 @@ export async function changeSpecsSynced(source: RepoSource, changeDir: string): 
   let synced = true;
   for (const capability of await source.listDirs(join(changeDir, "specs"))) {
     if (!CHANGE_NAME.test(capability)) continue;
-    const delta = await source.readText(join(changeDir, "specs", capability, "spec.md"));
-    if (delta === undefined) continue;
+    const limit = MAX_REPO_FILE_BYTES;
+    const delta = await source.readBounded(join(changeDir, "specs", capability, "spec.md"), { within: changeDir, maxBytes: limit });
+    const deltaWarning = boundedReadWarning(`specs/${capability}/spec.md`, delta, limit);
+    if (deltaWarning) {
+      synced = false;
+      warnings.push(deltaWarning);
+    }
+    if (!delta.ok) continue;
+    const main = await source.readBounded(join(source.path, "openspec", "specs", capability, "spec.md"), { within: source.path, maxBytes: limit });
+    const mainWarning = boundedReadWarning(`openspec/specs/${capability}/spec.md`, main, limit);
+    if (mainWarning) {
+      synced = false;
+      warnings.push(mainWarning);
+      continue;
+    }
     try {
-      const main = await source.readText(join(source.path, "openspec", "specs", capability, "spec.md"));
-      if (!isDeltaSynced(delta, main)) synced = false;
+      if (!isDeltaSynced(delta.text, main.ok ? main.text : undefined)) synced = false;
     } catch (err) {
       synced = false;
       warnings.push(`could not check spec sync for ${capability}: ${err instanceof Error ? err.message : String(err)}`);

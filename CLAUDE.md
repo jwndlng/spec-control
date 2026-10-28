@@ -51,7 +51,9 @@ bun test test/scanner.test.ts   # a single test file
    repository only in response to an explicit user action, only to the paths enumerated in the "never writes"
    requirement of `openspec/specs/dashboard-api/spec.md`, deletes nothing there beyond the worktrees, branches, change directories and confirmed change leftovers enumerated below, and runs a git
    command that writes only where enumerated below. Today that list has nine entries: the managed sections of `openspec/config.yaml` (applying shared config profiles,
-   `src/server/sharedConfig.ts`); for agent sessions, off by default, a session's git worktree, created with
+   `src/server/sharedConfig.ts`), only when neither `openspec/` nor `openspec/config.yaml` is a symbolic link, written by
+   renaming over it a temporary `openspec/.config.yaml.<random>.tmp` the apply created exclusively and removes whenever
+   that rename does not happen; for agent sessions, off by default, a session's git worktree, created with
    `git worktree add` (directory under `~/.spec-control/worktrees/`, never inside the repository's working tree)
    and removed with a non-forcing `git worktree remove` after the user confirmed and read-only checks proved nothing
    would be lost (`src/server/sessions/worktree.ts`) — or, with no dialog, when a pull-request query that already ran
@@ -76,8 +78,8 @@ bun test test/scanner.test.ts   # a single test file
    refs, `FETCH_HEAD` and objects only, never a fast-forward, merge, prune or anything in a working tree or index, never
    overlapping a pull or fetch of the same git repository, and never in the demo — the per-project setting, which the user can
    switch off, is what allows it; and the
-   **create-change action** — a new `openspec/changes/<name>/` directory
-   with the schema marker `.openspec.yaml`, when the user typed one, `prompt.md`, when the user picked any
+   **create-change action** — a new `openspec/changes/<name>/` directory, only when neither `openspec/` nor
+   `openspec/changes/` is a symbolic link, with the schema marker `.openspec.yaml`, when the user typed one, `prompt.md`, when the user picked any
    dependencies, `depends-on.yaml` (a `depends_on:` list of validated change names), and, for a change imported from a
    GitHub issue, `issue.yaml` (the `owner/name` read from the repository's own `origin`, never from the request, the
    issue number and its title — `src/shared/issues.ts`), written directly with an
@@ -102,7 +104,8 @@ bun test test/scanner.test.ts   # a single test file
    worktree the dashboard created) and `git branch -D` of its branch whatever its merge state, if it still points at
    that commit (`deleteBranch` in the same module); and **dismissing a change** — on the user's confirmation, deleting an active
    change's directory `openspec/changes/<name>/` from the main checkout (never under `archive/`, never a symbolic link
-   or its target, never anything in a linked worktree) after re-checking that its content is what the confirmation
+   or its target, never when `openspec/`, `openspec/changes/` or the change directory is one — checked segment by
+   segment with `lstat` at the preview and again immediately before the delete — never anything in a linked worktree) after re-checking that its content is what the confirmation
    showed and that no agent session for the change runs, then staging that removal with a single
    `git add --all -- openspec/changes/<name>/`, best-effort and never followed by a commit
    (`src/server/dismissChange.ts`, `POST /api/repos/<id>/changes/<name>/dismiss`, the only place that deletes a change

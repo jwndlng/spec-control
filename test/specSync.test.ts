@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { newRepoConfig } from "../src/server/config.ts";
 import { scanRepo } from "../src/server/scanner.ts";
 import { LocalRepoSource } from "../src/server/source.ts";
-import { isDeltaSynced } from "../src/server/frameworks/openspec/specSync.ts";
+import { changeSpecsSynced, isDeltaSynced } from "../src/server/frameworks/openspec/specSync.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
 
 const req = (name: string, body: string, scenario = "works") => `### Requirement: ${name}\n${body}\n\n#### Scenario: ${scenario}\n- **WHEN** something happens\n- **THEN** it ${scenario}\n`;
@@ -140,3 +140,25 @@ test("agrees with the real tool: deltas applied by `openspec archive` are report
   expect(isDeltaSynced(await readFile(kept, "utf8"), await readFile(mainSpec, "utf8"))).toBe(true);
   await rm(root, { recursive: true, force: true });
 }, 60_000);
+
+test("a delta or main spec that is a link out, a pipe or a device is not read: not synced, with a warning", async () => {
+  const root = await tempDir("osd-syncsafe-");
+  const repo = join(root, "demo-ops");
+  const changeDir = join(repo, "openspec", "changes", "rotate-keys");
+  await mkdir(join(changeDir, "specs", "auth"), { recursive: true });
+  await mkdir(join(changeDir, "specs", "billing"), { recursive: true });
+  await mkdir(join(repo, "openspec", "specs", "billing"), { recursive: true });
+  await mkdir(join(root, "elsewhere"), { recursive: true });
+  await writeFile(join(root, "elsewhere", "spec.md"), DELTA);
+  await symlink(join(root, "elsewhere", "spec.md"), join(changeDir, "specs", "auth", "spec.md"));
+  await writeFile(join(changeDir, "specs", "billing", "spec.md"), `## ADDED Requirements\n\n${TWO_FACTOR}`);
+  await symlink("/dev/zero", join(repo, "openspec", "specs", "billing", "spec.md"));
+  try {
+    const result = await changeSpecsSynced(new LocalRepoSource(repo), changeDir);
+    expect(result.synced).toBe(false);
+    expect(result.warnings.some((w) => w.startsWith("specs/auth/spec.md resolves outside"))).toBe(true);
+    expect(result.warnings.some((w) => w.startsWith("openspec/specs/billing/spec.md resolves outside"))).toBe(true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

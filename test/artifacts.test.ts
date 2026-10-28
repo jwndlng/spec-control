@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { changeDirFor, listArtifactFiles, MAX_ARTIFACT_BYTES, readArtifactFile } from "../src/server/artifacts.ts";
 import { readChangeArtifacts } from "../src/server/frameworks/openspec/adapter.ts";
@@ -65,7 +65,9 @@ test("the adapter reports which artifacts the schema's apply.requires names", as
       ].join("\n"),
     );
     await mkdir(join(project, "openspec", "changes", "add-widget"), { recursive: true });
-    const custom = readChangeArtifacts(project, "add-widget", { schemaName: "checklist-flow" });
+    // The module reads the local schema with the bounded read and hands the adapter its text.
+    const schemaYaml = await readFile(join(project, "openspec", "schemas", "checklist-flow", "schema.yaml"), "utf8");
+    const custom = readChangeArtifacts(project, "add-widget", { schemaName: "checklist-flow", schemaYaml });
     expect(custom.artifacts.map((a) => [a.id, a.required])).toEqual([["brief", true], ["checklist", true]]);
   } finally {
     await rm(project, { recursive: true, force: true });
@@ -126,4 +128,15 @@ test("readArtifactFile refuses everything that is not a regular file inside the 
   expect(await reason("huge.md")).toBe("too-large");
   const huge = await readArtifactFile(temp, changeDir, "huge.md");
   expect(JSON.stringify(huge)).not.toContain("xxxx");
+});
+
+test("readArtifactFile answers not-found for a named pipe instead of waiting for a writer", async () => {
+  const pipe = join(changeDir, "pipe.md");
+  expect(Bun.spawnSync(["mkfifo", pipe]).exitCode).toBe(0);
+  try {
+    const result = await readArtifactFile(temp, changeDir, "pipe.md");
+    expect(result.ok ? "ok" : result.reason).toBe("not-found");
+  } finally {
+    await rm(pipe, { force: true });
+  }
 });

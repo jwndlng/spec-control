@@ -1,7 +1,10 @@
 // `.openspec.yaml` and `openspec/config.yaml` are flat enough to read without a YAML parser.
 import type { ChangeRecord } from "../../../shared/types.ts";
 
-const SCHEMA_LINE = /^schema:\s*["']?([A-Za-z0-9._-]+)/m;
+// The whole value, so that `../x` is seen as such and refused rather than cut down to `..`.
+const SCHEMA_LINE = /^schema:\s*["']?([^\s"'#]+)/m;
+/** A schema name the module looks up: one plain path segment, never `.`, `..` or anything with a separator. */
+const SCHEMA_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 const CREATED_LINE = /^created:\s*["']?(\d{4}-\d{2}-\d{2})/m;
 const SKIP_SPECS_LINE = /^skip_specs:\s*true\b/m;
 
@@ -20,6 +23,11 @@ export interface Marker {
   recorded?: ChangeRecord;
   /** Values of the map that were dropped. */
   warnings: string[];
+}
+
+/** Whether `name` may name a directory under `openspec/schemas/` (contain-repository-reads design D5). */
+export function isPlainSchemaName(name: string): boolean {
+  return SCHEMA_NAME.test(name) && name !== "." && name !== "..";
 }
 
 export function parseMarker(text: string | undefined): Marker {

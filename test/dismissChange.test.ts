@@ -291,3 +291,39 @@ test("the user's global hooks folder never runs for the staging `git add --all`"
     else process.env.GIT_CONFIG_GLOBAL = saved;
   }
 });
+
+// --- No symbolic link on the way to the change directory (contain-repository-reads design D6). ---
+
+/** Moves `rel` (`openspec` or `openspec/changes`) of the repository out to a folder elsewhere and links it back. */
+async function linkOut(r: Repo, rel: string): Promise<string> {
+  const target = join(await tempDir("osd-shared-changes-"), "shared");
+  await rename(join(r.path, rel), target);
+  await symlink(target, join(r.path, rel));
+  return target;
+}
+
+for (const rel of ["openspec/changes", "openspec"]) {
+  test(`with ${rel} a symbolic link, preview and dismissal are refused and the link's target is unchanged`, async () => {
+    const r = await repoAt(await tempPlainRepo());
+    const target = await linkOut(r, rel);
+    const scanned = await r.scan();
+    expect(scanned.changes.some((c) => c.name === "cloud-deployment" && !c.archived)).toBe(true);
+    const before = await treeFingerprint(target);
+    const err = await refused(previewDismiss(r.repo, scanned, "cloud-deployment"));
+    expect([err.status, err.message.startsWith(`${rel} is a symbolic link`)]).toEqual([409, true]);
+    const again = await refused(dismissChange(r.repo, scanned, "cloud-deployment", "x"));
+    expect(again.status).toBe(409);
+    expect(await treeFingerprint(target)).toEqual(before);
+  });
+}
+
+test("a link that replaces openspec/changes after the preview makes the dismissal refuse and delete nothing", async () => {
+  const r = await repoAt(await tempPlainRepo());
+  const scanned = await r.scan();
+  const preview = await previewDismiss(r.repo, scanned, "cloud-deployment");
+  const target = await linkOut(r, "openspec/changes");
+  const before = await treeFingerprint(target);
+  const err = await refused(dismissChange(r.repo, scanned, "cloud-deployment", preview.fingerprint));
+  expect(err.status).toBe(409);
+  expect(await treeFingerprint(target)).toEqual(before);
+});

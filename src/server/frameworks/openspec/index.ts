@@ -4,10 +4,10 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { FRAMEWORK_INFO } from "../../../shared/types.ts";
-import { CHANGE_NAME, type ChangeDirEntry, type RepoSource } from "../../source.ts";
+import { boundedReadWarning, CHANGE_NAME, type ChangeDirEntry, MAX_REPO_FILE_BYTES, type RepoSource } from "../../source.ts";
 import { type ChangeMetadata, type ChangeScaffold, type FrameworkChange, type FrameworkChangeOutputs, type FrameworkLayout, type FrameworkProject, SpecFramework, type SpecSyncResult } from "../framework.ts";
 import { DEFAULT_SCHEMA, readChangeArtifacts } from "./adapter.ts";
-import { parseMarker } from "./marker.ts";
+import { isPlainSchemaName, parseMarker } from "./marker.ts";
 import { changeSpecsSynced } from "./specSync.ts";
 
 const ROOT = "openspec";
@@ -47,8 +47,10 @@ export class OpenSpecFramework extends SpecFramework {
 
   /** The schema from `openspec/config.yaml`; a linked worktree without its own falls back to the main checkout's. */
   override async readProject(source: RepoSource, inherited?: FrameworkProject): Promise<FrameworkProject> {
-    const schema = parseMarker(await source.readText(join(source.path, CONFIG_FILE))).schema ?? inherited?.schema;
-    return schema ? { schema } : {};
+    const read = await source.readBounded(join(source.path, CONFIG_FILE), { within: source.path, maxBytes: MAX_REPO_FILE_BYTES });
+    const warning = boundedReadWarning(CONFIG_FILE, read, MAX_REPO_FILE_BYTES);
+    const schema = parseMarker(read.ok ? read.text : undefined).schema ?? inherited?.schema;
+    return { ...(schema ? { schema } : {}), ...(warning ? { warnings: [warning] } : {}) };
   }
 
   async readChange(source: RepoSource, project: FrameworkProject, entry: ChangeDirEntry): Promise<FrameworkChange> {
@@ -57,26 +59,32 @@ export class OpenSpecFramework extends SpecFramework {
   }
 
   async readChangeOutputs(source: RepoSource, project: FrameworkProject, entry: ChangeDirEntry): Promise<FrameworkChangeOutputs> {
-    const marker = parseMarker(await source.readText(join(entry.dir, CHANGE_MARKER)));
+    const read = await source.readBounded(join(entry.dir, CHANGE_MARKER), { within: entry.dir, maxBytes: MAX_REPO_FILE_BYTES });
+    const readWarning = boundedReadWarning(CHANGE_MARKER, read, MAX_REPO_FILE_BYTES);
+    // A marker that could not be read leaves the change with the project's schema and no created date.
+    const marker = parseMarker(read.ok ? read.text : undefined);
     const created = marker.created;
     const recorded = marker.recorded ? { recorded: marker.recorded } : {};
+    const warnings = [...(readWarning ? [readWarning] : []), ...marker.warnings];
+    // An unknown schema, typically: there is no artifact list to offer.
+    const unknown = (schema: string, warning: string): FrameworkChangeOutputs => ({ schema, artifacts: [], created, ...recorded, outputs: {}, warnings: [...warnings, warning] });
+
+    const schemaName = marker.schema ?? project.schema ?? DEFAULT_SCHEMA;
+    if (!isPlainSchemaName(schemaName)) return unknown("unknown", `schema name ${JSON.stringify(schemaName)} is not a plain name and is ignored`);
+    const localFile = `${ROOT}/schemas/${schemaName}/schema.yaml`;
+    const local = await source.readBounded(join(source.path, localFile), { within: source.path, maxBytes: MAX_REPO_FILE_BYTES });
+    const localWarning = boundedReadWarning(localFile, local, MAX_REPO_FILE_BYTES);
+    if (localWarning) return unknown(schemaName, localWarning);
     try {
       const info = readChangeArtifacts(source.path, entry.name, {
         changeDir: entry.dir,
-        schemaName: marker.schema ?? project.schema,
+        schemaName,
         skipSpecs: marker.skipSpecs,
+        ...(local.ok ? { schemaYaml: local.text } : {}),
       });
-      return { schema: info.schema, artifacts: info.artifacts, tasksPath: info.tasksPath, created, ...recorded, outputs: info.outputs, warnings: [...marker.warnings] };
+      return { schema: info.schema, artifacts: info.artifacts, tasksPath: info.tasksPath, created, ...recorded, outputs: info.outputs, warnings };
     } catch (err) {
-      // An unknown schema, typically: there is no artifact list to offer.
-      return {
-        schema: marker.schema ?? project.schema ?? "unknown",
-        artifacts: [],
-        created,
-        ...recorded,
-        outputs: {},
-        warnings: [...marker.warnings, `could not read artifacts: ${err instanceof Error ? err.message : String(err)}`],
-      };
+      return unknown(schemaName, `could not read artifacts: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

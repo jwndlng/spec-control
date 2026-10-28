@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { resolveDependencies } from "../shared/dependencies.ts";
 import { deriveStage, isPlanned } from "../shared/columns.ts";
@@ -15,7 +15,7 @@ import { type ChangeCopy, foldLeftovers, mergeChanges } from "./mergeChanges.ts"
 import { worktreesDir } from "./paths.ts";
 import { loadSharedConfig, repoSharedConfig } from "./sharedConfig.ts";
 import type { SessionHint } from "./staleChanges.ts";
-import { CHANGE_NAME, LocalRepoSource, type ChangeDirEntry, type DirtyFile, type RepoSource } from "./source.ts";
+import { type BoundedRead, boundedReadWarning, CHANGE_NAME, LocalRepoSource, MAX_REPO_FILE_BYTES, type ChangeDirEntry, type DirtyFile, type RepoSource } from "./source.ts";
 
 export const DEFAULT_CONCURRENCY = 4;
 export const DEFAULT_REPO_TIMEOUT_MS = 30_000;
@@ -160,56 +160,52 @@ interface RepoContext {
   project: FrameworkProject;
 }
 
+/**
+ * One of the dashboard's own files of a change (`prompt.md`, `depends-on.yaml`, `issue.yaml`): read only when the entry
+ * in the change directory is itself a regular file, never through a link (change-scanner spec).
+ */
+function readOwnFile(ctx: RepoContext, entry: ChangeDirEntry, file: string, maxBytes: number, truncate = false): Promise<BoundedRead> {
+  return ctx.source.readBounded(join(entry.dir, file), { within: entry.dir, maxBytes, truncate, inPlace: true });
+}
+
 async function scanChange(ctx: RepoContext, entry: ChangeDirEntry, withGit: boolean): Promise<ChangeSnapshot> {
   const { schema, artifacts, tasksPath, created, recorded, warnings } = await ctx.framework.readChange(ctx.source, ctx.project, entry);
 
-  const tasksMd = tasksPath ? await ctx.source.readText(tasksPath) : undefined;
-  const tasks = tasksMd === undefined ? null : ctx.framework.parseTasks(tasksMd);
+  // A tasks file that is not there means no tasks yet; one that cannot be read is said so.
+  const tasksRead = tasksPath ? await ctx.source.readBounded(tasksPath, { within: entry.dir, maxBytes: MAX_REPO_FILE_BYTES }) : undefined;
+  const tasksWarning = tasksPath && tasksRead ? boundedReadWarning(relative(entry.dir, tasksPath).split(sep).join("/"), tasksRead, MAX_REPO_FILE_BYTES) : undefined;
+  if (tasksWarning) warnings.push(tasksWarning);
+  const tasks = tasksRead?.ok ? ctx.framework.parseTasks(tasksRead.text) : null;
 
   // `prompt.md` is a free-text hint, not an artifact: read it when it exists, do not fail the change on a bad read.
-  const promptPath = join(entry.dir, "prompt.md");
   let prompt: string | undefined;
-  const promptInfo = await ctx.source.readFileInfo(promptPath);
-  if (promptInfo?.isFile) {
-    const text = await ctx.source.readText(promptPath);
-    if (text === undefined) {
-      warnings.push("could not read prompt.md");
-    } else if (text.length > PROMPT_LIMIT_BYTES) {
-      prompt = text.slice(0, PROMPT_LIMIT_BYTES);
-      warnings.push(`prompt.md is larger than ${PROMPT_LIMIT_BYTES} bytes and was truncated`);
-    } else {
-      prompt = text;
-    }
+  const promptRead = await readOwnFile(ctx, entry, "prompt.md", PROMPT_LIMIT_BYTES, true);
+  if (promptRead.ok) {
+    prompt = promptRead.text;
+    if (promptRead.truncated) warnings.push(`prompt.md is larger than ${PROMPT_LIMIT_BYTES} bytes and was truncated`);
+  } else if (promptRead.reason !== "missing") {
+    warnings.push(promptRead.reason === "not-a-file" ? "prompt.md is not a regular file in the change directory and is ignored" : "could not read prompt.md");
   }
   // `depends-on.yaml` is the dashboard's own convention, not an artifact; archived changes never wait for anything.
   let dependsOn: ChangeSnapshot["dependsOn"];
   let dependsOnUnreadable = false;
-  const dependsOnPath = join(entry.dir, DEPENDS_ON_FILE);
-  const dependsOnInfo = entry.archived ? undefined : await ctx.source.readFileInfo(dependsOnPath);
-  if (dependsOnInfo?.isFile) {
-    const text = await ctx.source.readText(dependsOnPath);
-    if (text === undefined || text.length > DEPENDS_ON_LIMIT_BYTES) {
-      dependsOnUnreadable = true;
-      warnings.push(`could not read ${DEPENDS_ON_FILE}; Implement is held back until it can be read`);
-    } else {
-      const parsed = parseDependsOn(text);
-      dependsOnUnreadable = parsed.unreadable;
-      warnings.push(...parsed.warnings);
-      // Provisional: the states are resolved against the whole repository once every copy is merged.
-      if (parsed.names.length) dependsOn = parsed.names.map((name) => ({ name, state: "waiting" }));
-    }
+  const dependsOnRead = entry.archived ? undefined : await readOwnFile(ctx, entry, DEPENDS_ON_FILE, DEPENDS_ON_LIMIT_BYTES);
+  if (dependsOnRead && !dependsOnRead.ok && dependsOnRead.reason !== "missing") {
+    dependsOnUnreadable = true;
+    warnings.push(`could not read ${DEPENDS_ON_FILE}; Implement is held back until it can be read`);
+  } else if (dependsOnRead?.ok) {
+    const parsed = parseDependsOn(dependsOnRead.text);
+    dependsOnUnreadable = parsed.unreadable;
+    warnings.push(...parsed.warnings);
+    // Provisional: the states are resolved against the whole repository once every copy is merged.
+    if (parsed.names.length) dependsOn = parsed.names.map((name) => ({ name, state: "waiting" }));
   }
   // `issue.yaml` records the GitHub issue the change was imported from: display only, read for archived changes too so
   // an issue stays marked as imported. Anything malformed simply leaves the change without a source issue.
   let sourceIssue: ChangeSnapshot["sourceIssue"];
-  const issuePath = join(entry.dir, ISSUE_FILE);
-  const issueInfo = await ctx.source.readFileInfo(issuePath);
-  if (issueInfo) {
-    // Only a regular file in the change directory itself: a symbolic link resolves elsewhere and is ignored.
-    const dirReal = (await ctx.source.readFileInfo(entry.dir))?.realPath;
-    const inPlace = issueInfo.isFile && dirReal !== undefined && issueInfo.realPath === join(dirReal, ISSUE_FILE);
-    const text = inPlace && issueInfo.size <= ISSUE_LIMIT_BYTES ? await ctx.source.readText(issuePath) : undefined;
-    sourceIssue = text === undefined ? undefined : parseIssueFile(text);
+  const issueRead = await readOwnFile(ctx, entry, ISSUE_FILE, ISSUE_LIMIT_BYTES);
+  if (issueRead.ok || issueRead.reason !== "missing") {
+    sourceIssue = issueRead.ok ? parseIssueFile(issueRead.text) : undefined;
     if (!sourceIssue) warnings.push(`${ISSUE_FILE} could not be read as a GitHub issue reference and is ignored`);
   }
   if (tasks && tasks.total === 0 && isPlanned(artifacts)) {
@@ -286,8 +282,9 @@ export async function scanRepo(
   const project = await framework.readProject(source);
   // Shared config profiles are merged into a framework's own config file; a framework without one is not offered them.
   const sharedConfigFile = framework.sharedConfigFile;
-  const sharedConfig =
-    sharedConfigFile && shared && shared.profiles.length > 0 ? repoSharedConfig(await source.readText(join(repo.path, sharedConfigFile)), shared) : undefined;
+  const configRead =
+    sharedConfigFile && shared && shared.profiles.length > 0 ? await source.readBounded(join(repo.path, sharedConfigFile), { within: repo.path, maxBytes: MAX_REPO_FILE_BYTES }) : undefined;
+  const sharedConfig = configRead && shared ? repoSharedConfig(configRead.ok ? configRead.text : undefined, shared) : undefined;
   const frameworkDir = join(repo.path, framework.layout.root);
   const dirty = isGit ? await source.dirtyFiles(framework.layout.root).catch(() => []) : [];
   const lastUpdatedAt = isGit
@@ -297,7 +294,7 @@ export async function scanRepo(
   const detectedLabels = await scanLabels(source, repo.path, framework.layout.skipDirs);
 
   const listing = await framework.listChanges(source);
-  const warnings = [...listing.warnings];
+  const warnings = [...(project.warnings ?? []), ...listing.warnings];
   const mainCheckout = { path: repo.path, branch, isMain: true };
   const mainCopies: ChangeCopy[] = [];
   for (const entry of listing.active) mainCopies.push({ change: await scanChange(ctx, entry, true), checkout: mainCheckout });

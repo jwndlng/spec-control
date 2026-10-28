@@ -11,7 +11,6 @@
 import {
   ArtifactGraph,
   detectCompleted,
-  loadSchema,
   parseSchema,
   resolveArtifactOutputs,
   type SchemaYaml,
@@ -23,7 +22,6 @@ export { extractRequirementsSection, normalizeRequirementName, parseDeltaSpec } 
 // it only defines functions; the scanner never calls it.
 export { countTasksFromContent } from "../../../../node_modules/@fission-ai/openspec/dist/utils/task-progress.js";
 import specDrivenYaml from "../../../../node_modules/@fission-ai/openspec/schemas/spec-driven/schema.yaml" with { type: "text" };
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ArtifactStatus } from "../../../shared/types.ts";
 
@@ -32,14 +30,16 @@ export const DEFAULT_SCHEMA = "spec-driven";
 const BUNDLED_SCHEMAS: Record<string, string> = { "spec-driven": specDrivenYaml as unknown as string };
 const schemaCache = new Map<string, SchemaYaml>();
 
-/** Project-local `openspec/schemas/<name>/schema.yaml` first (as the CLI does), then the bundled copy. */
-function loadSchemaFor(name: string, projectRoot: string): SchemaYaml {
-  const local = join(projectRoot, "openspec", "schemas", name, "schema.yaml");
-  if (existsSync(local)) return loadSchema(local);
+/**
+ * The project-local schema's text first (as the CLI does), then the bundled copy. The caller reads the local file with
+ * the bounded read; the library's `loadSchema` would read it with a plain `readFileSync`.
+ */
+function loadSchemaFor(name: string, localYaml: string | undefined): SchemaYaml {
+  if (localYaml !== undefined) return parseSchema(localYaml);
   const cached = schemaCache.get(name);
   if (cached) return cached;
   const yaml = BUNDLED_SCHEMAS[name];
-  if (!yaml) throw new Error(`unknown schema '${name}': not bundled with the dashboard and no ${local}`);
+  if (!yaml) throw new Error(`unknown schema '${name}': not bundled with the dashboard and no openspec/schemas/${name}/schema.yaml`);
   const parsed = parseSchema(yaml);
   schemaCache.set(name, parsed);
   return parsed;
@@ -62,12 +62,14 @@ export interface ReadChangeOptions {
   schemaName?: string;
   /** `.openspec.yaml` `skip_specs: true` — spec artifacts count as complete. */
   skipSpecs?: boolean;
+  /** The text of the project's `openspec/schemas/<schemaName>/schema.yaml`, when it has one. */
+  schemaYaml?: string;
 }
 
 export function readChangeArtifacts(projectRoot: string, changeName: string, options: ReadChangeOptions = {}): ChangeArtifactInfo {
   const changeDir = options.changeDir ?? join(projectRoot, "openspec", "changes", changeName);
   const schemaName = options.schemaName || DEFAULT_SCHEMA;
-  const schema = loadSchemaFor(schemaName, projectRoot);
+  const schema = loadSchemaFor(schemaName, options.schemaYaml);
   const graph = ArtifactGraph.fromSchema(schema);
 
   const completed = detectCompleted(graph, changeDir);
