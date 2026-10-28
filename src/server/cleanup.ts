@@ -547,7 +547,8 @@ export interface StaleScope {
 
 /** The change's leftovers, read afresh. `ending` is the real path of a worktree whose session is being ended. */
 async function readStale(repo: RepoConfig, scope: StaleScope, name: string, ending?: string): Promise<{ stale?: StaleLeftovers; ctx: Context }> {
-  const layout = writablePaths(frameworkById(scope.scanned.framework));
+  const framework = frameworkById(scope.scanned.framework);
+  const layout = writablePaths(framework);
   if (!layout?.archiveDir) throw new StaleCleanupError(409, "the dashboard does not clean up these changes");
   const ctx = await context(repo, scope.runningPaths);
   const active = scope.scanned.changes.filter((c) => !c.archived && c.name === name).map((c) => [c.name, { name: c.name, created: c.created }] as const);
@@ -556,6 +557,7 @@ async function readStale(repo: RepoConfig, scope: StaleScope, name: string, endi
   const found = await staleLeftovers({
     repoPath: repo.path,
     layout,
+    metadata: framework?.changeMetadata,
     defaultBranch: ctx.defaultName,
     worktrees: ctx.listed,
     active: new Map(active),

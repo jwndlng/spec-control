@@ -1,18 +1,19 @@
 // Stale changes (openspec/specs/stale-changes): stranded archives and archived-and-merged leftovers, both found by the
 // scan from a change's exact branches. Real temp git repositories, no network.
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { applyStaleCleanup, previewStaleCleanup, type StaleScope } from "../src/server/cleanup.ts";
 import { newRepoConfig } from "../src/server/config.ts";
+import { openSpec } from "../src/server/frameworks/openspec/index.ts";
 import { OPENSPEC_PATHS } from "../src/server/frameworks/registry.ts";
 import { worktreesDir } from "../src/server/paths.ts";
 import { scanRepo } from "../src/server/scanner.ts";
 import { LocalRepoSource } from "../src/server/source.ts";
 import type { RepoConfig, RepoSnapshot } from "../src/shared/types.ts";
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
-import { archiveDate, changeBranches, findDuplicates, findStrandedArchives, parseRecordedBranches, type SessionHint, staleLeftovers } from "../src/server/staleChanges.ts";
+import { archiveDate, changeBranches, findDuplicates, findStrandedArchives, type SessionHint, staleLeftovers } from "../src/server/staleChanges.ts";
 import { parseWorktrees } from "../src/server/git.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
 import { hookLog, installRepoHooks } from "./hookHelpers.ts";
@@ -136,13 +137,6 @@ test("a change's branches are named exactly: recorded, the session branches and 
   expect(changeBranches("auth", undefined, [])).not.toContain("docs/auth-v2");
 });
 
-test("the recorded branches are read from the spec-control block of .openspec.yaml only", () => {
-  const text = "schema: spec-driven\ncreated: 2026-06-10\nspec-control:\n  branch: fix/rotate-keys # the agent's\n  archive-branch: 'chore/archive-rotate-keys'\n  pr: 12\nother:\n  branch: nope\n";
-  expect(parseRecordedBranches(text)).toEqual({ branch: "fix/rotate-keys", archiveBranch: "chore/archive-rotate-keys" });
-  expect(parseRecordedBranches("schema: spec-driven\n")).toBeUndefined();
-  expect(parseRecordedBranches("spec-control:\n  branch: ../etc\n")).toBeUndefined();
-});
-
 test("a branch that only contains the name strands nothing", async () => {
   const repo = await tempGitRepo();
   git(repo, "checkout", "-q", "-b", "feat/structured-logs-v2");
@@ -182,11 +176,15 @@ async function archivedSetup(): Promise<{ repo: string; repoId: string; wt: stri
   return { repo, repoId: config.id, wt: await realpath(wt) };
 }
 
-async function leftovers(repo: string, opts: { sessions?: SessionHint[]; active?: Map<string, { name: string; created?: string }>; onMain?: Map<string, string>; ending?: string } = {}) {
+async function leftovers(
+  repo: string,
+  opts: { sessions?: SessionHint[]; active?: Map<string, { name: string; created?: string }>; onMain?: Map<string, string>; ending?: string; metadata?: typeof openSpec.changeMetadata | null } = {},
+) {
   const worktrees = parseWorktrees(`${git(repo, "worktree", "list", "--porcelain")}\n`);
   const found = await staleLeftovers({
     repoPath: repo,
     layout: OPENSPEC_PATHS,
+    metadata: opts.metadata === null ? undefined : openSpec.changeMetadata,
     defaultBranch: "main",
     worktrees,
     active: opts.active ?? new Map(),
@@ -282,7 +280,7 @@ test("the created change directory left in the main checkout is a stale leftover
   await writeFile(join(repo, OPENSPEC_PATHS.changesDir, name, ".openspec.yaml"), "schema: spec-driven\ncreated: 2026-10-01\n");
   await writeFile(join(repo, OPENSPEC_PATHS.changesDir, name, "prompt.md"), "rotate the keys\n");
   git(repo, "add", "--", `${OPENSPEC_PATHS.changesDir}/${name}/.openspec.yaml`);
-  const found = await staleLeftovers({ repoPath: repo, layout: OPENSPEC_PATHS, defaultBranch: "main", worktrees: [], active: new Map(), archivedOnMain: new Map(), sessions: [] });
+  const found = await staleLeftovers({ repoPath: repo, layout: OPENSPEC_PATHS, metadata: openSpec.changeMetadata, defaultBranch: "main", worktrees: [], active: new Map(), archivedOnMain: new Map(), sessions: [] });
   const stale = found.get(name);
   expect(stale?.pulled).toBe(false); // no archive date of the main checkout was given
   expect(stale?.leftovers).toEqual([
@@ -296,7 +294,7 @@ test("the created change directory left in the main checkout is a stale leftover
     },
   ]);
   // A session running in place in the main checkout keeps it.
-  const kept = await staleLeftovers({ repoPath: repo, layout: OPENSPEC_PATHS, defaultBranch: "main", worktrees: [], active: new Map(), archivedOnMain: new Map(), sessions: [{ worktreePath: repo, running: true }] });
+  const kept = await staleLeftovers({ repoPath: repo, layout: OPENSPEC_PATHS, metadata: openSpec.changeMetadata, defaultBranch: "main", worktrees: [], active: new Map(), archivedOnMain: new Map(), sessions: [{ worktreePath: repo, running: true }] });
   expect(kept.get(name)?.leftovers).toEqual([]);
   expect(kept.get(name)?.kept[0]).toMatchObject({ kind: "main", reason: "an agent session is running in the main checkout" });
 });
@@ -360,6 +358,55 @@ test("a branch recorded in the archive's metadata on the default branch is one o
   expect(stale?.leftovers).toEqual([{ kind: "branch", name: "fix/logs-by-agent", commit: git(repo, "rev-parse", "fix/logs-by-agent") }]);
 });
 
+/** The git subcommands run while `run` runs, from git's own trace (`GIT_TRACE`). */
+async function gitTrace(run: () => Promise<unknown>): Promise<string> {
+  const file = join(await realpath(await tempDir("osd-trace-")), "trace.log");
+  const before = process.env.GIT_TRACE;
+  process.env.GIT_TRACE = file;
+  try {
+    await run();
+  } finally {
+    if (before === undefined) delete process.env.GIT_TRACE;
+    else process.env.GIT_TRACE = before;
+  }
+  return readFile(file, "utf8").catch(() => "");
+}
+
+/** An archive on the default branch whose metadata records `fix/logs-by-agent` as written, and that branch, merged. */
+async function recordedArchiveRepo(marker: string): Promise<string> {
+  const repo = await tempGitRepo();
+  await withOrigin(repo);
+  git(repo, "branch", "fix/logs-by-agent");
+  await rename(changeDir(repo), archiveDir(repo));
+  await writeFile(join(archiveDir(repo), ".openspec.yaml"), marker);
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", "archive");
+  git(repo, "push", "-q", "origin", "main");
+  return repo;
+}
+
+test("a recorded branch the checkout parser ignores (tab-indented) is not one of the change's branches on the default branch either", async () => {
+  const repo = await recordedArchiveRepo("schema: spec-driven\ncreated: 2026-06-10\nspec-control:\n\tbranch: fix/logs-by-agent\n");
+  expect((await leftovers(repo))?.leftovers ?? []).toEqual([]);
+});
+
+test("without the module's change metadata no metadata file is read and no branch is recorded", async () => {
+  const repo = await recordedArchiveRepo("schema: spec-driven\ncreated: 2026-06-10\nspec-control:\n  branch: fix/logs-by-agent\n");
+  let stale: Awaited<ReturnType<typeof leftovers>>;
+  const trace = await gitTrace(async () => {
+    stale = await leftovers(repo, { metadata: null });
+  });
+  expect(trace).toContain("for-each-ref");
+  expect(trace).not.toContain("cat-file");
+  expect(stale?.leftovers ?? []).toEqual([]);
+  // The same repository with the reader finds the recorded branch, through one `cat-file`.
+  const read = await gitTrace(async () => {
+    stale = await leftovers(repo);
+  });
+  expect(read).toContain("cat-file");
+  expect(stale?.leftovers).toEqual([{ kind: "branch", name: "fix/logs-by-agent", commit: git(repo, "rev-parse", "fix/logs-by-agent") }]);
+});
+
 test("the scan marks the archived change stale and leaves its column alone; nothing on disk changes", async () => {
   const { repo, wt } = await archivedSetup();
   await rm(join(changeDir(wt), "proposal.md"));
@@ -393,7 +440,7 @@ async function duplicateRepo(): Promise<string> {
   return repo;
 }
 
-const duplicates = (repo: string, onMain = new Map([[CHANGE, "2026-07-01"]])) => findDuplicates(repo, OPENSPEC_PATHS, onMain);
+const duplicates = (repo: string, onMain = new Map([[CHANGE, "2026-07-01"]])) => findDuplicates(repo, OPENSPEC_PATHS, openSpec.changeMetadata, onMain);
 
 test("a change committed next to its archive on the default branch is a duplicate", async () => {
   const repo = await duplicateRepo();
@@ -447,9 +494,24 @@ test("the main checkout's state and an existing archive branch are reported", as
   expect((await duplicates(repo)).get(CHANGE)?.archiveBranch).toBe(`chore/archive-${CHANGE}`);
 });
 
+test("without the module's change metadata a duplicate's created date is unreadable and no metadata file is read", async () => {
+  const repo = await duplicateRepo();
+  await writeFile(join(changeDir(repo), ".openspec.yaml"), "schema: spec-driven\ncreated: 2026-08-01\n");
+  git(repo, "commit", "-q", "-am", "a new change of the same name");
+  git(repo, "push", "-q", "origin", "main");
+  expect((await duplicates(repo)).size).toBe(0);
+  let found: Awaited<ReturnType<typeof findDuplicates>> | undefined;
+  const trace = await gitTrace(async () => {
+    found = await findDuplicates(repo, OPENSPEC_PATHS, undefined, new Map([[CHANGE, "2026-07-01"]]));
+  });
+  expect(trace).toContain("ls-tree");
+  expect(trace).not.toContain("cat-file");
+  expect([...(found?.keys() ?? [])]).toEqual([CHANGE]);
+});
+
 test("a failing git command reports nothing and fails nothing", async () => {
   const plain = await tempDir("osd-plain-");
-  expect((await findDuplicates(plain, OPENSPEC_PATHS, new Map())).size).toBe(0);
+  expect((await findDuplicates(plain, OPENSPEC_PATHS, openSpec.changeMetadata, new Map())).size).toBe(0);
 });
 
 test("the scan marks the archived card as a duplicate and keeps its column, stage and counts", async () => {
@@ -551,4 +613,16 @@ test("hooks do not run during a stale cleanup", async () => {
   ]);
   expect(existsSync(wt)).toBe(false);
   expect(await hookLog(log)).toEqual([]);
+});
+
+test("stale detection and label detection name no framework file or directory (static check)", () => {
+  const read = (file: string) => readFileSync(join(import.meta.dir, "..", "src", "server", file), "utf8");
+  const scanner = read("scanner.ts");
+  const labels = scanner.slice(scanner.indexOf("const LABEL_SKIP_DIRS"), scanner.indexOf("const worktreeLabel"));
+  expect(labels).toContain("export async function scanLabels(");
+  for (const [file, src] of [["staleChanges.ts", read("staleChanges.ts")], ["scanLabels", labels]]) {
+    for (const forbidden of [".openspec.yaml", '"openspec"', "'openspec'", "`openspec`"]) {
+      expect([file, forbidden, src.includes(forbidden)]).toEqual([file, forbidden, false]);
+    }
+  }
 });

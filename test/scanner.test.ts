@@ -3,6 +3,7 @@ import { appendFile, mkdir, realpath, rm, symlink, writeFile } from "node:fs/pro
 import { join } from "node:path";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import type { ParsedStatus } from "../src/server/git.ts";
+import { openSpec } from "../src/server/frameworks/openspec/index.ts";
 import { MAX_INSPECTED_WORKTREES, PROMPT_LIMIT_BYTES, Scanner, scanLabels, scanRepo } from "../src/server/scanner.ts";
 import { LocalRepoSource } from "../src/server/source.ts";
 import type { Worktree } from "../src/shared/types.ts";
@@ -487,10 +488,19 @@ test("labels: detection only lists directories and follows the repository", asyn
   const listed: string[] = [];
   const source = new LocalRepoSource(repo);
   const onlyListing = { listEntries: (dir: string) => (listed.push(dir), source.listEntries(dir)) };
-  expect((await scanLabels(onlyListing, repo)).map((d) => d.label)).toEqual(["ruby"]);
+  expect((await scanLabels(onlyListing, repo, openSpec.layout.skipDirs)).map((d) => d.label)).toEqual(["ruby"]);
   expect(listed).toEqual([repo]); // `openspec/` is skipped
   await writeFile(join(repo, "Dockerfile"), "");
   expect((await scanRepo(newRepoConfig(repo, true))).detectedLabels?.map((d) => d.label)).toEqual(["docker", "ruby"]);
+});
+
+test("labels: the framework's own tree is skipped, by the directories the module names", async () => {
+  const repo = await labelledRepo(["openspec/package.json"], true);
+  expect((await scanRepo(newRepoConfig(repo, true))).detectedLabels).toEqual([]);
+  const source = new LocalRepoSource(repo);
+  expect(await scanLabels(source, repo, openSpec.layout.skipDirs)).toEqual([]);
+  // The skip comes from the module, not from a name of its own: without it the tree is read like any folder.
+  expect((await scanLabels(source, repo, [])).map((d) => d.label)).toEqual(["javascript"]);
 });
 
 test("labels: a failed scan has none", async () => {

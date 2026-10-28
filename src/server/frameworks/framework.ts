@@ -48,6 +48,17 @@ export interface SpecSyncResult {
   warnings: string[];
 }
 
+/**
+ * A change's metadata file and how to read it, for stale-change detection, which reads it from a git ref rather than a
+ * checkout (spec-frameworks: "Framework file names and formats stay in the framework module").
+ */
+export interface ChangeMetadata {
+  /** Path of the file relative to a change directory. */
+  file: string;
+  /** The created date and recorded branches in its text, by the rules the module reads a checkout with. */
+  parse(text: string): { created?: string; recorded?: ChangeRecord };
+}
+
 /** Files a new change starts with: path relative to the change directory → content, written in this order. */
 export type ChangeScaffold = Record<string, string>;
 
@@ -111,6 +122,9 @@ export abstract class SpecFramework {
    * framework has nowhere to record it; then nothing is asked and the link keeps guessing from branch names.
    */
   recordInstruction?(input: { change: string; archive: boolean }): string;
+
+  /** The change metadata stale-change detection reads on a git ref; undefined when the framework records none. */
+  readonly changeMetadata?: ChangeMetadata;
 
   /** The files a new change starts with. The writer decides whether and how to write them. */
   abstract scaffold(input: { project: FrameworkProject; today: string }): ChangeScaffold;

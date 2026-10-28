@@ -30,6 +30,7 @@ import {
   type Worktree,
 } from "../shared/types.ts";
 import { isBranchName } from "./branchName.ts";
+import type { ChangeMetadata } from "./frameworks/framework.ts";
 import type { ChangesLayout } from "./source.ts";
 import { baseRef, contentIsInBase } from "./sessions/base.ts";
 
@@ -95,33 +96,6 @@ export function changeBranches(change: string, recorded: RecordedBranches | unde
 }
 
 /**
- * The `spec-control:` block of a change's `.openspec.yaml`: `branch` and `archive-branch`, each one plain or quoted
- * value. Anything else in the file, and a value that is not a branch name, is ignored.
- */
-export function parseRecordedBranches(text: string): RecordedBranches | undefined {
-  const out: RecordedBranches = {};
-  let inside = false;
-  for (const line of text.split(/\r?\n/)) {
-    if (/^spec-control:\s*(#.*)?$/.test(line)) {
-      inside = true;
-      continue;
-    }
-    if (!inside) continue;
-    if (!/^\s+\S/.test(line)) {
-      if (line.trim() === "") continue;
-      break;
-    }
-    const m = /^\s+(branch|archive-branch):\s*(?:"([^"]*)"|'([^']*)'|([^\s#]+))\s*(#.*)?$/.exec(line);
-    if (!m) continue;
-    const value = m[2] ?? m[3] ?? m[4];
-    if (!isBranchName(value)) continue;
-    if (m[1] === "branch") out.branch = value;
-    else out.archiveBranch = value;
-  }
-  return out.branch || out.archiveBranch ? out : undefined;
-}
-
-/**
  * The text of each `path` on `ref` that exists there, read in one `cat-file --batch` (read-only). Paths are given as
  * `./…` so that git resolves them from the project's folder, as the layout's are. Undefined when git fails.
  */
@@ -147,13 +121,17 @@ async function textsOnRef(cwd: string, ref: string, paths: readonly string[]): P
   return found;
 }
 
-/** The recorded branches of each archive directory on `ref`, read in one `cat-file --batch` (read-only). */
-async function recordedOnRef(cwd: string, ref: string, archiveDir: string, dirs: readonly string[]): Promise<Map<string, RecordedBranches>> {
+/**
+ * The recorded branches of each archive directory on `ref`, read in one `cat-file --batch` (read-only) and parsed by the
+ * framework module. None, and no git, when the module records no change metadata.
+ */
+async function recordedOnRef(cwd: string, ref: string, archiveDir: string, dirs: readonly string[], metadata: ChangeMetadata | undefined): Promise<Map<string, RecordedBranches>> {
   const found = new Map<string, RecordedBranches>();
-  const texts = await textsOnRef(cwd, ref, dirs.map((d) => `${archiveDir}/${d}/.openspec.yaml`));
+  if (!metadata) return found;
+  const texts = await textsOnRef(cwd, ref, dirs.map((d) => `${archiveDir}/${d}/${metadata.file}`));
   for (const dir of dirs) {
-    const text = texts?.get(`${archiveDir}/${dir}/.openspec.yaml`);
-    const recorded = text === undefined ? undefined : parseRecordedBranches(text);
+    const text = texts?.get(`${archiveDir}/${dir}/${metadata.file}`);
+    const recorded = text === undefined ? undefined : metadata.parse(text).recorded;
     if (recorded) found.set(dir, recorded);
   }
   return found;
@@ -274,11 +252,6 @@ export async function findStrandedArchives(
 // is where the missing deletion has to land.
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** The `created:` date of a change's `.openspec.yaml`, when it has one. */
-function createdDate(text: string): string | undefined {
-  return /^created:\s*["']?(\d{4}-\d{2}-\d{2})/m.exec(text)?.[1];
-}
-
 /** Directory names directly below `dir` on `ref`; undefined when git fails. */
 async function treesOnRef(cwd: string, ref: string, dir: string): Promise<string[] | undefined> {
   const out = await git(cwd, ["ls-tree", "-z", ref, "--", `${dir}/`]);
@@ -294,10 +267,16 @@ async function treesOnRef(cwd: string, ref: string, dir: string): Promise<string
 /**
  * The changes the default branch holds both as `<changesDir>/<name>/` and as an archive not older than the change, by
  * change name. `archivedOnMain` is the newest archive date per name in the main checkout, to tell whether Pull still
- * brings it. Read-only git (`ls-tree`, `cat-file`, `diff`, `for-each-ref`, `worktree list`), no remote; a git failure for
+ * brings it; `metadata` is the framework module's reader of a change's created date. Read-only git (`ls-tree`, `cat-file`, `diff`, `for-each-ref`, `worktree list`), no remote; a git failure for
  * one change leaves it out.
  */
-export async function findDuplicates(repoPath: string, layout: ChangesLayout, archivedOnMain: ReadonlyMap<string, string>, worktrees: readonly Worktree[] = []): Promise<Map<string, DuplicateAfterArchive>> {
+export async function findDuplicates(
+  repoPath: string,
+  layout: ChangesLayout,
+  metadata: ChangeMetadata | undefined,
+  archivedOnMain: ReadonlyMap<string, string>,
+  worktrees: readonly Worktree[] = [],
+): Promise<Map<string, DuplicateAfterArchive>> {
   const found = new Map<string, DuplicateAfterArchive>();
   const archiveDir = layout.archiveDir;
   if (!archiveDir) return found;
@@ -312,7 +291,8 @@ export async function findDuplicates(repoPath: string, layout: ChangesLayout, ar
     .filter((p): p is { name: string; archive: { dir: string; date: string } } => p.archive !== undefined);
   if (pairs.length === 0) return found;
 
-  const markers = await textsOnRef(repoPath, base, pairs.map((p) => `${layout.changesDir}/${p.name}/.openspec.yaml`));
+  // Without change metadata every created date is unreadable, as for a change whose metadata file is missing.
+  const markers = metadata ? await textsOnRef(repoPath, base, pairs.map((p) => `${layout.changesDir}/${p.name}/${metadata.file}`)) : new Map<string, string>();
   if (markers === undefined) return found;
   const refsOut = await git(repoPath, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]);
   const local = new Set((refsOut ?? "").split("\n").filter(Boolean));
@@ -320,8 +300,8 @@ export async function findDuplicates(repoPath: string, layout: ChangesLayout, ar
 
   await Promise.all(
     pairs.map(async ({ name, archive }) => {
-      const marker = markers.get(`${layout.changesDir}/${name}/.openspec.yaml`);
-      const created = marker === undefined ? undefined : createdDate(marker);
+      const marker = metadata ? markers.get(`${layout.changesDir}/${name}/${metadata.file}`) : undefined;
+      const created = marker === undefined ? undefined : metadata?.parse(marker).created;
       // Created after that archive: a new change reusing the name.
       if (created && created > archive.date) return;
       const diff = await git(repoPath, ["diff", "--no-ext-diff", "--no-renames", "--name-only", "-z", `${base}:./${archiveDir}/${archive.dir}`, `${base}:./${layout.changesDir}/${name}`]);
@@ -351,6 +331,8 @@ export async function findDuplicates(repoPath: string, layout: ChangesLayout, ar
 export interface StaleInput {
   repoPath: string;
   layout: ChangesLayout;
+  /** The framework module's reader of an archive's recorded branches; undefined when it records none. */
+  metadata: ChangeMetadata | undefined;
   /** The default branch's local name; never a leftover. */
   defaultBranch?: string;
   /** `git worktree list`, main checkout included. */
@@ -409,7 +391,7 @@ async function filesBelow(dir: string, rel = ""): Promise<string[]> {
 }
 
 /**
- * The main checkout's `openspec/changes/<name>/` when none of its files is in `HEAD`: its files with their content
+ * The main checkout's copy of a change directory when none of its files is in `HEAD`: its files with their content
  * hashes (`hash-object` without `-w`) and whether the index has them. Undefined when there is no such directory or any
  * of it is committed.
  */
@@ -470,7 +452,7 @@ export async function staleLeftovers(input: StaleInput): Promise<Map<string, Sta
     if (name !== input.defaultBranch && name !== mainBranch) localBranches.set(name, commit);
   }
   const candidateBranches = localBranches.size > 0 || linked.length > 0;
-  const recorded = candidateBranches ? await recordedOnRef(repoPath, base, archiveDir, [...archives.values()].map((a) => a.dir)) : new Map<string, RecordedBranches>();
+  const recorded = candidateBranches ? await recordedOnRef(repoPath, base, archiveDir, [...archives.values()].map((a) => a.dir), input.metadata) : new Map<string, RecordedBranches>();
 
   const running = new Set(await Promise.all(input.sessions.filter((s) => s.running).map((s) => real(s.worktreePath))));
   if (input.ending) running.delete(input.ending);

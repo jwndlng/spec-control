@@ -69,6 +69,23 @@ beforeAll(async () => {
 });
 afterAll(() => rm(dir, { recursive: true, force: true }));
 
+test("the recorded branches come from the spec-control block only", () => {
+  const text = "schema: spec-driven\ncreated: 2026-06-10\nspec-control:\n  branch: fix/rotate-keys # the agent's\n  archive-branch: 'chore/archive-rotate-keys'\n  pr: 12\nother:\n  branch: nope\n";
+  expect(parseMarker(text).recorded).toEqual({ branch: "fix/rotate-keys", archiveBranch: "chore/archive-rotate-keys" });
+  expect(parseMarker("schema: spec-driven\n").recorded).toBeUndefined();
+  expect(parseMarker("spec-control:\n  branch: ../etc\n").recorded).toBeUndefined();
+});
+
+test("the module's change metadata reads a git ref's text as the checkout parser does", () => {
+  const metadata = openSpec.changeMetadata;
+  expect(metadata.file).toBe(".openspec.yaml");
+  expect(metadata.parse(`${BASE}spec-control:\n  branch: fix/rotate-keys\n`)).toEqual({ created: "2026-10-24", recorded: { branch: "fix/rotate-keys" } });
+  // A tab-indented entry, which stale detection used to read as a branch, records nothing — as in a checkout.
+  expect(metadata.parse(`${BASE}spec-control:\n\tbranch: fix/rotate-keys\n`)).toEqual({ created: "2026-10-24" });
+  expect(parseMarker(`${BASE}spec-control:\n\tbranch: fix/rotate-keys\n`).recorded).toBeUndefined();
+  expect(metadata.parse("schema: spec-driven\n")).toEqual({});
+});
+
 test("the bundled OpenSpec library accepts a marker with the map and reads the same schema", async () => {
   const plain = join(dir, "plain");
   const recorded = join(dir, "recorded");

@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-28-tasks-counted-like-openspec",
+    date: "2026-10-28",
+    title: "Task counts match `openspec status`",
+    summary:
+      "A card's task count is now exactly what the `openspec` CLI counts: a link bullet such as `- [x](notes.md)` is no longer a task, and `-[ ] task` without a space is. A change can no longer reach **Done** early on a ticked link.",
+  },
+  {
     id: "2026-10-28-apply-what-was-previewed",
     date: "2026-10-28",
     title: "Shared config applies exactly what you previewed",
