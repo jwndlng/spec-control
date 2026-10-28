@@ -57,7 +57,7 @@ test("the prompt holds the title, the issue reference with its link, and the bod
   expect(issuePrompt(issue(7, "  ", [], ""), "acme/alpha-infra")).toBe("## Issue #7\n\nImported from acme/alpha-infra#7 — https://github.com/acme/alpha-infra/issues/7");
 });
 
-function fakeApi(refuse: Record<string, ApiError> = {}) {
+function fakeApi(refuse: Record<string, ApiError> = {}, scanStarts = true) {
   const calls: { name: string; prompt?: string; issue?: ChangeIssueRef }[] = [];
   let scans = 0;
   let inFlight = 0;
@@ -74,7 +74,7 @@ function fakeApi(refuse: Record<string, ApiError> = {}) {
     },
     scan: async () => {
       scans++;
-      return { started: true };
+      return { started: scanStarts };
     },
   } satisfies Api);
   return { calls, scans: () => scans };
@@ -109,6 +109,15 @@ test("a refused import is that issue's result and does not stop the others", asy
   expect(fake.calls).toHaveLength(2);
   expect(results[0]).toEqual({ number: 12, name: "export-timeout", ok: false, message: 'a change named "export-timeout" already exists' });
   expect(results[1].ok).toBe(true);
+});
+
+test("one scan after the imports, also when a scan was already running", async () => {
+  const fake = fakeApi({}, false);
+  await importIssues("a", "acme/alpha-infra", [
+    { issue: issue(12, "Export timeout"), name: "export-timeout" },
+    { issue: issue(15, "Docs"), name: "docs" },
+  ]);
+  expect(fake.scans()).toBe(1);
 });
 
 test("nothing created, no scan asked for", async () => {

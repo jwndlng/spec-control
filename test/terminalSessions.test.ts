@@ -8,6 +8,7 @@ import { SessionError, SessionManager } from "../src/server/sessions/manager.ts"
 import { SessionStore } from "../src/server/sessions/store.ts";
 import { availableActions, type ChangeSnapshot, type Config, type SessionAction, type Snapshot } from "../src/shared/types.ts";
 import { checkWorktreeRemovable, copyChangeIfMissing, ensureWorktree, removeWorktree } from "../src/server/sessions/worktree.ts";
+import { spawnTerminal } from "../src/server/sessions/terminal.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
 import { FAKE_AGENT, git, harness, tempGitRepo, waitFor, watch } from "./sessionHelpers.ts";
 
@@ -277,6 +278,54 @@ test("a crash is recorded; shutdown ends agents; a restarted dashboard knows not
   await next.init();
   expect(next.get(stale.id)).toMatchObject({ state: "exited", error: expect.stringContaining("restarted") });
   await expect(next.remove(stale.id)).resolves.toBeUndefined();
+});
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test("an agent that ignores the hang-up survives kill() and is ended by forceKill()", async () => {
+  let seen = "";
+  const decoder = new TextDecoder();
+  const proc = spawnTerminal({ argv: [FAKE_AGENT, "--ignore-hangup"], cwd: process.cwd(), env: { ...process.env } as Record<string, string>, onData: (chunk) => (seen += decoder.decode(chunk)) });
+  await waitFor(() => seen.includes("ignoring hang-up"), "agent banner");
+  proc.kill();
+  await waitFor(() => seen.includes("hang-up ignored"), "hang-up ignored");
+  expect(alive(proc.pid)).toBe(true);
+  proc.forceKill();
+  await proc.exited;
+  expect(alive(proc.pid)).toBe(false);
+});
+
+test("shutdown forces an agent that ignores the hang-up: it is gone when shutdown returns, and its session is recorded as stopped", async () => {
+  const h = track(await harness({ agent: { command: [FAKE_AGENT, "--ignore-hangup", "{prompt}"] } }));
+  const s = await h.manager.open({ repoId: h.repoId, change: "cache-api-calls", action: "implement" });
+  const view = await watch(h.manager, s.id);
+  await waitFor(() => /ignoring hang-up pid=\d+/.test(view.text()), "agent banner");
+  const pid = Number(/ignoring hang-up pid=(\d+)/.exec(view.text())?.[1]);
+  const started = Date.now();
+  await h.manager.shutdown();
+  expect(Date.now() - started).toBeGreaterThanOrEqual(1900);
+  expect(alive(pid)).toBe(false);
+  expect(h.manager.get(s.id)).toMatchObject({ state: "exited", error: expect.stringContaining("the dashboard was stopped") });
+  const stored = (await new SessionStore().loadAll()).find((x) => x.id === s.id);
+  expect(stored).toMatchObject({ state: "exited", error: expect.stringContaining("the dashboard was stopped") });
+});
+
+test("shutdown does not wait out the grace period when every agent exits on the hang-up", async () => {
+  const h = track(await harness());
+  const s = await h.manager.open({ repoId: h.repoId, change: "cache-api-calls", action: "implement" });
+  const view = await watch(h.manager, s.id);
+  await waitFor(() => view.text().includes("fake-agent ready"), "agent banner");
+  const started = Date.now();
+  await h.manager.shutdown();
+  expect(Date.now() - started).toBeLessThan(1800);
+  expect(h.manager.get(s.id)).toMatchObject({ state: "exited", error: expect.stringContaining("stopped") });
 });
 
 test("a change that lives only in a worktree on another branch is copied into the session's worktree from there", async () => {

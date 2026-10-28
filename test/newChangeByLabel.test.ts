@@ -58,14 +58,10 @@ test("a refusal is that repository's result and does not stop the others", async
   expect(results[0].ok && results[2].ok).toBe(true);
 });
 
-test("the final scan is retried until one starts after the last create", async () => {
+test("one scan is asked for after the last create, also when it answers not started: the server queues the follow-up", async () => {
   const calls = fakeApi({}, 2);
-  const waits: number[] = [];
-  await createInRepos(repos.slice(0, 1), "bump", undefined, undefined, async (ms) => {
-    waits.push(ms);
-  });
-  expect(calls).toEqual(["create a bump -", "scan", "scan", "scan"]);
-  expect(waits.length).toBe(2);
+  await createInRepos(repos.slice(0, 2), "bump", undefined);
+  expect(calls).toEqual(["create a bump -", "create d bump -", "scan"]);
 });
 
 test("no scan is asked for when every repository refused", async () => {

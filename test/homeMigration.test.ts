@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { chmod, lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { MIGRATION_RECORD, migrateHome, startHomeMigration } from "../src/server/homeMigration.ts";
+import { describeOutcome, MIGRATION_RECORD, migrateHome, NOT_YET_ATTEMPTED, type PendingStep, startHomeMigration } from "../src/server/homeMigration.ts";
 import { dashboardHome, useFallbackHome } from "../src/server/paths.ts";
 import { gitIn, tempDir, treeFingerprint, useTempHome } from "./helpers.ts";
 import { hookLog, installRepoHooks } from "./hookHelpers.ts";
@@ -267,4 +267,111 @@ test("hooks do not run for the repair of a moved session worktree", async () => 
   expect(outcome).toMatchObject({ kind: "migrated", pending: [] });
   expect(await git(w.repo, "worktree", "list", "--porcelain")).toContain(`worktree ${w.sessionWorktree.replace(w.oldHome, w.newHome)}\n`);
   expect(await hookLog(log)).toEqual([]);
+});
+
+// --- An interrupted migration (design D5): the record is written right after the rename and after every step. ---
+
+/** Stops the migration at its `n`th record write, as a signal or a crash would: 0 is right after the rename. */
+const stopAt = (n: number) => {
+  let writes = 0;
+  return {
+    onRecorded: (_pending: readonly PendingStep[]) => {
+      if (writes++ === n) throw new Error("stopped");
+    },
+  };
+};
+
+/** The finished state the first test checks: link, rewritten session record, repaired worktree record, no snapshot. */
+async function expectFinished(w: Awaited<ReturnType<typeof world>>): Promise<void> {
+  const moved = w.sessionWorktree.replace(w.oldHome, w.newHome);
+  expect(await readlink(w.oldHome)).toBe(w.newHome);
+  expect(JSON.parse(await readFile(join(w.newHome, "sessions", SESSION_A, "meta.json"), "utf8")).worktreePath).toBe(moved);
+  expect(JSON.parse(await readFile(join(w.newHome, "config.json"), "utf8")).agentSessions.consoleFolder).toBe(w.consoleFolder.replace(w.oldHome, w.newHome));
+  expect(await exists(join(w.newHome, "cache", "snapshot.json"))).toBe(false);
+  const listed = await git(w.repo, "worktree", "list", "--porcelain");
+  expect(listed).toContain(`worktree ${moved}\n`);
+  expect(listed).not.toContain(w.sessionWorktree);
+  expect(JSON.parse(await readFile(join(w.newHome, MIGRATION_RECORD), "utf8")).pending).toEqual([]);
+}
+
+test("stopped right after the rename: the record lists every step as not attempted, and the next start finishes the move", async () => {
+  const w = await world();
+  await expect(migrateHome(w.oldHome, w.newHome, stopAt(0))).rejects.toThrow("stopped");
+  expect(await exists(w.oldHome)).toBe(false);
+  const record = JSON.parse(await readFile(join(w.newHome, MIGRATION_RECORD), "utf8"));
+  const moved = w.sessionWorktree.replace(w.oldHome, w.newHome);
+  expect(record.pending.slice(0, 2)).toEqual([
+    { kind: "link", error: NOT_YET_ATTEMPTED },
+    { kind: "rewrite", file: join(w.newHome, "config.json"), error: NOT_YET_ATTEMPTED },
+  ]);
+  expect(record.pending).toHaveLength(7);
+  expect(record.pending).toEqual(
+    expect.arrayContaining([
+      ...[SESSION_A, SESSION_B].map((id) => ({ kind: "rewrite", file: join(w.newHome, "sessions", id, "meta.json"), error: NOT_YET_ATTEMPTED })),
+      { kind: "cache", error: NOT_YET_ATTEMPTED },
+      ...[moved, join(w.newHome, "worktrees", "3d84480c2b4d", "stray")].map((worktree) => ({ kind: "repair", worktree, error: NOT_YET_ATTEMPTED })),
+    ]),
+  );
+
+  const outcome = await migrateHome(w.oldHome, w.newHome);
+  expect(outcome).toEqual({ kind: "retried", pending: [], resumed: { from: w.oldHome, to: w.newHome } });
+  await expectFinished(w);
+  expect(await migrateHome(w.oldHome, w.newHome)).toEqual({ kind: "nothing" });
+});
+
+test("stopped after the link: the next start does the rest and leaves the link as it was", async () => {
+  const w = await world();
+  await expect(migrateHome(w.oldHome, w.newHome, stopAt(1))).rejects.toThrow("stopped");
+  expect(await readlink(w.oldHome)).toBe(w.newHome);
+  const pending = JSON.parse(await readFile(join(w.newHome, MIGRATION_RECORD), "utf8")).pending as PendingStep[];
+  expect(pending.map((p) => p.kind)).not.toContain("link");
+  expect(pending.every((p) => p.error === NOT_YET_ATTEMPTED)).toBe(true);
+  const link = await lstat(w.oldHome);
+
+  expect((await migrateHome(w.oldHome, w.newHome)).kind).toBe("retried");
+  await expectFinished(w);
+  expect((await lstat(w.oldHome)).mtimeMs).toBe(link.mtimeMs);
+});
+
+test("every step listed as pending over a home where some already ran: the finished ones stay byte for byte, none is left", async () => {
+  const w = await world();
+  await expect(migrateHome(w.oldHome, w.newHome, stopAt(3))).rejects.toThrow("stopped"); // link, config.json and one session record done
+  const moved = w.sessionWorktree.replace(w.oldHome, w.newHome);
+  const gitdir = join(w.repo, ".git", "worktrees", "feat-x", "gitdir");
+  // The whole list again, as if nothing had run: a record from the very first write.
+  const record = JSON.parse(await readFile(join(w.newHome, MIGRATION_RECORD), "utf8"));
+  const all: PendingStep[] = [
+    { kind: "link", error: NOT_YET_ATTEMPTED },
+    { kind: "rewrite", file: join(w.newHome, "config.json"), error: NOT_YET_ATTEMPTED },
+    ...[SESSION_A, SESSION_B].map((id): PendingStep => ({ kind: "rewrite", file: join(w.newHome, "sessions", id, "meta.json"), error: NOT_YET_ATTEMPTED })),
+    { kind: "cache", error: NOT_YET_ATTEMPTED },
+    { kind: "repair", worktree: moved, error: NOT_YET_ATTEMPTED },
+  ];
+  await writeFile(join(w.newHome, MIGRATION_RECORD), JSON.stringify({ ...record, pending: all }));
+  const linkTarget = await readlink(w.oldHome);
+  const config = await readFile(join(w.newHome, "config.json"), "utf8");
+  const sessionA = await readFile(join(w.newHome, "sessions", SESSION_A, "meta.json"), "utf8");
+
+  expect(await migrateHome(w.oldHome, w.newHome)).toMatchObject({ kind: "retried", pending: [] });
+  expect(await readlink(w.oldHome)).toBe(linkTarget);
+  expect(await readFile(join(w.newHome, "config.json"), "utf8")).toBe(config);
+  expect(await readFile(join(w.newHome, "sessions", SESSION_A, "meta.json"), "utf8")).toBe(sessionA);
+  await expectFinished(w);
+
+  // Once more over the finished home: the repaired worktree record, too, is left byte for byte.
+  // Everything but the record itself, which each start rewrites.
+  const home = async () => (await treeFingerprint(w.newHome)).split("\n").filter((line) => !line.includes(MIGRATION_RECORD)).join("\n");
+  const repaired = await readFile(gitdir, "utf8");
+  const finished = await home();
+  await writeFile(join(w.newHome, MIGRATION_RECORD), JSON.stringify({ ...record, pending: all }));
+  expect(await migrateHome(w.oldHome, w.newHome)).toMatchObject({ kind: "retried", pending: [] });
+  expect(await readFile(gitdir, "utf8")).toBe(repaired);
+  expect(await home()).toBe(finished);
+});
+
+test("a resumed migration is said on start; one that is still not finished names what is left", () => {
+  const resumed = { from: "/w/u/.openspec-dashboard", to: "/w/u/.spec-control" };
+  expect(describeOutcome({ kind: "retried", pending: [], resumed })).toEqual(["finished moving /w/u/.openspec-dashboard to /w/u/.spec-control, which an earlier start was stopped in the middle of"]);
+  expect(describeOutcome({ kind: "retried", pending: [] })).toEqual([]);
+  expect(describeOutcome({ kind: "migrated", from: resumed.from, to: resumed.to, pending: [], recordError: "EROFS" })[1]).toContain("could not be written (EROFS)");
 });

@@ -63,19 +63,17 @@ export function issuePrompt(issue: GithubIssue, github: string): string {
 export type ImportResult = { number: number; name: string; ok: true; staged: boolean } | { number: number; name: string; ok: false; message: string };
 
 const errorText = (err: unknown) => (err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err));
-const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
  * Imports each row with the create request the New change form sends plus the issue, one at a time and in order. A
- * refusal is that issue's result and never stops the rest; nothing created is undone. Once anything was created a
- * fresh scan is asked for until one starts, so the board shows every new change.
+ * refusal is that issue's result and never stops the rest; nothing created is undone. Once anything was created one
+ * scan is asked for — started, or queued behind a running one — so the board shows every new change.
  */
 export async function importIssues(
   repoId: string,
   github: string,
   rows: ImportRow[],
   onProgress: (number: number) => void = () => {},
-  wait: (ms: number) => Promise<void> = pause,
 ): Promise<ImportResult[]> {
   const results: ImportResult[] = [];
   for (const { issue, name } of rows) {
@@ -88,12 +86,6 @@ export async function importIssues(
       results.push({ number: issue.number, name: name.trim(), ok: false, message: errorText(err) });
     }
   }
-  if (results.some((r) => r.ok)) {
-    for (let attempt = 0; attempt < 20; attempt++) {
-      const { started } = await api.scan().catch(() => ({ started: true }));
-      if (started) break;
-      await wait(250);
-    }
-  }
+  if (results.some((r) => r.ok)) await api.scan().catch(() => undefined);
   return results;
 }

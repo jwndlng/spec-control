@@ -31,20 +31,18 @@ type Mode = "project" | "label";
 export type RepoCreateResult = { repoId: string; repoName: string; ok: true; staged: boolean } | { repoId: string; repoName: string; ok: false; message: string };
 
 const errorText = (err: unknown) => (err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err));
-const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
  * Creates `name` in each repository with the very request the single-project form sends, one at a time and in order, so
  * every write is the already-specified create. A refusal is that repository's result and never stops the rest; nothing
- * created is undone. A create that lands during a running scan may be missing from it, so once at least one succeeded a
- * fresh scan is asked for until the server says one started — after the last create, it sees them all.
+ * created is undone. Once at least one succeeded, one scan is asked for: the server starts one or, while a scan runs,
+ * queues the follow-up that reads the repositories afresh — either way a scan after the last create sees them all.
  */
 export async function createInRepos(
   repos: { id: string; name: string }[],
   name: string,
   prompt: string | undefined,
   onProgress: (repoId: string) => void = () => {},
-  wait: (ms: number) => Promise<void> = pause,
 ): Promise<RepoCreateResult[]> {
   const results: RepoCreateResult[] = [];
   for (const repo of repos) {
@@ -56,14 +54,8 @@ export async function createInRepos(
       results.push({ repoId: repo.id, repoName: repo.name, ok: false, message: errorText(err) });
     }
   }
-  if (results.some((r) => r.ok)) {
-    for (let attempt = 0; attempt < 20; attempt++) {
-      // A scan request that fails is not retried: the board's own polling picks the changes up.
-      const { started } = await api.scan().catch(() => ({ started: true }));
-      if (started) break;
-      await wait(250);
-    }
-  }
+  // A scan request that fails is not retried: the board's own polling picks the changes up.
+  if (results.some((r) => r.ok)) await api.scan().catch(() => undefined);
   return results;
 }
 

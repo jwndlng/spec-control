@@ -3,8 +3,9 @@
 // home variable, so the defaults resolve there and never to the real `~`.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { MIGRATION_RECORD, NOT_YET_ATTEMPTED } from "../src/server/homeMigration.ts";
 import { tempDir, treeFingerprint } from "./helpers.ts";
 
 const root = join(import.meta.dir, "..");
@@ -77,3 +78,49 @@ test("a free port: the server binds, migrates and then serves", async () => {
     await proc.exited;
   }
 });
+
+test("a migration an earlier start was stopped in: the start-up line and the environment check say this start finished it", async () => {
+  const user = await tempDir("osd-userhome-");
+  try {
+    const oldHome = join(user, ".openspec-dashboard");
+    const newHome = join(user, ".spec-control");
+    // What a start stopped right after the rename leaves: the new home, its record, every step not yet attempted.
+    await mkdir(join(newHome, "cache"), { recursive: true });
+    await writeFile(join(newHome, "config.json"), "{}\n");
+    await writeFile(join(newHome, "cache", "snapshot.json"), "{}\n");
+    const pending = [
+      { kind: "link", error: NOT_YET_ATTEMPTED },
+      { kind: "rewrite", file: join(newHome, "config.json"), error: NOT_YET_ATTEMPTED },
+      { kind: "cache", error: NOT_YET_ATTEMPTED },
+    ];
+    await writeFile(join(newHome, MIGRATION_RECORD), JSON.stringify({ migratedAt: "2026-10-01T09:00:00.000Z", from: [oldHome], to: newHome, pending }));
+
+    const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("") });
+    const port = probe.port;
+    probe.stop(true);
+    const userEnv: Record<string, string> = { ...env(), HOME: user };
+    const proc = Bun.spawn(["bun", "run", join(root, "src", "server", "index.ts"), "--no-open", "--port", String(port)], { cwd: root, env: userEnv, stdout: "pipe", stderr: "ignore" });
+    try {
+      const reader = proc.stdout.getReader();
+      let out = "";
+      while (!out.includes("listening on")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        out += new TextDecoder().decode(value);
+      }
+      expect(out).toContain(`finished moving ${oldHome} to ${newHome}, which an earlier start was stopped in the middle of`);
+      expect(await readlink(oldHome)).toBe(newHome);
+      expect(existsSync(join(newHome, "cache", "snapshot.json"))).toBe(false);
+      expect(JSON.parse(await readFile(join(newHome, MIGRATION_RECORD), "utf8")).pending).toEqual([]);
+      const report = (await (await fetch(`http://127.0.0.1:${port}/api/environment`)).json()) as { checks: { id: string; status: string; found: string }[] };
+      const check = report.checks.find((c) => c.id === "dashboard-home");
+      expect(check?.status).toBe("ok");
+      expect(check?.found).toContain("finished moving the home, which an earlier start was stopped in the middle of");
+    } finally {
+      proc.kill();
+      await proc.exited;
+    }
+  } finally {
+    await rm(user, { recursive: true, force: true });
+  }
+}, 30_000);
