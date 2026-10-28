@@ -205,19 +205,31 @@ export function mergePrompt(agent: AgentProfile, change: string, { pr, head, pro
   const prompt = compose(agent, "merge", agent.prompts.merge ?? DEFAULT_MERGE_PROMPT).replaceAll("{change}", change);
   // The proposal's pull request, sent to another session of the change: it is not that worktree's branch (one-console-per-change D3).
   const handover = proposal ? ` ${proposalHandoverSentence(proposalBranch(change))}` : "";
-  return `${prompt} ${mergeTargetSentence(pr, head)}${handover}`.replace(/\s+/g, " ").trim();
+  return typedForm(`${prompt} ${mergeTargetSentence(pr, head)}${handover}`);
+}
+
+/**
+ * A prompt as the dashboard types it into a terminal: one line, every run of whitespace — line breaks included — one
+ * space, nothing leading or trailing. A line break typed would submit the first line early, so nothing the agent could
+ * have received is lost. A prompt passed as an argument keeps its line breaks (harden-session-lifecycle D1).
+ */
+export function typedForm(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 export interface Launch {
   argv: string[];
-  /** Set when the command has no `{prompt}` argument: the prompt is typed into the terminal after start-up. */
+  /** Set when the command has no `{prompt}` argument: the prompt is typed into the terminal after start-up, as `typedForm`. */
   typed?: string;
 }
 
-/** Argument list for the agent. The prompt only ever becomes one whole argument or terminal input — never shell text. */
+/**
+ * Argument list for the agent. The prompt only ever becomes one whole argument or terminal input — never shell text.
+ * Inside a longer argument it is inserted literally: a replacer function's result is not scanned for `$&` and the like.
+ */
 export function launchCommand(agent: AgentProfile, prompt: string): Launch {
-  if (!agent.command.some((arg) => arg.includes("{prompt}"))) return { argv: withLaunchArgs(agent, agent.command), typed: prompt };
-  return { argv: withLaunchArgs(agent, agent.command.map((arg) => (arg === "{prompt}" ? prompt : arg.replaceAll("{prompt}", prompt)))) };
+  if (!agent.command.some((arg) => arg.includes("{prompt}"))) return { argv: withLaunchArgs(agent, agent.command), typed: typedForm(prompt) };
+  return { argv: withLaunchArgs(agent, agent.command.map((arg) => (arg === "{prompt}" ? prompt : arg.replaceAll("{prompt}", () => prompt)))) };
 }
 
 /**

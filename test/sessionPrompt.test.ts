@@ -240,3 +240,19 @@ test("API: the session list marks the presets that are not configured with wheth
     process.env.PATH = savedPath;
   }
 });
+
+test("an Archive sent into a running session that cannot be typed is refused: nothing typed, action and auto-merge record unchanged", async () => {
+  const h = await harness({ agent: { prompts: { draft: "draft {change}", implement: "implement {change}", validate: "validate {change}", archive: "archive {change}" } } });
+  h.config.repos[0].agent = { enabled: true, autoMergeDocs: true };
+  managers.push(h.manager);
+  const s = await h.manager.open({ repoId: h.repoId, change: "confirm-retention", action: "validate" });
+  const seen = await watch(h.manager, s.id);
+  await waitFor(() => seen.text().includes("fake-agent ready"), "the agent");
+  // Docs-only so far, so the composed Archive prompt would carry the auto-merge instruction — and is too long to type.
+  h.config.agentSessions.agents[0].promptSuffixes = { archive: "x ".repeat(2100) };
+  await expect(h.manager.prompt(s.id, { action: "archive" })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/4096/) });
+  const after = h.manager.get(s.id) as ChangeSession;
+  expect([after.action, after.autoMergeAskedAt, after.state]).toEqual(["validate", undefined, "running"]);
+  await sleep(300);
+  expect(seen.text()).not.toContain("you said:");
+});

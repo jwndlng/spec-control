@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { chmod, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { consoleDir } from "../src/server/paths.ts";
 import { launchWithoutPrompt } from "../src/server/sessions/agents.ts";
@@ -232,4 +232,29 @@ test("a console record is stored like any session and survives a restart as ende
   const second = track(h.newManager());
   await second.init();
   expect(second.get(session.id)).toMatchObject({ console: true, worktreePath: consoleDir(), state: "exited" });
+});
+
+// ---- the console never shares its folder (harden-session-lifecycle D7) ----
+
+test("the console is refused while an integration runs in its folder or in a folder holding it, and so is its resume", async () => {
+  const h = await harness();
+  const manager = track(h.manager);
+  const repo = await realpath(await tempDir("osd-gamma-"));
+  const notes = join(repo, "notes");
+  await mkdir(notes);
+  const { session: integration } = await manager.openIntegration(repo);
+
+  for (const folder of [repo, notes]) {
+    h.config.agentSessions.consoleDir = folder;
+    await expect(manager.openConsole()).rejects.toMatchObject({ status: 409, message: expect.stringContaining(`the integration of ${repo} is running in the console folder`) });
+    expect(manager.list().filter((s) => s.console)).toHaveLength(0);
+  }
+
+  // A console that ended while the integration started is not resumed into the shared folder either.
+  await manager.close(integration.id);
+  const { session: console } = await manager.openConsole();
+  await manager.close(console.id);
+  await manager.openIntegration(repo);
+  await expect(manager.resume(console.id)).rejects.toMatchObject({ status: 409, message: expect.stringContaining("the integration of") });
+  expect(manager.get(console.id).state).toBe("exited");
 });

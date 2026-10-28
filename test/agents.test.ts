@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { defaultAgentSessions, defaultConfig, newRepoConfig, validateConfig } from "../src/server/config.ts";
-import { agentEnv, agentFor, carryOverPrompt, fastForwardPrompt, integratePrompt, proposalInstruction, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, resumeLaunch, shipPrompt } from "../src/server/sessions/agents.ts";
+import { agentEnv, agentFor, carryOverPrompt, fastForwardPrompt, integratePrompt, proposalInstruction, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, resumeLaunch, shipPrompt, typedForm } from "../src/server/sessions/agents.ts";
 import { Scrollback, sessionBranch, worktreeName } from "../src/server/sessions/manager.ts";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE, CODEX_PROFILE, DEFAULT_SHORTCUTS, FORMER_PROMPTS } from "../src/shared/agentDefaults.ts";
 import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, availableActions, pastDraftingReason, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, mergeTargetSentence, proposalHandoverSentence, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
@@ -167,6 +167,20 @@ test("launch: the prompt is one whole argument, or typed when the command has no
   expect(openingPrompt(fakeProfile(), "implement", "cache-api-calls")).toBe("implement cache-api-calls");
   expect(openingPrompt(fakeProfile({ prompts: { implement: "x {change}" } }), "archive", "c")).toBeUndefined();
   expect(() => openingPrompt(fakeProfile(), "implement", "x; rm -rf ~")).toThrow(/invalid change name/);
+});
+
+test("a typed prompt is one line; the same prompt as an argument keeps its line breaks (harden-session-lifecycle D1)", () => {
+  const agent = fakeProfile({ prompts: { implement: "implement {change}\nand run the tests\t " } });
+  const prompt = openingPrompt(agent, "implement", "upgrade-runtime") as string;
+  expect(launchCommand({ ...agent, command: ["agent"] }, prompt)).toEqual({ argv: ["agent"], typed: "implement upgrade-runtime and run the tests" });
+  expect(launchCommand({ ...agent, command: ["agent", "{prompt}"] }, prompt)).toEqual({ argv: ["agent", prompt] });
+  expect(typedForm("  one\r\n\n two  ")).toBe("one two");
+});
+
+test("{prompt} inside an argument is inserted literally, dollar patterns and all (D8)", () => {
+  const prompt = "cost is $& and $' and $` and $$ and $1";
+  expect(launchCommand(ANTIGRAVITY_PROFILE, prompt).argv).toEqual(["agy", `--prompt-interactive=${prompt}`]);
+  expect(launchCommand(fakeProfile({ command: ["agent", "--a={prompt}", "--b={prompt}"] }), "$&").argv).toEqual(["agent", "--a=$&", "--b=$&"]);
 });
 
 test("additional instructions extend a starter's prompt, and always as one line", () => {

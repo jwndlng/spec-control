@@ -1,7 +1,7 @@
 // A merged auto-merge pull request ends its session (auto-merge-cleanup): the record, the match, the end and the
 // removal, the activity it leaves, and the refresh route that hands a completed query to the session manager.
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { type AppState, createFetchHandler } from "../src/server/api.ts";
 import type { SessionActivity } from "../src/server/activity/events.ts";
@@ -35,7 +35,7 @@ const BRANCH = sessionBranch("archive", CHANGE);
 const exists = (path: string) => stat(path).then(() => true, () => false);
 
 function merged(patch: Partial<PullRequest> & { number: number; mergedAt: string }): PullRequest {
-  return { title: "archive", url: `https://github.com/acme/demo-ops/pull/${patch.number}`, author: "octo", head: BRANCH, base: "main", draft: false, state: "merged", createdAt: patch.mergedAt, review: "none", reviewRequestedFromViewer: false, checks: "passing", ...patch };
+  return { title: "archive", url: `https://github.com/acme/demo-ops/pull/${patch.number}`, author: "octo", head: BRANCH, base: "main", draft: false, state: "merged", isCrossRepository: false, createdAt: patch.mergedAt, review: "none", reviewRequestedFromViewer: false, checks: "passing", ...patch };
 }
 
 const later = (iso: string | undefined, ms = 1000) => new Date(Date.parse(iso as string) + ms).toISOString();
@@ -182,7 +182,7 @@ test("a refresh that shows the merged pull request ends the session; the only gh
   const s = await archiveSession(manager, h);
   const gh = await installFakeGh({
     login: "demo-user",
-    repos: { "acme/demo-ops": { open: [], closed: [ghPr({ number: 88, headRefName: BRANCH, state: "MERGED", mergedAt: later(s.autoMergeAskedAt), closedAt: later(s.autoMergeAskedAt) })] } },
+    repos: { "acme/demo-ops": { open: [], closed: [ghPr({ number: 88, headRefName: BRANCH, isCrossRepository: false, state: "MERGED", mergedAt: later(s.autoMergeAskedAt), closedAt: later(s.autoMergeAskedAt) })] } },
   });
   const state: AppState = { config: h.config, scanner: undefined as unknown as Scanner, sessions: manager };
   state.scanner = new Scanner(() => state.config, { persist: false });
@@ -219,7 +219,7 @@ test("Archive, then a ready docs-only #88 is handed to the agent, then #88 merge
   git(s.worktreePath, "commit", "-q", "-m", "archive");
   const head = git(s.worktreePath, "rev-parse", "HEAD");
   const files = { files: [{ path: `openspec/changes/${CHANGE}/notes.md` }], changedFiles: 1 };
-  const open88 = ghPr({ number: 88, headRefName: BRANCH, headRefOid: head, statusCheckRollup: [{ __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }], ...files });
+  const open88 = ghPr({ number: 88, headRefName: BRANCH, isCrossRepository: false, headRefOid: head, statusCheckRollup: [{ __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }], ...files });
   const gh = await installFakeGh({ login: "demo-user", repos: { "acme/demo-ops": { open: [open88], closed: [] } } });
   const state: AppState = { config: h.config, scanner: undefined as unknown as Scanner, sessions: manager };
   state.scanner = new Scanner(() => state.config, { persist: false });
@@ -274,4 +274,69 @@ test("the panel, the card and the feed say why the session ended and what became
   const event = { v: 1 as const, id: "e", at: removed.at, detectedAt: removed.at, repoId: "r", repoName: "demo-ops", change: CHANGE };
   expect(describeEvent({ ...event, kind: "session-auto-ended", pr: 88, removed: true })).toBe("session ended because #88 merged · worktree removed");
   expect(describeEvent({ ...event, kind: "session-auto-ended", pr: 88, removed: false, reason: kept.reason })).toBe("session ended because #88 merged · worktree kept: the worktree has uncommitted changes");
+});
+
+// ---- harden-session-lifecycle (2.2, 2.3) ----
+
+test("a merged pull request of an ended session whose worktree a running session reuses: the worktree is kept, the agent untouched", async () => {
+  const { h, manager, events } = await project();
+  const first = await archiveSession(manager, h);
+  await manager.close(first.id); // ended, worktree kept
+  const mergedAt = later(first.autoMergeAskedAt, 10);
+  await new Promise((r) => setTimeout(r, 50)); // so the second session's own ask is later than that merge
+  const second = await archiveSession(manager, h);
+  expect([second.id === first.id, await realpath(second.worktreePath)]).toEqual([false, await realpath(first.worktreePath)]);
+  const seen = await watch(manager, second.id);
+  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 93, mergedAt })]);
+  expect((manager.get(first.id) as ChangeSession).autoEnded).toMatchObject({ pr: 93, removed: false, reason: "a session is running in this worktree" });
+  expect(manager.get(second.id).state).toBe("running");
+  expect(await exists(second.worktreePath)).toBe(true);
+  expect(seen.ended()).toBe(false);
+  expect(events.filter((e) => e.kind === "session-auto-ended")).toEqual([{ kind: "session-auto-ended", pr: 93, removed: false, reason: "a session is running in this worktree" }]);
+  // Seen again: nothing more.
+  const count = events.length;
+  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 93, mergedAt })]);
+  expect([events.length, manager.get(second.id).state]).toEqual([count, "running"]);
+
+  // The end dialog of the first session says the same, and removes nothing.
+  const closed = await manager.close(first.id, { removeWorktree: true });
+  expect(closed.worktree).toEqual({ removable: false, reason: "a session is running in this worktree" });
+  expect([await exists(second.worktreePath), manager.get(second.id).state]).toEqual([true, "running"]);
+});
+
+test("a merged pull request from a fork, of unknown origin, or into another base ends nothing (D6)", async () => {
+  const { h, manager } = await project();
+  const s = await archiveSession(manager, h);
+  const at = later(s.autoMergeAskedAt);
+  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 94, mergedAt: at, isCrossRepository: true })]);
+  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 95, mergedAt: at, isCrossRepository: undefined })]);
+  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 96, mergedAt: at, base: "release-1" })]);
+  const after = manager.get(s.id) as ChangeSession;
+  expect([after.state, after.autoEnded, await exists(s.worktreePath)]).toEqual(["running", undefined, true]);
+});
+
+test("through the refresh route, a fork's merged pull request with the session's branch name ends nothing", async () => {
+  const { h, manager } = await project();
+  git(h.repoPath, "remote", "add", "origin", "https://github.com/acme/demo-ops.git");
+  const s = await archiveSession(manager, h);
+  const at = later(s.autoMergeAskedAt);
+  const fork = ghPr({ number: 97, headRefName: BRANCH, isCrossRepository: true, state: "MERGED", mergedAt: at, closedAt: at });
+  const elsewhere = ghPr({ number: 98, headRefName: BRANCH, isCrossRepository: false, baseRefName: "release-1", state: "MERGED", mergedAt: at, closedAt: at });
+  const gh = await installFakeGh({ login: "demo-user", repos: { "acme/demo-ops": { open: [], closed: [fork, elsewhere] } } });
+  const state: AppState = { config: h.config, scanner: undefined as unknown as Scanner, sessions: manager };
+  state.scanner = new Scanner(() => state.config, { persist: false });
+  await state.scanner.trigger().done;
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: createFetchHandler({ state, indexHtml: "" }) });
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/pull-requests/refresh`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force: true }) });
+    expect(res.status).toBe(200);
+    await waitFor(async () => (await gh.calls()).some((c) => c.argv[0] === "pr"), "the query");
+    await new Promise((r) => setTimeout(r, 500));
+    const after = manager.get(s.id) as ChangeSession;
+    expect([after.state, after.autoEnded, await exists(s.worktreePath)]).toEqual(["running", undefined, true]);
+  } finally {
+    state.scanner.stop();
+    server.stop(true);
+    gh.restore();
+  }
 });
