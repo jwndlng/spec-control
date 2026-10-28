@@ -4,13 +4,13 @@
 // archived and merged it offers the stale cleanup in place of the plain removal (agent-sessions: "Ending a session
 // cleans up a stale change's leftovers").
 import type { ComponentChildren } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { PullResult, StaleCleanupPreview, StaleCleanupResult, WorkStatus } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { PullBlockedList, usePull } from "./pull.tsx";
 import { pullNeedsReport, pullOutcome } from "./pullState.ts";
 import { inPlaceLeftover } from "./inPlaceText.ts";
-import { endConfirmable, endSeverity, endWarning, pullOffer, removalPreselected, reportShip, worktreeRemovalPossible } from "./sessionState.ts";
+import { endConfirmable, endDialogEscape, endSeverity, endWarning, ownReports, pullOffer, removalPreselected, reportShip, worktreeRemovalPossible } from "./sessionState.ts";
 import { useSessionUi } from "./sessions.tsx";
 import { outsideNote, StaleCleanupOutcome, StaleLeftoverList } from "./staleCleanup.tsx";
 import { cleanupNeedsReport, endCleanupOffer, keptUntilStale, outsidePaths, staleRequest } from "./staleState.ts";
@@ -47,10 +47,43 @@ function Option({ id, label, description, checked, onChange }: { id: string; lab
   );
 }
 
+/** The confirmation's buttons. Cancel is disabled while a confirmation runs: it would carry on out of sight. */
+export function EndDialogFooter({
+  busy,
+  onCancel,
+  ship,
+  confirm,
+}: {
+  busy: boolean;
+  onCancel: () => void;
+  ship?: { title: string; onClick: () => void };
+  confirm: { class: string; title?: string; disabled: boolean; label: string; onClick: () => void };
+}) {
+  return (
+    <div class="row">
+      <button type="button" class="btn sm ghost" disabled={busy} onClick={onCancel}>
+        Cancel
+      </button>
+      <span style={{ flex: 1 }} />
+      {ship && (
+        <button type="button" class="btn sm primary" disabled={busy} title={ship.title} onClick={ship.onClick}>
+          ⇪ Ship instead
+        </button>
+      )}
+      <button type="button" class={confirm.class} title={confirm.title} disabled={confirm.disabled} onClick={confirm.onClick}>
+        {confirm.label}
+      </button>
+    </div>
+  );
+}
+
 export function EndSessionDialog() {
   const ui = useSessionUi();
   const pulls = usePull();
   const id = ui.endingId;
+  // The session whose dialog is open now, read by a confirmation after each await (fix-form-and-dialog-interactions design D3).
+  const openId = useRef(id);
+  openId.current = id;
   const session = ui.sessions.find((s) => s.id === id);
   const repo = ui.snapshot?.repos.find((r) => r.id === session?.repoId);
   const [status, setStatus] = useState<Status>();
@@ -102,13 +135,18 @@ export function EndSessionDialog() {
     };
   }, [id]);
 
-  // Escape cancels, wherever the keyboard focus is (it is usually still in the terminal).
+  // Escape cancels, wherever the keyboard focus is (it is usually still in the terminal), but not while a confirmation
+  // runs. It stops here either way, so the change detail view behind the dialog stays open.
   useEffect(() => {
     if (!id) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && ui.requestEnd(undefined);
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [id, ui.requestEnd]);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      if (endDialogEscape(busy)) ui.requestEnd(undefined);
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [id, busy, ui.requestEnd]);
 
   if (!id || !session) return null;
   const hasWorktree = worktreeRemovalPossible(session);
@@ -122,15 +160,18 @@ export function EndSessionDialog() {
   const cleanupSelected = cleanupOffer.offered && (cleanupChoice ?? cleanupOffer.preselected);
   const outside = cleanupOffer.offered ? outsidePaths(leftovers) : [];
   const close = () => ui.requestEnd(undefined);
+  /** The dialog as a confirmation for this session may change it: not at all once another session's is open. */
+  const own = () => ownReports(session.id, () => openId.current, { setBusy, setError, setPulling, setReport, close });
   const run = async (fn: () => Promise<unknown>) => {
+    const dialog = own();
     setBusy(true);
     try {
       await fn();
       await ui.refresh();
-      close();
+      dialog.close();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setBusy(false);
+      dialog.setError(err instanceof Error ? err.message : String(err));
+      dialog.setBusy(false);
     }
   };
 
@@ -140,6 +181,7 @@ export function EndSessionDialog() {
    * report instead of closing it — a pull that did not happen is the outdated view this offer exists to prevent.
    */
   const confirm = async () => {
+    const dialog = own();
     setBusy(true);
     setError(undefined);
     let worktreeRemoved = false;
@@ -147,8 +189,8 @@ export function EndSessionDialog() {
       const result = await api.closeSession(session.id, !cleanupOffer.offered && remove && status?.removable === true);
       worktreeRemoved = result.worktree?.removable === true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setBusy(false);
+      dialog.setError(err instanceof Error ? err.message : String(err));
+      dialog.setBusy(false);
       return;
     }
     // End, clean up, pull: the cleanup removes the main checkout's leftover copy before the fast-forward.
@@ -166,23 +208,23 @@ export function EndSessionDialog() {
     if (!pullSelected) {
       await ui.refresh();
       if (!reportCleanup) {
-        close();
+        dialog.close();
         return;
       }
-      setReport({ cleanup: reportCleanup, worktreeRemoved });
-      setBusy(false);
+      dialog.setReport({ cleanup: reportCleanup, worktreeRemoved });
+      dialog.setBusy(false);
       return;
     }
-    setPulling(true);
+    dialog.setPulling(true);
     const result = await pulls.pull(session.repoId); // never rejects; a failed call comes back as a `failed` result
     await ui.refresh();
     if (!pullNeedsReport(result) && !reportCleanup) {
-      close();
+      dialog.close();
       return;
     }
-    setReport({ result: pullNeedsReport(result) ? result : undefined, cleanup: reportCleanup, worktreeRemoved });
-    setPulling(false);
-    setBusy(false);
+    dialog.setReport({ result: pullNeedsReport(result) ? result : undefined, cleanup: reportCleanup, worktreeRemoved });
+    dialog.setPulling(false);
+    dialog.setBusy(false);
   };
 
   if (report && !report.result) {
@@ -311,38 +353,30 @@ export function EndSessionDialog() {
           )}
           {error && <div class="notice danger">{error}</div>}
         </div>
-        <div class="row">
-          <button type="button" class="btn sm ghost" onClick={close}>
-            Cancel
-          </button>
-          <span style={{ flex: 1 }} />
-          {severity === "danger" && !cleanupOffer.offered && (
-            <button
-              type="button"
-              class="btn sm primary"
-              disabled={busy}
-              title={`Asks ${session.agentName} to commit, push and open a pull request instead of ending`}
-              onClick={() =>
-                run(async () => {
-                  const result = await api.shipSession(session.id);
-                  ui.openPanel(session.id);
-                  reportShip(ui, session.id, result);
-                })
-              }
-            >
-              ⇪ Ship instead
-            </button>
-          )}
-          <button
-            type="button"
-            class={`btn sm ${severity === "danger" ? "danger" : "primary"}`}
-            title={running ? `Stops ${session.agentName}, as if you closed its terminal window` : undefined}
-            disabled={!endConfirmable(session, status, busy) || stalePending}
-            onClick={() => void confirm()}
-          >
-            {pulling ? "Pulling…" : severity === "danger" ? "End anyway" : running ? "End session" : "Done"}
-          </button>
-        </div>
+        <EndDialogFooter
+          busy={busy}
+          onCancel={close}
+          ship={
+            severity === "danger" && !cleanupOffer.offered
+              ? {
+                  title: `Asks ${session.agentName} to commit, push and open a pull request instead of ending`,
+                  onClick: () =>
+                    run(async () => {
+                      const result = await api.shipSession(session.id);
+                      ui.openPanel(session.id);
+                      reportShip(ui, session.id, result);
+                    }),
+                }
+              : undefined
+          }
+          confirm={{
+            class: `btn sm ${severity === "danger" ? "danger" : "primary"}`,
+            title: running ? `Stops ${session.agentName}, as if you closed its terminal window` : undefined,
+            disabled: !endConfirmable(session, status, busy) || stalePending,
+            label: pulling ? "Pulling…" : severity === "danger" ? "End anyway" : running ? "End session" : "Done",
+            onClick: () => void confirm(),
+          }}
+        />
       </div>
     </div>
   );

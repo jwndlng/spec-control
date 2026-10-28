@@ -6,7 +6,7 @@ import { AGENT_PRESETS } from "../shared/agentDefaults.ts";
 import { DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, STARTER_PROMPT_KEYS, type AgentAvailability, type AgentProfile, type AgentSessionsConfig, type Config, type KeepAwakeStatus, type PromptKey, type Shortcut, type StarterPromptKey } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { addShortcut, moveShortcut, removeShortcut, restoredShortcuts } from "./quickReplies.ts";
-import { newAgentProfile, parseArgLines } from "./sessionState.ts";
+import { argLinesText, argLinesValue, newAgentProfile } from "./sessionState.ts";
 import { followInApp, href } from "./url.ts";
 
 interface Props {
@@ -162,7 +162,7 @@ export function AgentEditor({
                 <strong>One argument per line</strong>, no shell. <code>{"{prompt}"}</code> becomes the opening prompt as one argument; without it the prompt is typed into the
                 terminal after start.
               </span>
-              <textarea class="input mono" rows={Math.max(2, agent.command.length)} value={agent.command.join("\n")} onInput={(e) => onChange({ command: parseArgLines(e.currentTarget.value) })} />
+              <ArgLinesField value={agent.command} onChange={(command) => onChange({ command: command ?? [] })} />
             </label>
             <label class="agent-tools">
               <span class="agent-prompt-label">Launch arguments</span>
@@ -170,22 +170,12 @@ export function AgentEditor({
                 Optional, <strong>one argument per line</strong>, e.g. a mode or a model: added after the executable each time this agent starts, consoles and resumes included. No
                 placeholders.
               </span>
-              <textarea
-                class="input mono"
-                rows={Math.max(2, agent.launchArgs?.length ?? 0)}
-                value={(agent.launchArgs ?? []).join("\n")}
-                onInput={(e) => onChange({ launchArgs: parseArgLines(e.currentTarget.value).length ? parseArgLines(e.currentTarget.value) : undefined })}
-              />
+              <ArgLinesField value={agent.launchArgs} optional onChange={(launchArgs) => onChange({ launchArgs })} />
             </label>
             <label class="agent-tools">
               <span class="agent-prompt-label">Resume command</span>
               <span class="hint">Optional, one argument per line: continues the agent's latest conversation in the same worktree.</span>
-              <textarea
-                class="input mono"
-                rows={2}
-                value={(agent.resumeCommand ?? []).join("\n")}
-                onInput={(e) => onChange({ resumeCommand: parseArgLines(e.currentTarget.value).length ? parseArgLines(e.currentTarget.value) : undefined })}
-              />
+              <ArgLinesField value={agent.resumeCommand} optional onChange={(resumeCommand) => onChange({ resumeCommand })} />
             </label>
           </div>
           <div class="agent-group">
@@ -332,6 +322,33 @@ export function ConsoleAgentPicker({ settings, onChange }: { settings: AgentSess
  * The editor **Open in editor** starts (editor-launch): one argument per line, no shell. Empty stores no command, which
  * means `code`.
  */
+interface ArgLinesProps {
+  value: string[] | undefined;
+  onChange: (value: string[] | undefined) => void;
+  /** An empty list is stored as no value. */
+  optional?: boolean;
+  label?: string;
+  placeholder?: string;
+}
+
+/**
+ * A one-argument-per-line textarea. It keeps the text as typed — spaces, a new empty line — and stores the parsed list
+ * on every keystroke; the text is rebuilt from the list only when something else changed the list.
+ */
+export function ArgLinesField({ value, onChange, optional = false, label, placeholder }: ArgLinesProps) {
+  const [raw, setRaw] = useState<string | undefined>(undefined);
+  const input = (text: string) => {
+    setRaw(text);
+    onChange(argLinesValue(text, optional));
+  };
+  return <ArgLinesArea text={argLinesText(raw, value)} label={label} placeholder={placeholder} onInput={input} />;
+}
+
+/** The textarea itself, without state, so the tests can type into it. */
+export function ArgLinesArea({ text, onInput, label, placeholder }: { text: string; onInput: (text: string) => void; label?: string; placeholder?: string }) {
+  return <textarea class="input mono" aria-label={label} rows={Math.max(2, text.split("\n").length)} placeholder={placeholder} value={text} onInput={(e) => onInput(e.currentTarget.value)} />;
+}
+
 export function EditorCommandField({ editor, onChange }: { editor: string[] | undefined; onChange: (editor: string[] | undefined) => void }) {
   return (
     <>
@@ -343,17 +360,7 @@ export function EditorCommandField({ editor, onChange }: { editor: string[] | un
           no shell; <code>{"{path}"}</code> marks where the folder goes, otherwise it is added last. Empty uses <code>code</code> (VS Code), e.g.{" "}
           <code>{'open -a "Visual Studio Code" {path}'}</code> as <code>open</code>, <code>-a</code>, <code>Visual Studio Code</code>, <code>{"{path}"}</code>.
         </span>
-        <textarea
-          class="input mono"
-          aria-label="Editor command"
-          rows={Math.max(2, editor?.length ?? 0)}
-          placeholder="code"
-          value={(editor ?? []).join("\n")}
-          onInput={(e) => {
-            const args = parseArgLines(e.currentTarget.value);
-            onChange(args.length ? args : undefined);
-          }}
-        />
+        <ArgLinesField label="Editor command" placeholder="code" value={editor} optional onChange={onChange} />
       </label>
     </>
   );

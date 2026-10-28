@@ -76,7 +76,7 @@ test("the card says the agent was asked to merge #88 while it is pending, and no
 test("the panel offers Merge from the helpers, posts to the session's merge route, and shows the pending wording", () => {
   const panel = readFileSync(join(import.meta.dir, "..", "src", "ui", "sessionPanel.tsx"), "utf8");
   expect(panel).toContain("mergeControl(session, prs.data?.repos, handedOverProposal(session, ui.sessions, ui.worktrees))");
-  expect(panel).toContain("disabled={!merge.enabled}");
+  expect(panel).toContain("disabled={!merge.enabled || acting}");
   expect(panel).toContain("api.mergeSession(session.id)");
   expect(panel).toContain("mergeNotice(merge?.recordedOn ?? session, merge?.pr)");
   expect(panel).toContain("RESUME_TO_MERGE");

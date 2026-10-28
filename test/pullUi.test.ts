@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
 import type { PullBlockingFile, PullResult } from "../src/shared/types.ts";
-import { FetchNoteBadge, PullBlockedList } from "../src/ui/pull.tsx";
-import { blockingNote, branchNotice, fetchNote, pullNeedsReport, pullOutcome, resolveSummary } from "../src/ui/pullState.ts";
-import { byTag, textOf } from "./vnode.ts";
+import { BlockedPullModal, FetchNoteBadge, PullBlockedList } from "../src/ui/pull.tsx";
+import { Modal } from "../src/ui/modal.tsx";
+import { blockingNote, branchNotice, fetchNote, pullNeedsReport, pullOutcome, resolveSummary, shownPullResult } from "../src/ui/pullState.ts";
+import { byComponent, byTag, textOf } from "./vnode.ts";
 
 const result = (patch: Partial<PullResult>): PullResult => ({ repoId: "r", fetched: true, update: "up-to-date", branch: "main", upstream: "origin/main", defaultBranch: "main", ...patch });
 
@@ -163,4 +164,39 @@ test("the fetch note says when the repository was last fetched, how often it is 
   const badge = FetchNoteBadge({ input: { hasRemote: true, lastFetchedAt: ago(4) }, now });
   expect(textOf(badge as never)).toBe("fetched 4m ago");
   expect(FetchNoteBadge({ input: { hasRemote: false }, now })).toBeNull();
+});
+
+/** The Blocked pull modal as the Pull control renders it for a repository state, and the list inside it. */
+function blockedModal(state: "running" | PullResult | undefined, last: PullResult | undefined) {
+  const tree = BlockedPullModal({ repoId: "demo-ops", result: shownPullResult(state, last), running: state === "running", onClose: () => {}, onResolve: () => {} });
+  const [modal] = byComponent(tree, Modal); // Modal uses hooks: a leaf whose children are the list
+  return { modal, list: modal && (modal.props.children as { props: Parameters<typeof PullBlockedList>[0] }).props };
+}
+
+test("the Blocked pull modal stays open while Resolve and pull runs, then shows the new outcome", () => {
+  const claim = { upstream: "c".repeat(40), files: [leftover(yaml), leftover(prompt, true)] };
+  const refused = result({ update: "refused", reason: "Entry not uptodate", blocking: claim.files, resolvable: claim });
+
+  const before = blockedModal(refused, refused);
+  expect(before.modal?.props.title).toBe("Blocked pull");
+  expect(textOf(byTag(PullBlockedList(before.list), "button")[0])).toBe("Resolve and pull");
+
+  // Resolve and pull confirmed: the repository's pull is running and there is no new outcome yet.
+  const during = blockedModal("running", refused);
+  expect(during.modal).toBeDefined();
+  expect(during.list.result).toBe(refused);
+  const [button] = byTag(PullBlockedList(during.list), "button");
+  expect(button.props.disabled).toBe(true);
+  expect(textOf(button)).toBe("Resolving…");
+  expect(textOf(PullBlockedList(during.list))).toContain(yaml);
+
+  // Finished: the fast-forward and the files it replaced.
+  const resolved = result({ fetched: false, update: "fast-forwarded", commits: 2, resolved: [{ path: yaml }, { path: prompt, copy: "/h/pull-backups/demo-ops/t/prompt.md" }] });
+  const after = blockedModal(resolved, resolved);
+  expect(after.list.running).toBe(false);
+  expect(textOf(PullBlockedList(after.list))).toContain("2 leftover files were replaced");
+
+  // Nothing to show before any outcome, running or not.
+  expect(shownPullResult(undefined, undefined)).toBeUndefined();
+  expect(BlockedPullModal({ repoId: "demo-ops", result: shownPullResult("running", undefined), running: true, onClose: () => {}, onResolve: () => {} })).toBeNull();
 });
