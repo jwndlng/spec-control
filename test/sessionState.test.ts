@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import type { ChangeSession, ChangeSnapshot, PullRequest, SessionWorktree } from "../src/shared/types.ts";
-import { cardSessionControls, consoleSteps, endProposalConfirmation, handedOverProposal, mergeControl, mergeNotice, pullRequestSession } from "../src/ui/sessionState.ts";
+import { cardSessionControls, continueArchiveAvailable, consoleSteps, endProposalConfirmation, handedOverProposal, mergeControl, mergeNotice, pullRequestSession } from "../src/ui/sessionState.ts";
 import { fakeProfile } from "./sessionHelpers.ts";
 
 // The split button a card shows (kanban-board: "A change's actions are one split button"), as the pure rule the card
@@ -43,6 +43,15 @@ const session = (patch: Partial<ChangeSession> = {}): ChangeSession => ({
   updatedAt: "2026-10-01T09:30:00Z",
   resumable: true,
   ...patch,
+});
+
+test("a pending archive can be continued even without a pull request or session", () => {
+  const pending = card({ archived: "2026-10-01", stage: "archived", checkout: { path: "/w/wt", isMain: false } });
+  expect(continueArchiveAvailable(config, pending, [], false)).toBe(true);
+  expect(continueArchiveAvailable(config, pending, [], true)).toBe(false);
+  expect(continueArchiveAvailable(null, pending, [], false)).toBe(false);
+  expect(continueArchiveAvailable(config, { ...pending, checkout: { path: "/w/main", isMain: true } }, [], false)).toBe(false);
+  expect(continueArchiveAvailable(config, { ...pending, archived: undefined }, [], false)).toBe(false);
 });
 
 test("a Ready card without a design shows Implement with Draft in the menu", () => {
