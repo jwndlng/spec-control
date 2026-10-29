@@ -188,6 +188,8 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             in the change's <code>.openspec.yaml</code>, under <code>spec-control:</code>, in the same commit;{" "}
             <strong>Resolve conflicts</strong> asks it to bring a branch that no longer merges up to date. The dashboard
             itself commits, merges and pushes nothing.
+            An archived card whose work is still pending offers <strong>Continue archive</strong> to open its console:
+            resume its session to review unfinished tasks, or use <strong>Ship</strong> to ask the agent to open a pull request.
           </li>
           <li>
             <strong>Resolve conflicts</strong> is offered when the session's worktree no longer merges as of your last fetch,
