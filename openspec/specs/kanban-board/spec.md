@@ -1189,6 +1189,13 @@ Every starter SHALL behave exactly as it does today wherever it is chosen from â
 confirmation for Fast-forward, the same refusal shown in place, the same "Startingâ€¦" state, and in the Console tab of a
 running session the same sending into that session.
 
+The arrow part SHALL open the menu when activated by pointer, Enter, Space or Arrow Down. Pointer activation SHALL NOT
+activate the main part, navigate away from the board, or leave the menu hidden. The menu SHALL be positioned next to the
+arrow within the viewport and its first enabled item SHALL be available for activation. Activating an enabled item
+SHALL run only that action and close the menu. The existing keyboard navigation, accessible menu semantics, Escape and
+Tab behavior, outside-click and scroll dismissal, focus return, action ordering and disabled-state behavior SHALL be
+preserved.
+
 The arrow part SHALL be a menu button: it SHALL carry an accessible name naming the change ("More actions for
 <change>"), `aria-haspopup="menu"` and `aria-expanded`, and the menu SHALL use menu and menu-item semantics. The menu
 SHALL open with Enter, Space or Arrow Down and move focus to its first item; Arrow Up and Arrow Down SHALL move between
@@ -1202,6 +1209,11 @@ lists, with the same link and readiness the pull-request badge shows. It MUST NO
 the change's available actions, column, sub-state, progress or any count. When pull requests are unavailable for the
 repository or were never fetched, the recommended action is the stage's. A running session's badge SHALL stand in for
 the split button on a card exactly as it does for the starters today.
+
+#### Scenario: Open and use the menu with a pointer
+- **WHEN** a card has a recommended action and at least one other available action, and the user clicks its arrow
+- **THEN** the menu opens beside the arrow without activating the recommended action or leaving the board, and choosing
+  an enabled menu item runs that item once and closes the menu
 
 #### Scenario: Ready change with an optional design missing
 - **WHEN** change `rotate-keys` is in `Ready`, its optional `design.md` is not written, and agent sessions are enabled

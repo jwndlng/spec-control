@@ -2,3 +2,4 @@ schema: spec-driven
 created: 2026-10-28
 spec-control:
   branch: feat/bug-actions-dropdown
+  archive-branch: chore/archive-bug-actions-dropdown

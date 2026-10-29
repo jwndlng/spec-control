@@ -10,4 +10,4 @@
 
 ## 2. Check
 
-- [ ] 2.1 Run `bun run check` and verify it passes.
+- [x] 2.1 Run `bun run check` and verify it passes.
