@@ -21,7 +21,7 @@ import { assignRepoHues, dependencyChoices, groupByRepo, newChangeTargets, recen
 import { columnKind } from "./boardMarks.ts";
 import { IconCheck, IconChevronRight, IconCircleDot, IconCopy, IconInfo, IconPlus, IconTerminal } from "./icons.tsx";
 import { SessionControls, useSessionUi } from "./sessions.tsx";
-import { archivedShown, cardMergePending, cardSessionControls, hasRunningSession, cardWorkingState, type CardWorkingState, consoleTabAvailable, projectConsoleUnavailable } from "./sessionState.ts";
+import { continueArchiveAvailable, archivedShown, cardMergePending, cardSessionControls, hasRunningSession, cardWorkingState, type CardWorkingState, consoleTabAvailable, projectConsoleUnavailable } from "./sessionState.ts";
 import { ProjectSwitch } from "./projectSwitch.tsx";
 import { staleReason, type StaleReason } from "./staleState.ts";
 import { boardFrom, changePath, CONSOLE_TAB, repoPath, serializeDetailQuery } from "./routes.ts";
@@ -201,8 +201,8 @@ function NeedsYouBadge({ card, tasks, from }: { card: Card; tasks: NonNullable<C
  */
 export function ChangeCard({ card, now, from, working, running = false, merging, stale }: { card: Card; now: number; from: string; working?: CardWorkingState; running?: boolean; merging?: string; stale?: StaleReason }) {
   const noTasks = card.warnings?.includes("tasks file has no tasks");
-  // What is left is the user's — to check or to do — so `warning`, not `success`; never on an archived change.
-  const needsYou = !card.archived && card.tasks && (card.tasks.awaiting ?? 0) > 0 ? card.tasks : undefined;
+  // An archive still on a worktree can have tasks that need attention too.
+  const needsYou = (!card.archived || card.checkout?.isMain === false) && card.tasks && (card.tasks.awaiting ?? 0) > 0 ? card.tasks : undefined;
   const progress = cardProgress(card);
   const link = cardLink(card, from);
   // In the starter's place; a running session's badge takes it instead, as it takes every starter's.
@@ -242,6 +242,7 @@ export function ChangeCard({ card, now, from, working, running = false, merging,
         {card.sourceIssue && <SourceIssueLink issue={card.sourceIssue} place="card" />}
         {card.pullRequest && <CardPullRequest pr={card.pullRequest} proposal={card.proposalPullRequest} repoName={card.repoName} fetchedAt={card.pullRequestFetchedAt} now={now} merging={merging} />}
         <SessionControls card={card} place="card" pullRequest={card.pullRequest} />
+        <PendingArchiveLink card={card} from={from} running={running} />
         {waiting && (
           <span class="waits-for" role="note" title={waiting.title} aria-label={waiting.title}>
             <span aria-hidden="true">⧗ </span>
@@ -254,6 +255,18 @@ export function ChangeCard({ card, now, from, working, running = false, merging,
         </a>
       </div>
     </article>
+  );
+}
+
+/** Keep unmerged archive work reachable even when there is no pull request or the session has exited. */
+export function PendingArchiveLink({ card, from, running }: { card: Card; from: string; running: boolean }) {
+  const ui = useSessionUi();
+  if (!continueArchiveAvailable(ui.config, card, ui.worktrees, running)) return null;
+  const { path, query } = consoleTarget(card, from);
+  return (
+    <a class="btn sm primary" href={href(path, undefined, query)} onClick={(e) => followInApp(e, path, query)} title="Open the console to resume the agent or ship the archive">
+      Continue archive
+    </a>
   );
 }
 

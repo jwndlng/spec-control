@@ -63,6 +63,12 @@ test("no Needs you badge without awaiting tasks, and never on an archived change
   expect(columnKind("Done")).toBe("success");
 });
 
+test("an archive in a worktree still shows tasks needing the user", () => {
+  const pending = card({ archived: "2026-06-18", stage: "archived", column: "Archived", checkout: { path: "/w/archive", isMain: false } });
+  expect(textOf(needsYou(pending)[0])).toBe("2 need you");
+  expect(needsYou({ ...pending, checkout: { path: "/w/main", isMain: true } })).toEqual([]);
+});
+
 test("the card's bar names the tasks that need the user in words", () => {
   const view = ChangeCard({ card: card({}), now: Date.parse("2026-09-29T12:00:00Z"), from: "" });
   const [bar] = byTag(view, "div").filter((d) => d.props.role === "progressbar");

@@ -502,6 +502,10 @@ export function archivePending(card: Pick<ChangeSnapshot, "repoId" | "name" | "c
   return card.checkout?.isMain === false && !mine.some((w) => w.work.state === "merged");
 }
 
+export function continueArchiveAvailable(config: Config | null, card: Pick<ChangeSnapshot, "repoId" | "name" | "checkout" | "archived">, worktrees: readonly SessionWorktree[], running: boolean): boolean {
+  return Boolean(card.archived && !running && sessionsEnabledFor(config, card.repoId) && archivePending(card, worktrees));
+}
+
 /**
  * Whether an agent session of this change is still running — its own session or its archive session, which runs under
  * the same change name. Only `running` counts: ending the session is what lets **Hide merged** hide the change again.

@@ -560,13 +560,11 @@ button.badge.worktree-path.done { color: var(--success); }
   background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius-lg);
   padding: 12px 14px 10px; display: flex; flex-direction: column; gap: 10px;
   box-shadow: var(--shadow-card);
-  transition: border-color 200ms, background-color 200ms, transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: border-color 200ms, background-color 200ms;
 }
 /* Hover is an active state, so the accent may edge the card here (never at rest). */
 .card:hover { background: color-mix(in oklch, var(--bg-surface) 45%, var(--bg-raised)); border-color: color-mix(in oklch, var(--brand) 55%, var(--bg-raised)); }
-@media (prefers-reduced-motion: no-preference) {
-  .card:hover { transform: translateY(-2px); }
-}
+/* A transform here would make the card the containing block for its fixed-position action menu. */
 /* A card whose agent is working shows it as a whole, not only in its badge: a static tint at the info hue (kept on
    hover, which only adds the accent edge), and the name swept with the badge (see the live badge styles below). */
 .card.live { background: var(--card-live-bg); border-color: color-mix(in oklch, var(--info) 50%, var(--bg-raised)); }
