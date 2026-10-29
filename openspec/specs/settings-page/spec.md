@@ -234,3 +234,10 @@ in the field, such as adding a preset or switching to another profile.
 #### Scenario: Surrounding whitespace is not stored
 - **WHEN** a profile's Launch arguments field holds `  --mode auto ` and an empty last line
 - **THEN** the stored launch arguments are `--mode auto` alone
+
+### Requirement: Settings saves after a tracked folder's spelling changed
+Saving Settings SHALL succeed when a tracked repository's folder was renamed by case only or replaced by a symbolic link to the same directory since Settings was opened, as long as the rest of the draft is valid: the repository SHALL keep its id, name, enabled state and every other setting, and the saved configuration SHALL hold the path in its new canonical spelling. Settings MUST NOT show the save as failed or ask the user to restart the dashboard for such a change.
+
+#### Scenario: Saving after a tracked folder was respelled
+- **WHEN** Settings is open, a tracked folder `/w/acme/Acme` is renamed to `/w/acme/acme` on a case-insensitive file system, and the user changes the poll interval and saves
+- **THEN** the save succeeds and the project keeps its id and its sessions, with the path `/w/acme/acme`
