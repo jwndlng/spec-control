@@ -1,13 +1,14 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { type AppState, createFetchHandler, crossSiteRefusal, startingFetchHandler } from "../src/server/api.ts";
 import { readSnapshot } from "../src/server/cache.ts";
-import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
+import { defaultConfig, newRepoConfig, saveConfig } from "../src/server/config.ts";
 import { cachePath, configPath } from "../src/server/paths.ts";
 import { Scanner } from "../src/server/scanner.ts";
 import { overviewRows, wipIndicator } from "../src/ui/overviewState.ts";
-import { FIXTURES, useTempHome } from "./helpers.ts";
+import type { Config } from "../src/shared/types.ts";
+import { FIXTURES, tempDir, useTempHome } from "./helpers.ts";
 
 let cleanup: () => Promise<void>;
 let server: ReturnType<typeof Bun.serve>;
@@ -398,3 +399,61 @@ test("POST /api/scan: started when idle; during a scan not started, but one foll
     g.stop();
   }
 }, 30_000);
+
+test("a tracked folder replaced by a link to it keeps its id through every config write; an id cannot be re-pointed", async () => {
+  const work = await tempDir("osd-respelled-");
+  try {
+    const old = join(work, "acme", "alpha-infra");
+    const now = join(work, "acme", "repos", "alpha-infra");
+    await mkdir(old, { recursive: true });
+    await mkdir(join(work, "acme", "demo-ops"));
+    const alpha = newRepoConfig(old, false);
+    const demo = newRepoConfig(join(work, "acme", "demo-ops"), false);
+    const tracked: Config = await saveConfig({ ...defaultConfig(), repos: [alpha, demo] });
+    // Moved while the dashboard runs, with a link left behind: the stored path no longer canonicalises to itself.
+    await mkdir(dirname(now));
+    await rename(old, now);
+    await symlink(now, old);
+
+    const writes: [string, string, unknown][] = [
+      ["/api/config", "PUT", tracked],
+      [`/api/repos/${alpha.id}/enabled`, "POST", { enabled: true }],
+      [`/api/repos/${alpha.id}/labels`, "POST", { labels: ["infra"] }],
+      ["/api/ignore-paths", "POST", { path: join(work, "mirror") }],
+    ];
+    for (const [path, method, body] of writes) {
+      state.config = tracked; // as the running server held it
+      const res = await send(path, method, JSON.stringify(body));
+      expect([path, res.status]).toEqual([path, 200]);
+      const saved: Config = JSON.parse(await readFile(configPath(), "utf8"));
+      expect(saved.repos.map((r) => [r.id, r.path])).toEqual([
+        [alpha.id, now],
+        [demo.id, demo.path],
+      ]);
+    }
+
+    // Case-only rename, where the temporary directory's file system ignores case.
+    const upper = join(work, "Acme-Tools");
+    await mkdir(upper);
+    if (await stat(join(work, "acme-tools")).catch(() => undefined)) {
+      const tools = newRepoConfig(upper, false);
+      const withTools: Config = await saveConfig({ ...defaultConfig(), repos: [tools] });
+      await rename(upper, join(work, "tmp-tools"));
+      await rename(join(work, "tmp-tools"), join(work, "acme-tools"));
+      state.config = withTools;
+      const res = await send("/api/config", "PUT", JSON.stringify({ ...withTools, repos: [{ ...tools, name: "Tools" }] }));
+      expect(res.status).toBe(200);
+      expect((await res.json()).repos).toEqual([{ ...tools, name: "Tools", path: join(work, "acme-tools") }]);
+    }
+
+    state.config = await saveConfig({ ...defaultConfig(), repos: [alpha, demo] });
+    const before = await readFile(configPath(), "utf8");
+    const repointed = await send("/api/config", "PUT", JSON.stringify({ ...state.config, repos: [{ ...demo, path: now }] }));
+    expect(repointed.status).toBe(400);
+    expect((await repointed.json()).issues).toEqual(["repos.0.id: this id belongs to another directory"]);
+    expect(await readFile(configPath(), "utf8")).toBe(before);
+  } finally {
+    state.config = await saveConfig(defaultConfig());
+    await rm(work, { recursive: true, force: true });
+  }
+});

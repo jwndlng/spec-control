@@ -340,6 +340,9 @@ test("every step listed as pending over a home where some already ran: the finis
   const gitdir = join(w.repo, ".git", "worktrees", "feat-x", "gitdir");
   // The whole list again, as if nothing had run: a record from the very first write.
   const record = JSON.parse(await readFile(join(w.newHome, MIGRATION_RECORD), "utf8"));
+  const finishedSession = [SESSION_A, SESSION_B].find((id) => !record.pending.some((step: PendingStep) => step.kind === "rewrite" && step.file === join(w.newHome, "sessions", id, "meta.json")));
+  expect(finishedSession).toBeDefined();
+  const finishedSessionFile = join(w.newHome, "sessions", finishedSession as string, "meta.json");
   const all: PendingStep[] = [
     { kind: "link", error: NOT_YET_ATTEMPTED },
     { kind: "rewrite", file: join(w.newHome, "config.json"), error: NOT_YET_ATTEMPTED },
@@ -350,12 +353,12 @@ test("every step listed as pending over a home where some already ran: the finis
   await writeFile(join(w.newHome, MIGRATION_RECORD), JSON.stringify({ ...record, pending: all }));
   const linkTarget = await readlink(w.oldHome);
   const config = await readFile(join(w.newHome, "config.json"), "utf8");
-  const sessionA = await readFile(join(w.newHome, "sessions", SESSION_A, "meta.json"), "utf8");
+  const session = await readFile(finishedSessionFile, "utf8");
 
   expect(await migrateHome(w.oldHome, w.newHome)).toMatchObject({ kind: "retried", pending: [] });
   expect(await readlink(w.oldHome)).toBe(linkTarget);
   expect(await readFile(join(w.newHome, "config.json"), "utf8")).toBe(config);
-  expect(await readFile(join(w.newHome, "sessions", SESSION_A, "meta.json"), "utf8")).toBe(sessionA);
+  expect(await readFile(finishedSessionFile, "utf8")).toBe(session);
   await expectFinished(w);
 
   // Once more over the finished home: the repaired worktree record, too, is left byte for byte.

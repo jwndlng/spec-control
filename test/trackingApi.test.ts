@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { realpathSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type AppState, createFetchHandler } from "../src/server/api.ts";
-import { defaultConfig, newRepoConfig, repoId, saveConfig } from "../src/server/config.ts";
+import { assignRepoId, defaultConfig, newRepoConfig, repoId, saveConfig } from "../src/server/config.ts";
 import { configPath } from "../src/server/paths.ts";
 import { type Config, repoAgentEnabled } from "../src/shared/types.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
@@ -79,6 +79,37 @@ test("tracking a configured repository re-enables it and keeps its name", async 
   expect(res.status).toBe(200);
   expect((await saved()).repos).toEqual([{ ...newRepoConfig(paths().alpha, true), name: "Alpha" }]);
   expect(triggered).toBe(1);
+});
+
+test("tracking a folder tracked under an older spelling re-enables that entry and adds none", async () => {
+  // delta-ops was tracked, then moved to moved/, leaving a link at the stored path: the same directory.
+  const old = join(work, "acme", "delta-ops");
+  const now = join(work, "moved", "delta-ops");
+  await mkdir(join(old, "openspec"), { recursive: true });
+  await writeFile(join(old, "openspec", "config.yaml"), "schema: spec-driven\n");
+  const delta = { ...newRepoConfig(old, false), name: "Delta" };
+  state.config = await saveConfig({ ...state.config, repos: [...state.config.repos, delta] });
+  await mkdir(join(work, "moved"));
+  await rename(old, now);
+  await symlink(now, old);
+  try {
+    const res = await send("/api/repos/track", { path: now });
+    expect(res.status).toBe(200);
+    const repos = (await saved()).repos;
+    expect(repos.filter((r) => r.name === "Delta" || r.path === now)).toEqual([{ ...delta, path: now, enabled: true }]);
+    expect(repos).toHaveLength(2);
+  } finally {
+    await rm(old);
+    await rm(join(work, "moved"), { recursive: true });
+  }
+});
+
+test("a candidate whose path's id another repository holds is tracked with the next one", async () => {
+  state.config = await saveConfig({ ...state.config, repos: [{ ...state.config.repos[0], id: repoId(paths().beta) }] });
+  const res = await send("/api/repos/track", { path: paths().beta });
+  expect(res.status).toBe(200);
+  const added = (await saved()).repos.find((r) => r.path === paths().beta);
+  expect(added?.id).toBe(assignRepoId(paths().beta, [repoId(paths().beta)]));
 });
 
 test("a colliding default name is disambiguated, as for any enabled candidate", async () => {

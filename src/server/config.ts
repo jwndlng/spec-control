@@ -274,20 +274,23 @@ export const configSchema = z
       if (problem) ctx.addIssue({ code: "custom", path: ["labelColors", key], message: `label "${key}": ${problem}` });
     }
     const ids = new Set<string>();
+    // Paths are canonical by now, so two spellings of one directory compare equal: one directory, one id.
+    const dirs = new Set<string>();
     for (const [i, repo] of cfg.repos.entries()) {
       if (ids.has(repo.id)) {
         ctx.addIssue({ code: "custom", path: ["repos", i, "id"], message: `duplicate repo id ${repo.id}` });
       }
       ids.add(repo.id);
+      if (dirs.has(repo.path)) {
+        ctx.addIssue({ code: "custom", path: ["repos", i, "path"], message: `the same directory is listed twice: ${repo.path}` });
+      }
+      dirs.add(repo.path);
       if (repo.agent?.agentId && !cfg.agentSessions.agents.some((a) => a.id === repo.agent?.agentId)) {
         ctx.addIssue({ code: "custom", path: ["repos", i, "agent", "agentId"], message: "unknown agent" });
       }
       for (const key of ["labels", "hiddenLabels"] as const) {
         const dup = duplicateLabel(repo[key]);
         if (dup !== undefined) ctx.addIssue({ code: "custom", path: ["repos", i, key], message: `${repo.name}: label "${dup}" is listed twice` });
-      }
-      if (repo.id !== repoId(repo.path)) {
-        ctx.addIssue({ code: "custom", path: ["repos", i, "id"], message: "id does not match path" });
       }
     }
   });
@@ -307,18 +310,34 @@ export function freshConfig(): Config {
   return { ...defaultConfig(), setup: "pending" };
 }
 
-/** Stable identity for a repository: 12 hex chars of the sha1 of its canonical path, so one directory has one id. */
+/** The id a repository's canonical path derives: 12 hex chars of its sha1. Only {@link assignRepoId} hands it out. */
 export function repoId(path: string): string {
   return createHash("sha1").update(canonicalPath(path)).digest("hex").slice(0, 12);
+}
+
+const REPO_ID = /^[a-f0-9]{12}$/;
+
+/**
+ * The id a repository gets when it is added; it is stored and kept from then on, whatever its path's spelling on disk
+ * becomes (openspec/specs/repo-discovery). Usually {@link repoId}; when another configured repository already holds
+ * that — possible once an id outlives the spelling it was derived from — the first of `sha1(<path>\n<n>)` not taken.
+ */
+export function assignRepoId(path: string, taken: Iterable<string>): string {
+  const abs = canonicalPath(path);
+  const held = new Set(taken);
+  let id = repoId(abs);
+  for (let n = 1; held.has(id); n++) id = createHash("sha1").update(`${abs}\n${n}`).digest("hex").slice(0, 12);
+  return id;
 }
 
 export function repoNameFromPath(path: string): string {
   return basename(expandPath(path));
 }
 
-export function newRepoConfig(path: string, enabled = false): RepoConfig {
+/** A repository about to be added; `taken` are the ids the configuration it joins already holds. */
+export function newRepoConfig(path: string, enabled = false, taken: Iterable<string> = []): RepoConfig {
   const abs = canonicalPath(path);
-  return { id: repoId(abs), path: abs, name: repoNameFromPath(abs), enabled };
+  return { id: assignRepoId(abs, taken), path: abs, name: repoNameFromPath(abs), enabled };
 }
 
 export function validateConfig(input: unknown): Config {
@@ -380,8 +399,9 @@ function canonicalList(input: unknown): unknown {
 
 /**
  * Brings a config written by an earlier version up to date before it is validated: `ignorePaths` defaults to empty,
- * stored paths become canonical, ids are recomputed, and repositories that turn out to be one directory are merged
- * (the enabled entry wins, else the first, together with its name). Anything it does not understand is left for
+ * stored paths become canonical, and repositories that turn out to be one directory are merged (the enabled entry wins,
+ * else the first, together with its name and id). A well-formed stored id is kept even when its path now canonicalises
+ * to another spelling; only an entry without one is assigned an id. Anything it does not understand is left for
  * validation to report.
  */
 export function migrateConfig(raw: unknown): { config: unknown; changed: boolean; warning?: string } {
@@ -390,7 +410,7 @@ export function migrateConfig(raw: unknown): { config: unknown; changed: boolean
   const next: Record<string, unknown> = { ...input, scanRoots: canonicalList(input.scanRoots), ignorePaths: canonicalList(input.ignorePaths ?? []) };
   const merged: string[] = [];
   if (Array.isArray(input.repos)) {
-    const byId = new Map<string, Record<string, unknown>>();
+    const byPath = new Map<string, Record<string, unknown>>();
     const repos: unknown[] = [];
     for (const entry of input.repos) {
       if (!entry || typeof entry !== "object" || typeof (entry as { path?: unknown }).path !== "string" || !(entry as { path: string }).path) {
@@ -398,10 +418,10 @@ export function migrateConfig(raw: unknown): { config: unknown; changed: boolean
         continue;
       }
       const path = canonicalPath((entry as { path: string }).path);
-      const repo: Record<string, unknown> = migrateAutoFetch({ ...(entry as Record<string, unknown>), id: repoId(path), path });
-      const kept = byId.get(repo.id as string);
+      const repo: Record<string, unknown> = migrateAutoFetch({ ...(entry as Record<string, unknown>), path });
+      const kept = byPath.get(path);
       if (!kept) {
-        byId.set(repo.id as string, repo);
+        byPath.set(path, repo);
         repos.push(repo);
         continue;
       }
@@ -409,9 +429,17 @@ export function migrateConfig(raw: unknown): { config: unknown; changed: boolean
       const loser = winner === kept ? repo : kept;
       merged.push(`"${String(loser.name)}" into "${String(winner.name)}" (${path})`);
       if (winner !== kept) {
-        byId.set(repo.id as string, repo);
+        byPath.set(path, repo);
         repos[repos.indexOf(kept)] = repo;
       }
+    }
+    // Assigned after merging, so a new id cannot take one a kept entry holds.
+    const taken = new Set([...byPath.values()].flatMap((repo) => (typeof repo.id === "string" && REPO_ID.test(repo.id) ? [repo.id] : [])));
+    for (const [path, repo] of byPath) {
+      if (typeof repo.id === "string" && REPO_ID.test(repo.id)) continue;
+      const id = assignRepoId(path, taken);
+      repo.id = id;
+      taken.add(id);
     }
     next.repos = repos;
   }
@@ -455,6 +483,24 @@ export function configRevision(config: Config): string {
   return `"${createHash("sha1").update(JSON.stringify(config)).digest("hex").slice(0, 16)}"`;
 }
 
+/**
+ * A write cannot re-point an id (openspec/specs/dashboard-api, "Config endpoints"): an id the replaced config holds
+ * must still name the same directory — both paths canonicalised now, so the old spelling of a folder renamed by case or
+ * replaced by a link to it passes — and an id it does not hold must be the one the dashboard assigns to that path.
+ */
+function checkRepoIds(previous: Config, next: Config): void {
+  const before = new Map(previous.repos.map((r) => [r.id, r.path]));
+  const issues: string[] = [];
+  for (const [i, repo] of next.repos.entries()) {
+    const path = canonicalPath(repo.path);
+    const old = before.get(repo.id);
+    if (old !== undefined ? canonicalPath(old) !== path : repo.id !== assignRepoId(path, before.keys())) {
+      issues.push(`repos.${i}.id: ${old !== undefined ? "this id belongs to another directory" : "not the id this path is assigned"}`);
+    }
+  }
+  if (issues.length) throw new ConfigValidationError(issues);
+}
+
 /** The tail of the queue of config writes; a failed write must not stop the ones after it. */
 let pendingWrite: Promise<unknown> = Promise.resolve();
 
@@ -468,6 +514,7 @@ export function updateConfig(state: { config: Config }, change: (current: Config
     const previous = state.config;
     const next = await change(previous);
     if (next === undefined) return { previous, saved: previous };
+    checkRepoIds(previous, next);
     state.config = await saveConfig(next);
     return { previous, saved: state.config };
   });
