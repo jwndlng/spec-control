@@ -6,6 +6,7 @@ import { relTime } from "./format.ts";
 import { isEndedProposalSession, isProposalSession, receivingSession } from "../shared/sessionBranch.ts";
 import { mergePending, pullRequestReadiness, readinessDetail } from "../shared/pullRequestReadiness.ts";
 import { availableActions, DEFAULT_EDITOR, editorCommandLine, type EditorAvailability, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type RepoPullRequests, type Session, type SessionAction, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
+import { changeAgentFor } from "../shared/changeAgent.ts";
 
 /** Session starters are shown when the feature is on, for every tracked repository that has not been switched off. */
 export function sessionsEnabledFor(config: Config | null, repoId: string): boolean {
@@ -20,9 +21,18 @@ export function agentForRepo(config: Config | null, repoId: string): AgentProfil
   return agents.find((a) => a.id === wanted) ?? agents.find((a) => a.id === config.agentSessions.defaultAgent);
 }
 
+export function agentForChange(config: Config | null, repoId: string, change: string): AgentProfile | undefined {
+  const repo = config?.repos.find((item) => item.id === repoId);
+  return config && repo ? changeAgentFor(config, repo, change) : undefined;
+}
+
 /** What the change's stage allows, narrowed to what this repository's agent has an opening prompt for. */
-export function startersFor(config: Config | null, card: Pick<ChangeSnapshot, "repoId" | "archived" | "artifacts" | "stage" | "subState" | "blocked">): SessionAction[] {
-  const agent = agentForRepo(config, card.repoId);
+export function startersFor(config: Config | null, card: Pick<ChangeSnapshot, "repoId" | "archived" | "artifacts" | "stage" | "subState" | "blocked"> & Partial<Pick<ChangeSnapshot, "name">>): SessionAction[] {
+  const agent = agentForChange(config, card.repoId, card.name ?? "");
+  return startersForAgent(agent, card);
+}
+
+function startersForAgent(agent: AgentProfile | undefined, card: Pick<ChangeSnapshot, "archived" | "artifacts" | "stage" | "subState" | "blocked">): SessionAction[] {
   if (!agent) return [];
   return availableActions(card).filter((action) => (action === "fastForward" ? fastForwardAvailable(agent) : Boolean(agent.prompts[action])));
 }
@@ -157,10 +167,13 @@ export function nextStepFor(sessions: ChangeSession[], repoId: string, change: s
  * session that ends the proposal session first (one-console-per-change D2). Undefined when the session receives nothing:
  * it has ended, or another session of the change is the one that runs.
  */
-export function consoleSteps(config: Config | null, sessions: ChangeSession[], card: Pick<ChangeSnapshot, "repoId" | "archived" | "artifacts" | "stage" | "subState" | "blocked">, session: ChangeSession): { into: SessionAction[]; endFirst: SessionAction[] } | undefined {
+export function consoleSteps(config: Config | null, sessions: ChangeSession[], card: Pick<ChangeSnapshot, "repoId" | "archived" | "artifacts" | "stage" | "subState" | "blocked"> & Partial<Pick<ChangeSnapshot, "name">>, session: ChangeSession): { into: SessionAction[]; endFirst: SessionAction[] } | undefined {
   if (session.state !== "running") return undefined;
   const receives = (action: SessionAction) => nextStepFor(sessions, session.repoId, session.change, action).promptSessionId === session.id;
-  const starters = startersFor(config, card);
+  // A running process keeps its own profile even after the next-session override changes. Its next-step availability
+  // and prompt therefore follow the recorded agent, while an untouched change follows its configured override.
+  const sessionAgent = config?.agentSessions.agents.find((agent) => agent.id === session.agentId);
+  const starters = startersForAgent(sessionAgent, card);
   if (isProposalSession(session)) {
     if (!receives("draft")) return undefined;
     return { into: starters.filter((a) => a === "draft"), endFirst: starters.filter((a) => a !== "draft" && a !== "fastForward") };

@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { AGENT_PRESETS, defaultAgentSessions } from "../shared/agentDefaults.ts";
 import { MAX_LABEL_COLORS, MAX_LABEL_LENGTH, MAX_LABELS } from "../shared/labels.ts";
-import type { Config, PromptKey, RepoConfig } from "../shared/types.ts";
+import { CHANGE_NAME_PATTERN, type Config, type PromptKey, type RepoConfig } from "../shared/types.ts";
 import { canonicalPath, configPath, dashboardHome, expandPath } from "./paths.ts";
 
 export const DEFAULT_PORT = 4711;
@@ -219,7 +219,7 @@ const repoSchema = z.object({
   path: absolutePath,
   name: z.string().trim().min(1),
   enabled: z.boolean(),
-  agent: z.object({ enabled: z.boolean(), agentId: z.string().optional(), autoMergeDocs: z.boolean().optional() }).optional(),
+  agent: z.object({ enabled: z.boolean(), agentId: z.string().optional(), changeAgents: z.record(z.string().regex(CHANGE_NAME_PATTERN), z.string()).optional(), autoMergeDocs: z.boolean().optional() }).optional(),
   labels: labelsSchema,
   hiddenLabels: labelsSchema,
   prTitleConvention: z.literal("conventional-commits").optional(),
@@ -281,6 +281,9 @@ export const configSchema = z
       ids.add(repo.id);
       if (repo.agent?.agentId && !cfg.agentSessions.agents.some((a) => a.id === repo.agent?.agentId)) {
         ctx.addIssue({ code: "custom", path: ["repos", i, "agent", "agentId"], message: "unknown agent" });
+      }
+      for (const [change, agentId] of Object.entries(repo.agent?.changeAgents ?? {})) {
+        if (!cfg.agentSessions.agents.some((a) => a.id === agentId)) ctx.addIssue({ code: "custom", path: ["repos", i, "agent", "changeAgents", change], message: "unknown agent" });
       }
       for (const key of ["labels", "hiddenLabels"] as const) {
         const dup = duplicateLabel(repo[key]);

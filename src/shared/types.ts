@@ -465,6 +465,8 @@ export interface RepoAgentConfig {
   enabled: boolean;
   /** Agent profile used for this repository; absent means the default agent. */
   agentId?: string;
+  /** Agent profiles selected for individual active changes. */
+  changeAgents?: Record<string, string>;
   /** Docs auto-merge: Ship and Archive leave a docs-only pull request open and Spec Control asks the agent to merge it once
    *  it is ready (agent-merges-docs-prs). The name predates that and is kept for compatibility. Absent means off. */
   autoMergeDocs?: boolean;

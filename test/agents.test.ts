@@ -4,7 +4,7 @@ import { agentEnv, agentFor, carryOverPrompt, fastForwardPrompt, integratePrompt
 import { Scrollback, sessionBranch, worktreeName } from "../src/server/sessions/manager.ts";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE, CODEX_PROFILE, DEFAULT_SHORTCUTS, FORMER_PROMPTS } from "../src/shared/agentDefaults.ts";
 import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, availableActions, pastDraftingReason, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, mergeTargetSentence, proposalHandoverSentence, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
-import { agentForRepo, cardIsLive, cardSessionControls, NEEDS_YOU_AFTER_MS, parseArgLines, sessionBadge, sessionForChange, sessionsEnabledFor, silenceDuration, slugId, startersFor } from "../src/ui/sessionState.ts";
+import { agentForRepo, cardIsLive, cardSessionControls, consoleSteps, NEEDS_YOU_AFTER_MS, parseArgLines, sessionBadge, sessionForChange, sessionsEnabledFor, silenceDuration, slugId, startersFor } from "../src/ui/sessionState.ts";
 import { openSpec } from "../src/server/frameworks/openspec/index.ts";
 import { fakeProfile } from "./sessionHelpers.ts";
 
@@ -392,6 +392,29 @@ test("agent per repository, falling back to the default", () => {
   expect(agentFor(cfg, cfg.repos[0])?.id).toBe("b");
   expect(agentFor(cfg, repo)?.id).toBe("a");
   expect(agentForRepo(cfg, repo.id)?.name).toBe("B");
+});
+
+test("agent per change overrides the project choice and otherwise falls back", () => {
+  const repo = newRepoConfig("/w/demo-ops", true);
+  const cfg = { ...base, repos: [{ ...repo, agent: { enabled: true, agentId: "b", changeAgents: { "rotate-keys": "a" } } }], agentSessions: { ...base.agentSessions, enabled: true, agents: [fakeProfile({ id: "a" }), fakeProfile({ id: "b", name: "B" })], defaultAgent: "a" } };
+  expect(agentFor(cfg, cfg.repos[0], "rotate-keys")?.id).toBe("a");
+  expect(agentFor(cfg, cfg.repos[0], "other-change")?.id).toBe("b");
+  expect(agentFor(cfg, repo, "other-change")?.id).toBe("a");
+  const withPrompts = { ...cfg, agentSessions: { ...cfg.agentSessions, agents: [fakeProfile({ id: "a", prompts: { implement: "i {change}" } }), fakeProfile({ id: "b", prompts: { draft: "d {change}" } })] } };
+  const card = { repoId: repo.id, artifacts: [{ id: "a", status: "done" as const }, { id: "b", status: "ready" as const }], stage: "drafts" as const };
+  expect(startersFor(withPrompts, { ...card, name: "rotate-keys" })).not.toContain("draft");
+  expect(startersFor(withPrompts, { ...card, name: "other-change" })).toContain("draft");
+});
+
+test("a running session keeps its own next-step prompts after the change override changes", () => {
+  const repo = newRepoConfig("/w/demo-ops", true);
+  const original = fakeProfile({ id: "a", prompts: { implement: "i {change}" } });
+  const next = fakeProfile({ id: "b", prompts: {} });
+  const cfg = { ...base, repos: [{ ...repo, agent: { enabled: true, changeAgents: { c: "b" } } }], agentSessions: { ...base.agentSessions, enabled: true, agents: [original, next], defaultAgent: "a" } };
+  const card = { repoId: repo.id, name: "c", artifacts: [{ id: "design", status: "done" as const }, { id: "tasks", status: "done" as const }], stage: "ready" as const };
+  const running = session({ repoId: repo.id, change: "c", agentId: "a", action: "implement" });
+  expect(startersFor(cfg, card)).toEqual([]);
+  expect(consoleSteps(cfg, [running], card, running)?.into).toContain("implement");
 });
 
 test("starters: a blocked change is not offered Implement, everything else is unchanged", () => {

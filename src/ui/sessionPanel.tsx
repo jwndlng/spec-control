@@ -275,6 +275,22 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   // The badge sits beside the work badge, not instead of it: "pushed" and "no longer merges" are both true.
   // The change's pull request, from the lists the page already holds: GitHub's conflict counts here too.
   const card = repoId && change ? ui.snapshot?.repos.find((r) => r.id === repoId)?.changes.find((c) => c.name === change && !c.archived) : undefined;
+  const nextAgentId = repo && change ? (repo.agent?.changeAgents?.[change] ?? repo.agent?.agentId ?? ui.config?.agentSessions.defaultAgent) : undefined;
+  const nextAgent = ui.config?.agentSessions.agents.find((agent) => agent.id === nextAgentId);
+  const [agentError, setAgentError] = useState<string>();
+  const [savingAgent, setSavingAgent] = useState(false);
+  const chooseAgent = async (agentId: string) => {
+    if (!repoId || !change || savingAgent) return;
+    setSavingAgent(true);
+    setAgentError(undefined);
+    try {
+      ui.saveConfig(await api.setChangeAgent(repoId, change, agentId || null));
+    } catch (err) {
+      setAgentError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingAgent(false);
+    }
+  };
   const canResolve = resolvable(session, tree, card ? linkedPullRequest(card, prs.data?.repos) : undefined, prs.data?.repos.find((r) => r.repoId === repoId)?.fetchedAt);
   const merged = tree?.work.state === "merged";
   // Merge: the session's open pull request, from the lists the page already holds (agent-merges-docs-prs D7) — or the
@@ -313,6 +329,16 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   return (
     <section class="console-pane" aria-label={`Agent console ${change ?? ""}`}>
       <header class="session-head">
+        {card && repo && ui.config && ui.config.agentSessions.agents.length > 1 && (
+          <div class="row change-agent-picker">
+            <label>Agent <select aria-label="Change agent" value={repo.agent?.changeAgents?.[change ?? ""] ?? ""} disabled={savingAgent} onChange={(event) => void chooseAgent(event.currentTarget.value)}>
+              <option value="">Project agent ({ui.config.agentSessions.agents.find((agent) => agent.id === repo.agent?.agentId)?.name ?? ui.config.agentSessions.agents.find((agent) => agent.id === ui.config?.agentSessions.defaultAgent)?.name})</option>
+              {ui.config.agentSessions.agents.map((agent) => <option value={agent.id}>{agent.name}</option>)}
+            </select></label>
+          </div>
+        )}
+        {agentError && <div class="notice danger" role="status">{agentError}</div>}
+        {session && nextAgent && session.agentId !== nextAgent.id && <div class="hint">This session uses {session.agentName}; the next session starts {nextAgent.name}.</div>}
         <div class="row">
           {session && <span class="hint">{session.agentName}</span>}
           {repo && <span class="hint">· {repo.name}</span>}

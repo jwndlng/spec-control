@@ -12,7 +12,7 @@ import { type NextStep, type PullRequestStep, waitingLabel } from "../shared/nex
 import { isProposalPullRequest } from "../shared/pullRequestLink.ts";
 import { runningProposalSession } from "../shared/sessionBranch.ts";
 import { ActionMenu, type ActionItem, type ActionStatus } from "./actionMenu.tsx";
-import { afterStart, agentForRepo, type AutoMergeReport, cardSessionControls, conflictBadge, consoleSteps, editorControl, type EditorControl, endProposalConfirmation, openWork, pullRequestSession, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, starterSplit, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
+import { afterStart, agentForChange, agentForRepo, type AutoMergeReport, cardSessionControls, conflictBadge, consoleSteps, editorControl, type EditorControl, endProposalConfirmation, openWork, pullRequestSession, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, starterSplit, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
 import { boardFrom, changePath, CONSOLE_TAB, parseDetailQuery, routeFromPath, serializeDetailQuery } from "./routes.ts";
 import { currentPath, currentQuery, followInApp, hrefWithQuery, navigate } from "./url.ts";
 
@@ -77,11 +77,12 @@ interface SessionUi {
    * confirmation while the proposal is not pushed, and a cancelled one starts and ends nothing.
    */
   start(repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; removeDuplicate?: boolean; resolveConflicts?: boolean; endProposal?: boolean }): Promise<string | undefined>;
+  saveConfig(config: Config): void;
   refresh(): Promise<void>;
 }
 
 const noop = async () => undefined;
-const Context = createContext<SessionUi>({ config: null, snapshot: null, sessions: [], consoles: [], consoleOpen: false, showConsole: () => {}, integrations: [], showIntegration: () => {}, projectConsoles: [], showProjectConsole: () => {}, agents: [], worktrees: [], focusTick: { tick: 0 }, reportUnsent: () => {}, reportAutoMerge: () => {}, requestEnd: () => {}, openPanel: () => {}, openChangeConsole: () => {}, start: noop, refresh: noop });
+const Context = createContext<SessionUi>({ config: null, snapshot: null, sessions: [], consoles: [], consoleOpen: false, showConsole: () => {}, integrations: [], showIntegration: () => {}, projectConsoles: [], showProjectConsole: () => {}, agents: [], worktrees: [], focusTick: { tick: 0 }, reportUnsent: () => {}, reportAutoMerge: () => {}, requestEnd: () => {}, openPanel: () => {}, openChangeConsole: () => {}, start: noop, refresh: noop, saveConfig: () => {} });
 
 export const useSessionUi = () => useContext(Context);
 
@@ -228,7 +229,7 @@ export function SessionProvider({
 
   const shown = consoleOpen && enabled;
   const value = useMemo(
-    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, refresh }),
+    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, refresh, saveConfig: onConfig }),
     [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, autoMerge, error, openPanel, openConsole, start, refresh],
   );
   const answerFastForward = useCallback(
@@ -527,7 +528,7 @@ export function SessionControls({
   const offered = into ? consoleSteps(ui.config, ui.sessions, card, into) : undefined;
   const endsProposal = (action: SessionAction) => offered?.endFirst.includes(action) === true;
   const { main, menu } = into ? starterSplit(card, offered ? [...offered.into, ...offered.endFirst] : [], pullRequest) : controls;
-  const agent = agentForRepo(ui.config, card.repoId);
+  const agent = agentForChange(ui.config, card.repoId, card.name);
   const found = ui.agents.find((a) => a.id === agent?.id);
   const unavailable = !into && found && !found.available ? `${found.name} was not found on this machine — check its command in Settings` : undefined;
   const target = pullRequestSession(ui.sessions, card, pullRequest);
@@ -573,6 +574,9 @@ export function SessionControls({
         <SessionBadgeView key={session.id} badge={sessionBadge(session)} onClick={() => ui.openPanel(session.id)} />
       ))}
       <ActionMenu main={mainPart} items={items} name={card.name} disabled={starting !== undefined} />
+      {place === "card" && ui.config?.repos.find((repo) => repo.id === card.repoId)?.agent?.changeAgents?.[card.name] && (
+        <span class="change-agent-name" title="This change uses this agent instead of the project's">{agent?.name}</span>
+      )}
       {failure && (
         <span class="notice danger session-failure" role="status">
           {failure}

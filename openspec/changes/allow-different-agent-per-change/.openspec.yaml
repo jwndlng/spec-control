@@ -1,2 +1,5 @@
 schema: spec-driven
 created: 2026-10-28
+spec-control:
+  branch: feat/allow-different-agent-per-change
+

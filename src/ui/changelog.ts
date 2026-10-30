@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-10-28-agent-per-change",
+    date: "2026-10-28",
+    title: "Choose an agent for each change",
+    summary:
+      "When several agent profiles are configured, choose which one starts new sessions for a change from its **Console** tab. Other changes keep using the project's agent, and a running session keeps the agent it started with.",
+  },
+  {
     id: "2026-10-28-link-only-own-branch",
     date: "2026-10-28",
     title: "Cards no longer show another change's pull request",
