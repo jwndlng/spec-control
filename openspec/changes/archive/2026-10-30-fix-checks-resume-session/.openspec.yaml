@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-10-28
+spec-control:
+  archive-branch: chore/archive-fix-checks-resume-session
