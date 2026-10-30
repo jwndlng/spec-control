@@ -31,3 +31,11 @@ test("with no items there is no menu to open", () => {
   for (const key of ["Enter", " ", "ArrowDown", "ArrowUp"]) expect(menuKey(MENU_CLOSED, key, 0)).toEqual({ state: MENU_CLOSED, handled: false });
   expect(menuKey({ open: true, index: 0 }, "ArrowDown", 0)).toEqual({ state: MENU_CLOSED, handled: false });
 });
+
+test("card hover does not establish a containing block for the fixed action menu", async () => {
+  const css = (await Bun.file(new URL("../src/ui/styles.css", import.meta.url)).text()).replace(/\/\*[\s\S]*?\*\//g, "");
+  const cardRules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /(?:^|,)\s*\.card(?::hover)?\s*(?:,|$)/.test(m[1]));
+  expect(cardRules.length).toBeGreaterThan(0);
+  for (const rule of cardRules) expect(rule[2]).not.toMatch(/(?:^|;)\s*(?:transform|filter|perspective)\s*:/);
+  expect(css.match(/\.split-menu\s*\{([^}]*)\}/)?.[1]).toContain("position: fixed");
+});

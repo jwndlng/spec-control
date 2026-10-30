@@ -31,7 +31,7 @@ The dashboard SHALL be built with `bun build --compile` into one executable name
 
 ### Requirement: Config endpoints
 
-`GET /api/config` SHALL return the config. `PUT /api/config` SHALL validate the body (absolute paths for `scanRoots`, `ignorePaths` and `repos[].path`, `pollIntervalSeconds >= 10`, unique repo ids, each repo `id` matching its canonical path), canonicalise all paths, persist it atomically, and return the saved config; invalid bodies MUST return `400` with a message and leave the config unchanged. A body without `ignorePaths` SHALL be accepted and saved with `ignorePaths: []`. If the set of enabled repos changed, a scan MUST be triggered. `PUT /api/config` SHALL keep the stored `setup` value whatever the body carries for it, so that a client holding an older copy of the configuration can neither end nor restart setup; only `POST /api/setup/done` clears it, and nothing sets it again.
+`GET /api/config` SHALL return the config. `PUT /api/config` SHALL validate the body (absolute paths for `scanRoots`, `ignorePaths` and `repos[].path`, `pollIntervalSeconds >= 10`, unique repo ids, no two repos resolving to the same directory), canonicalise all paths, check the repository ids against the configuration it replaces — an id the stored configuration holds MUST still name the same directory, that is the canonical forms of its stored and its new path are equal, and an id it does not hold MUST be the id the dashboard assigns to that path (`repo-discovery`: "Repository display names are editable") — persist it atomically, and return the saved config; invalid bodies MUST return `400` with a message and leave the config unchanged. A body without `ignorePaths` SHALL be accepted and saved with `ignorePaths: []`. If the set of enabled repos changed, a scan MUST be triggered. `PUT /api/config` SHALL keep the stored `setup` value whatever the body carries for it, so that a client holding an older copy of the configuration can neither end nor restart setup; only `POST /api/setup/done` clears it, and nothing sets it again. The same id check SHALL apply to every other write of the configuration (the single-repository endpoints, Enable, Ignore, a confirmed integration), inside the serialised write, so that no write fails because a tracked folder's spelling on disk changed while the dashboard runs, and none can re-point an id at another directory.
 
 #### Scenario: Invalid interval
 - **WHEN** `PUT /api/config` is called with `pollIntervalSeconds: 1`
@@ -47,7 +47,7 @@ The dashboard SHALL be built with `bun build --compile` into one executable name
 
 #### Scenario: Duplicate directory is rejected
 - **WHEN** `PUT /api/config` is called with two repos whose paths resolve to the same directory
-- **THEN** the response is `400` reporting a duplicate repo id
+- **THEN** the response is `400` reporting that the same directory is listed twice
 
 #### Scenario: Saving Settings does not change setup
 - **WHEN** the stored config has `setup: "pending"` and `PUT /api/config` is called with a body without `setup`
@@ -56,6 +56,18 @@ The dashboard SHALL be built with `bun build --compile` into one executable name
 #### Scenario: An old copy cannot restart setup
 - **WHEN** setup was marked done and a client sends `PUT /api/config` with `setup: "pending"`
 - **THEN** the saved config has no `setup` key
+
+#### Scenario: Saving after a case-only rename
+- **WHEN** `/w/acme/Acme` is tracked with id `f055f4484961`, the folder is renamed to `/w/acme/acme` on a case-insensitive file system while the dashboard runs, and `PUT /api/config` is called with the repository still at `/w/acme/Acme`
+- **THEN** the response is `200` and the saved config holds the repository with path `/w/acme/acme` and id `f055f4484961`
+
+#### Scenario: Writes after the folder became a link
+- **WHEN** a tracked folder `/w/acme/alpha-infra` is moved to `/w/acme/repos/alpha-infra` and a symbolic link to it is left at `/w/acme/alpha-infra` while the dashboard runs
+- **THEN** `POST /api/repos/<id>/enabled`, `POST /api/repos/<id>/labels` and `POST /api/ignore-paths` succeed, and the repository's path becomes `/w/acme/repos/alpha-infra` with its id unchanged
+
+#### Scenario: An id cannot be re-pointed
+- **WHEN** `demo-ops` and `alpha-infra` are tracked and `PUT /api/config` is called with `demo-ops`'s id and `alpha-infra`'s path
+- **THEN** the response is `400` naming that repository's `id`, and the stored config is unchanged
 
 ### Requirement: Discover endpoint
 
@@ -107,11 +119,15 @@ The dashboard SHALL be built with `bun build --compile` into one executable name
 
 ### Requirement: Scan endpoint
 
-`POST /api/scan` SHALL trigger an immediate scan and return `{ started: true }`, or `{ started: false }` if a scan is already in flight.
+`POST /api/scan` SHALL trigger an immediate scan and return `{ started: true }`, or `{ started: false }` if a scan is already in flight. In the latter case the request SHALL queue the follow-up scan the `change-scanner` capability specifies, so that a scan starting after the request has arrived is guaranteed either way and a client needs no second request to get one.
 
 #### Scenario: Trigger
 - **WHEN** no scan is running and `POST /api/scan` is called
 - **THEN** the response is `{ started: true }` and a new snapshot is available afterwards
+
+#### Scenario: Trigger during a scan
+- **WHEN** a scan is running, a change `lint-rules` is created in `demo-ops`, and `POST /api/scan` is called once
+- **THEN** the response is `{ started: false }` and, without any further request, a later snapshot shows `lint-rules`
 
 ### Requirement: Activity endpoint
 `GET /api/activity` SHALL return `{ events, nextBefore?, newestId?, newerThanSince?, summary?, metrics? }`: recorded activity newest first, with consecutive task progress of one change already collapsed. Only events the activity log keeps — those within its 7-day retention window — SHALL be returned, pointed at or counted: an event older than that MUST NOT appear in `events`, MUST NOT be the reason for a `nextBefore`, MUST NOT be `newestId`, MUST NOT count towards `newerThanSince` and MUST NOT count towards `summary` or `metrics`. It SHALL accept `limit` (1–500, default 100), `before` (an event id; only older events are returned), `repos` (comma-separated repository ids), `kinds` (comma-separated event kinds), `since` (an event id, possibly empty) and `tz` (an IANA time zone name such as `Europe/Zurich`; `UTC` when absent). `nextBefore` SHALL be present when older events matching the filters exist; `newestId` SHALL be the id of the newest recorded event regardless of filters, and absent when there is none. When `since` is given, `newerThanSince` SHALL be the number of recorded events newer than that id regardless of filters — all of them for an empty `since`. When the request has no `before`, `summary` SHALL hold the figures of the Activity view's summary tiles — `created`, `moved`, `archived`, `tasksCompleted`, `sessions` and `attention` — and `metrics` SHALL hold the Activity view's metrics — `events` (the number of events), `changes` (the number of distinct changes touched, told apart by repository id and change name), `days` (for every calendar day in `tz` from the day holding the start of the retention window up to and including the current day, oldest first, `{ day, events, changes, groups, figures, hours }` with `day` as `YYYY-MM-DD`, `groups` the number of events per kind group `{ changes, tasks, sessions, repositories }`, `figures` that day's six summary figures with the same keys and rules as `summary`, and `hours` 24 numbers, the events whose time in `tz` falls in each hour `00`–`23`; all zero for a day without events) and `repos` (for every repository with at least one counted event, `{ repoId, repoName, events, changes, groups }` with the repository name of its newest counted event and `groups` as for a day, ordered by `events` descending, then by name). Both SHALL be computed over every retained event that matches `repos` and `kinds`, independent of `limit`, and counted on recorded events rather than collapsed entries; an event SHALL count on the day and in the hour of its time in `tz`. A request with `before` SHALL carry neither `summary` nor `metrics`. Invalid parameters, an unknown time zone among them, MUST return `400` with a message. The endpoint MUST NOT modify anything, and it MUST NOT return file system paths, terminal output or prompt text.
@@ -1573,3 +1589,18 @@ Every response whose body is the saved configuration — `GET /api/config`, `PUT
 #### Scenario: Command-line client
 - **WHEN** `curl -X PUT -H 'content-type: application/json'` sends a valid configuration without `If-Match`
 - **THEN** it is saved as before
+
+### Requirement: An interrupted home migration resumes on the next start
+Once the rename of the home migration ("The home moves once from its old name") has succeeded, the dashboard SHALL record in `migration.json` in the new home, before it runs any later step, every step it is about to run — the link at the old path, each file whose stored paths it rewrites, dropping the cached snapshot and each worktree it repairs — as pending, and SHALL update that record after every step, removing a step that succeeded and keeping one that failed with its reason. A start that finds the new home with a record listing pending steps SHALL run exactly those steps, whether they failed or were never attempted, and every step MUST be safe to run again: it MUST NOT change a file, link or worktree record that an earlier attempt already brought to its final state. A start that is stopped at any point after the rename — by a signal before the dashboard handles signals, by the desktop app or by a crash — MUST therefore leave the migration to be finished by the next start, never treated as done.
+
+#### Scenario: Stopped right after the rename
+- **WHEN** `~/.openspec-dashboard/` holding two session worktrees of `demo-ops` has been renamed to `~/.spec-control/` and the process is killed before the link is made
+- **THEN** the next start creates the link at `~/.openspec-dashboard`, rewrites the session records' worktree paths, runs `git worktree repair` for both worktrees, and leaves `migration.json` with no pending steps
+
+#### Scenario: Stopped halfway through the steps
+- **WHEN** the migration made the link and rewrote `config.json` and was then stopped before any worktree was repaired
+- **THEN** the next start repairs both worktrees and leaves the link and `config.json` byte for byte as the first run left them
+
+#### Scenario: Interrupted migration and repository cleanup
+- **WHEN** a migration was interrupted before its worktree repairs and the dashboard has started again
+- **THEN** the worktree records of `demo-ops` name the paths under `~/.spec-control/worktrees/` before any repository cleanup can run `git worktree prune`, so no record is pruned for a worktree that still exists

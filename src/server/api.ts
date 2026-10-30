@@ -13,7 +13,7 @@ import { changeDirFor, listArtifactFiles, readArtifactFile } from "./artifacts.t
 import { consoleFolderProblem } from "./sessions/consoleFolder.ts";
 import { createWorkspaceFolder, type FolderPickerContext, FolderPickerBusyError, folderPickerContext, markSetupDone, pickFolder, setupState } from "./setup.ts";
 import { NewFolderError } from "./newFolder.ts";
-import { ConfigValidationError, configRevision, newRepoConfig, repoId, updateConfig, validateConfig, validateIgnorePaths, validateScanRoots } from "./config.ts";
+import { ConfigValidationError, configRevision, newRepoConfig, updateConfig, validateConfig, validateIgnorePaths, validateScanRoots } from "./config.ts";
 import { createChange } from "./createChange.ts";
 import { createProject, CreateProjectError } from "./createProject.ts";
 import { dismissChange, DismissError, previewDismiss } from "./dismissChange.ts";
@@ -36,7 +36,7 @@ import { frameworkById } from "./frameworks/registry.ts";
 import type { KeepAwake } from "./keepAwake.ts";
 import type { UpdateChecker } from "./updateCheck.ts";
 import { VERSION } from "./version.ts";
-import { gitExecutable } from "./paths.ts";
+import { canonicalPath, gitExecutable } from "./paths.ts";
 
 export interface AppState {
   config: Config;
@@ -131,13 +131,21 @@ async function putConfig(state: AppState, req: Request): Promise<Response> {
   const ifMatch = req.headers.get("if-match");
   let stale: Config | undefined;
   // `setup` is the server's, not the client's: a Settings tab holding an older copy can neither end nor restart setup.
-  const { previous, saved } = await updateConfig(state, (current) => {
-    if (ifMatch !== null && ifMatch !== configRevision(current)) {
-      stale = current;
-      return undefined;
-    }
-    return { ...next, setup: current.setup };
-  });
+  let written: Awaited<ReturnType<typeof updateConfig>>;
+  try {
+    written = await updateConfig(state, (current) => {
+      if (ifMatch !== null && ifMatch !== configRevision(current)) {
+        stale = current;
+        return undefined;
+      }
+      return { ...next, setup: current.setup };
+    });
+  } catch (err) {
+    // The id check against the config it replaces runs inside the write: an id re-pointed at another directory.
+    if (err instanceof ConfigValidationError) return json({ error: err.message, issues: err.issues }, 400);
+    throw err;
+  }
+  const { previous, saved } = written;
   if (stale) return new Response(JSON.stringify({ error: "the configuration was changed elsewhere since it was read", config: stale }), { status: 412, headers: { ...JSON_HEADERS, etag: configRevision(stale) } });
   afterConfigChange(state, previous);
   return configJson(saved);
@@ -180,15 +188,21 @@ const NOT_A_CANDIDATE = "this folder is not a repository discovery offers for tr
 async function postTrackRepo(state: AppState, req: Request): Promise<Response> {
   const path = requestedPath(await readJson(req));
   if (!path) return json({ error: "path must be an absolute path" }, 400);
-  const id = repoId(path);
+  // By directory, not by id: a repository keeps its id after its folder's spelling changed (repo-discovery).
+  const configured = (repos: RepoConfig[]) => repos.find((r) => canonicalPath(r.path) === path);
   // Slow and read-only, so it runs before the write is queued; the write re-checks only what can change meanwhile.
-  const candidate = state.config.repos.some((r) => r.id === id)
+  const candidate = configured(state.config.repos)
     ? undefined
-    : (await discoverRepos(state.config.repos, state.config.scanRoots, state.config.ignorePaths, state.githubClones?.runningPaths())).candidates.find((c) => c.id === id);
+    : (await discoverRepos(state.config.repos, state.config.scanRoots, state.config.ignorePaths, state.githubClones?.runningPaths())).candidates.find((c) => c.path === path);
   const { previous, saved } = await updateConfig(state, (current) => {
-    if (current.repos.some((r) => r.id === id)) return { ...current, repos: current.repos.map((r) => (r.id === id ? { ...r, enabled: true } : r)) };
+    const existing = configured(current.repos);
+    if (existing) return { ...current, repos: current.repos.map((r) => (r === existing ? { ...r, enabled: true } : r)) };
     if (!candidate) throw new TrackingError(404, NOT_A_CANDIDATE);
-    const repo = newRepoConfig(candidate.path, true);
+    const repo = newRepoConfig(
+      candidate.path,
+      true,
+      current.repos.map((r) => r.id),
+    );
     const named = {
       ...repo,
       name: availableName(

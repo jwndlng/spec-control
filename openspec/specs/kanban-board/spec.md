@@ -634,7 +634,7 @@ Each card SHALL offer a **Show details** action that opens its change's detail v
 ### Requirement: Cards show only what an overview needs
 A card SHALL show only what an overview needs: the change name in monospace, the relative age of `lastActivityAt` under it (e.g. `updated 3d ago`, or the archive date for an archived change), a progress bar, a console quick link in the card's top right corner, and a footer carrying the change's session status and next-step starter as the "Cards offer session starters and show session state" requirement gives them, together with **Show details**.
 
-The change name and its age SHALL have the top of the card to themselves apart from the console quick link, which SHALL occupy a slot of its own at the top right: the name SHALL wrap within the width that slot leaves and SHALL never be shortened or pushed by a badge. A card SHALL NOT show a separate session-status line between the age and the progress bar: the session status sits in the footer, so a card goes from its age straight to its progress bar whether or not it has a session. **Show details** SHALL have the same height and text size as the next-step starter button in the footer, so the two sit on the footer's line as a pair; at rest it keeps its quieter look than the starter. The progress bar SHALL be, for a change in `Drafts`, the drafting progress: the number of the change's artifacts that are done out of all of its schema's artifacts, labelled `done/total Artifacts`, with a tooltip and accessible name that say it counts artifacts (e.g. `2 of 4 artifacts written`); for any other change with tasks (`tasks.total > 0`), the task progress labelled `done/total Tasks`, with a tooltip and accessible name that say it counts tasks. Both bars SHALL share one shape and style; the word after the count is what tells them apart at a glance. A card in `Backlog`, and a card outside `Drafts` without tasks, SHALL show no progress bar. A card whose change is not archived and has tasks that need the user (`- [~]`) SHALL show a **Needs you** badge reading `N need you`; its tooltip and accessible name SHALL list the text of those tasks as the scan reports them (`change-scanner`: "Task progress is derived from tasks.md"), followed by `and N more` when the scan lists fewer than the count, so the user learns what to check or do without opening the change. The badge SHALL be drawn as text, never as HTML or Markdown from the repository. Activating it SHALL open the change's detail view on its tasks artifact. A card SHALL additionally show the `no tasks` warning and an error mark for any other warning the snapshot carries. A card SHALL NOT show the repository name — on the combined board every card sits in its repository's group, whose header names it, and a repository board names it in its header — nor the branch badge, the checkouts holding the change, the worktree's work status, the prompt, how long the change has been complete, whether its specs are synced, or which artifacts are written: the change's detail view shows those (change-detail: "Detail header shows the change's state"), and the column and the progress bar say how far the change has come.
+The change name and its age SHALL have the top of the card to themselves apart from the console quick link, which SHALL occupy a slot of its own at the top right: the name SHALL wrap within the width that slot leaves and SHALL never be shortened or pushed by a badge. A card SHALL NOT show a separate session-status line between the age and the progress bar: the session status sits in the footer, so a card goes from its age straight to its progress bar whether or not it has a session. **Show details** SHALL have the same height and text size as the next-step starter button in the footer, so the two sit on the footer's line as a pair; at rest it keeps its quieter look than the starter. The progress bar SHALL be, for a change in `Drafts`, the drafting progress: the number of the change's artifacts that are done out of all of its schema's artifacts, labelled `done/total Artifacts`, with a tooltip and accessible name that say it counts artifacts (e.g. `2 of 4 artifacts written`); for any other change with tasks (`tasks.total > 0`), the task progress labelled `done/total Tasks`, with a tooltip and accessible name that say it counts tasks. Both bars SHALL share one shape and style; the word after the count is what tells them apart at a glance. A card in `Backlog`, and a card outside `Drafts` without tasks, SHALL show no progress bar. A card whose change is not archived, or is archived in a linked worktree, and has tasks that need the user (`- [~]`) SHALL show a **Needs you** badge reading `N need you`; its tooltip and accessible name SHALL list the text of those tasks as the scan reports them (`change-scanner`: "Task progress is derived from tasks.md"), followed by `and N more` when the scan lists fewer than the count, so the user learns what to check or do without opening the change. The badge SHALL be drawn as text, never as HTML or Markdown from the repository. Activating it SHALL open the change's detail view on its tasks artifact. A card SHALL additionally show the `no tasks` warning and an error mark for any other warning the snapshot carries. A card SHALL NOT show the repository name — on the combined board every card sits in its repository's group, whose header names it, and a repository board names it in its header — nor the branch badge, the checkouts holding the change, the worktree's work status, the prompt, how long the change has been complete, whether its specs are synced, or which artifacts are written: the change's detail view shows those (change-detail: "Detail header shows the change's state"), and the column and the progress bar say how far the change has come.
 
 The branch badge in the repository board header MUST NOT extend beyond its container at any width. A branch name that fits SHALL be shown in full; one that does not SHALL be shortened in the middle with an ellipsis so that both its beginning and its end remain readable, with the branch glyph visible and the full name as its tooltip and accessible name.
 
@@ -1189,6 +1189,13 @@ Every starter SHALL behave exactly as it does today wherever it is chosen from �
 confirmation for Fast-forward, the same refusal shown in place, the same "Starting…" state, and in the Console tab of a
 running session the same sending into that session.
 
+The arrow part SHALL open the menu when activated by pointer, Enter, Space or Arrow Down. Pointer activation SHALL NOT
+activate the main part, navigate away from the board, or leave the menu hidden. The menu SHALL be positioned next to the
+arrow within the viewport and its first enabled item SHALL be available for activation. Activating an enabled item
+SHALL run only that action and close the menu. The existing keyboard navigation, accessible menu semantics, Escape and
+Tab behavior, outside-click and scroll dismissal, focus return, action ordering and disabled-state behavior SHALL be
+preserved.
+
 The arrow part SHALL be a menu button: it SHALL carry an accessible name naming the change ("More actions for
 <change>"), `aria-haspopup="menu"` and `aria-expanded`, and the menu SHALL use menu and menu-item semantics. The menu
 SHALL open with Enter, Space or Arrow Down and move focus to its first item; Arrow Up and Arrow Down SHALL move between
@@ -1202,6 +1209,11 @@ lists, with the same link and readiness the pull-request badge shows. It MUST NO
 the change's available actions, column, sub-state, progress or any count. When pull requests are unavailable for the
 repository or were never fetched, the recommended action is the stage's. A running session's badge SHALL stand in for
 the split button on a card exactly as it does for the starters today.
+
+#### Scenario: Open and use the menu with a pointer
+- **WHEN** a card has a recommended action and at least one other available action, and the user clicks its arrow
+- **THEN** the menu opens beside the arrow without activating the recommended action or leaving the board, and choosing
+  an enabled menu item runs that item once and closes the menu
 
 #### Scenario: Ready change with an optional design missing
 - **WHEN** change `rotate-keys` is in `Ready`, its optional `design.md` is not written, and agent sessions are enabled
@@ -1284,3 +1296,15 @@ NOT be reported as an error, and SHALL NOT stop polling or auto-refresh.
 #### Scenario: Same snapshot again
 - **WHEN** a poll answers with a snapshot whose `generatedAt` equals the one shown
 - **THEN** it is taken, exactly as today
+
+### Requirement: Continue pending archives
+
+A pending archived card without a running session SHALL offer **Continue archive** when agent sessions are enabled, opening the change's console so its session can be resumed or its work shipped. An archive found in a linked worktree SHALL show its **Needs you** badge for awaiting tasks.
+
+#### Scenario: Archive without a pull request
+- **WHEN** an archive is pending in a linked worktree and its session has exited
+- **THEN** its card offers **Continue archive**, which opens its console
+
+#### Scenario: Archive has tasks awaiting the user
+- **WHEN** an archive in a linked worktree contains tasks marked as needing the user
+- **THEN** its card shows the **Needs you** badge with those tasks
