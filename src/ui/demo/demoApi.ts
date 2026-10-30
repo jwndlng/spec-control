@@ -567,6 +567,21 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
           return { ...r, agent };
         });
       }),
+    setChangeAgent: (repoId, change, agentId) =>
+      failing(() => {
+        if (!config.agentSessions.enabled) throw new ApiError(403, "agent sessions are disabled");
+        if (!config.agentSessions.agents.some((agent) => agent.id === agentId) && agentId !== null) throw new ApiError(400, `unknown agent ${agentId}`);
+        const repo = config.repos.find((item) => item.id === repoId);
+        const card = repo && snapshot().repos.find((item) => item.id === repoId)?.changes.find((item) => item.name === change && !item.archived);
+        if (!repo) throw new ApiError(404, "repository not found");
+        if (!card) throw new ApiError(404, "active change not found");
+        const changeAgents = { ...repo.agent?.changeAgents };
+        if (agentId === null) delete changeAgents[change]; else changeAgents[change] = agentId;
+        const agent = { enabled: true, ...repo.agent };
+        if (Object.keys(changeAgents).length) agent.changeAgents = changeAgents; else delete agent.changeAgents;
+        config = { ...config, repos: config.repos.map((item) => item.id === repoId ? { ...item, agent } : item) };
+        return config;
+      }),
     setRepoLabels: (repoId, patch) =>
       failing(() => {
         const lists = labelLists(patch);

@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { ACTIVITY_KINDS, AUTO_FETCH_SECONDS, type ActivityKind, isChangeless, UNCOMMITTED_LISTED } from "../shared/types.ts";
+import { ACTIVITY_KINDS, AUTO_FETCH_SECONDS, repoAgentEnabled, type ActivityKind, isChangeless, UNCOMMITTED_LISTED } from "../shared/types.ts";
 import { availableName } from "../shared/nameHints.ts";
 import { isChangeDirName } from "../shared/changeNames.ts";
 import { labelKey } from "../shared/labels.ts";
@@ -30,7 +30,7 @@ import { PullRequests, type RepoTarget } from "./pullRequests.ts";
 import type { Scanner } from "./scanner.ts";
 import { applyTo, EMPTY_SHARED_CONFIG, loadSharedConfig, previewDigest, previewFor, SharedConfigValidationError, saveSharedConfig } from "./sharedConfig.ts";
 import { SessionError, type SessionManager } from "./sessions/manager.ts";
-import { LocalRepoSource } from "./source.ts";
+import { CHANGE_NAME, LocalRepoSource } from "./source.ts";
 import { sessionHints } from "./staleChanges.ts";
 import { frameworkById } from "./frameworks/registry.ts";
 import type { KeepAwake } from "./keepAwake.ts";
@@ -276,6 +276,37 @@ async function postRepoAgent(state: AppState, req: Request, id: string): Promise
     if (typeof agentId === "string" && !state.config.agentSessions.agents.some((a) => a.id === agentId)) throw new TrackingError(400, `unknown agent ${agentId}`);
     return withRepoAgent(repo, { enabled, agentId, autoMergeDocs });
   });
+}
+
+async function postChangeAgent(state: AppState, req: Request, id: string, change: string): Promise<Response> {
+  if (!CHANGE_NAME.test(change)) return json({ error: "invalid change name" }, 400);
+  const body = await readJson(req);
+  if (!Object.hasOwn(body, "agentId")) return json({ error: "send agentId" }, 400);
+  const { agentId } = body;
+  if (agentId !== null && typeof agentId !== "string") return json({ error: "agentId must be an agent id or null" }, 400);
+  const snapshot = state.scanner.snapshot;
+  const active = snapshot.repos.find((repo) => repo.id === id)?.changes.some((item) => item.name === change && !item.archived);
+  if (!active) return json({ error: "active change not found" }, 404);
+  const configuredRepo = state.config.repos.find((repo) => repo.id === id);
+  if (!configuredRepo) return json({ error: "repository not found" }, 404);
+  if (!state.config.agentSessions.enabled || !repoAgentEnabled(configuredRepo)) return json({ error: "agent sessions are disabled for this repository" }, 403);
+  const { saved } = await updateConfig(state, (current) => {
+    const index = current.repos.findIndex((repo) => repo.id === id);
+    if (index < 0) throw new TrackingError(404, "repository not found");
+    const repo = current.repos[index];
+    if (!current.agentSessions.enabled || !repoAgentEnabled(repo)) throw new TrackingError(403, "agent sessions are disabled for this repository");
+    if (typeof agentId === "string" && !current.agentSessions.agents.some((agent) => agent.id === agentId)) throw new TrackingError(400, `unknown agent ${agentId}`);
+    const currentActive = state.scanner.snapshot.repos.find((item) => item.id === id)?.changes.filter((item) => !item.archived).map((item) => item.name) ?? [];
+    if (!currentActive.includes(change)) throw new TrackingError(404, "active change not found");
+    const overrides = Object.fromEntries(Object.entries(repo.agent?.changeAgents ?? {}).filter(([name]) => currentActive.includes(name)));
+    if (agentId === null) delete overrides[change]; else overrides[change] = agentId;
+    const agent = { enabled: repo.agent?.enabled ?? true, ...repo.agent };
+    if (Object.keys(overrides).length) agent.changeAgents = overrides; else delete agent.changeAgents;
+    const repos = [...current.repos];
+    repos[index] = { ...repo, agent };
+    return { ...current, repos };
+  });
+  return configJson(saved);
 }
 
 /** The project's PR titles picker on the overview: `conventional-commits` sets the convention, `null` removes the key. */
@@ -1421,6 +1452,8 @@ function routeRequest({ state, indexHtml }: AppOptions): (req: Request, url: URL
       if (req.method === "POST" && pathname === "/api/ignore-paths") return tracking(() => postIgnorePath(state, req));
       const enabledMatch = /^\/api\/repos\/([^/]+)\/enabled$/.exec(pathname);
       if (req.method === "POST" && enabledMatch) return tracking(() => postRepoEnabled(state, req, decodeURIComponent(enabledMatch[1])));
+      const changeAgentMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/agent$/.exec(pathname);
+      if (req.method === "POST" && changeAgentMatch) return tracking(() => postChangeAgent(state, req, decodeURIComponent(changeAgentMatch[1]), decodeURIComponent(changeAgentMatch[2])));
       if (req.method === "POST" && pathname === "/api/labels/color") return tracking(() => postLabelColor(state, req));
       if (req.method === "POST" && pathname === "/api/agent-sessions/fast-forward-warning") return tracking(() => postFastForwardWarning(state, req));
       const repoSetting = /^\/api\/repos\/([^/]+)\/(name|agent|labels|pr-title-convention|auto-fetch|forget)$/.exec(pathname);

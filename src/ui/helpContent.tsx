@@ -232,6 +232,10 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             in the project's own folder, for anything that is not a change. It works there directly, with no branch and no
             undo. The session that set a new project up shows here until you start a new console.
           </li>
+          <li>
+            With more than one agent profile, a change's Console tab lets you choose an agent for its next session.
+            Choose Project agent to return to the project's choice. A running session keeps its original agent.
+          </li>
         </ul>
         <p>
           In a tracked folder that is not a git repository, the agent works in the folder itself, with no branch and no

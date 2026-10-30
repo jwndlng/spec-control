@@ -5,8 +5,10 @@ import { proposalBranch } from "../../shared/sessionBranch.ts";
 import { whichOnPath } from "../paths.ts";
 import { isBranchName } from "../cleanup.ts";
 import { CHANGE_NAME } from "../source.ts";
+import { changeAgentFor } from "../../shared/changeAgent.ts";
 
-export function agentFor(config: Config, repo: RepoConfig): AgentProfile | undefined {
+export function agentFor(config: Config, repo: RepoConfig, change?: string): AgentProfile | undefined {
+  if (change !== undefined) return changeAgentFor(config, repo, change);
   const agents = config.agentSessions.agents;
   return agents.find((a) => a.id === repo.agent?.agentId) ?? agents.find((a) => a.id === config.agentSessions.defaultAgent);
 }

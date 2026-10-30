@@ -150,7 +150,7 @@ test("the product sizes the mount point, so .settings-scroll is the page's scrol
 
 test("Settings saves its draft with the repositories as the app last received them", async () => {
   const { withLatestRepos } = await import("../src/ui/settings.tsx");
-  const { defaultConfig } = await import("../src/server/config.ts");
+  const { defaultConfig, validateConfig, repoId } = await import("../src/server/config.ts");
   const myAgent = { id: "my-agent", name: "My agent", command: ["my-agent-cli", "{prompt}"], prompts: {} };
   const base = defaultConfig();
   const repo = { id: "0123456789ab", path: "/w/acme/beta-soc", name: "beta-soc", enabled: true };
@@ -164,4 +164,8 @@ test("Settings saves its draft with the repositories as the app last received th
   const using = { ...withProfile, repos: [{ ...repo, agent: { enabled: true, agentId: "my-agent" } }] };
   const saved = withLatestRepos({ ...using, agentSessions: base.agentSessions }, using);
   expect(saved.repos[0].agent).toEqual({ enabled: true });
+  const overridden = { ...withProfile, repos: [{ ...repo, agent: { enabled: true, agentId: "claude", changeAgents: { example: "my-agent" } } }] };
+  const cleaned = withLatestRepos({ ...overridden, agentSessions: base.agentSessions }, overridden);
+  expect(cleaned.repos[0].agent).toEqual({ enabled: true, agentId: "claude" });
+  expect(() => validateConfig({ ...cleaned, repos: [{ ...cleaned.repos[0], id: repoId(repo.path) }] })).not.toThrow();
 });

@@ -326,7 +326,7 @@ export class SessionManager {
       await this.refuseOldArchiveBranch(repo.path, change);
     }
 
-    const agent = agentFor(config, repo);
+    const agent = agentFor(config, repo, change);
     if (!agent) throw new SessionError(503, "no agent is configured");
     const record = this.recordInstruction(repo.id, change, action);
     const fixedPrompt = (options: { autoMerge?: boolean; record?: string } = {}) =>
@@ -868,7 +868,7 @@ export class SessionManager {
     }
 
     const config = this.deps.getConfig();
-    const agent = agentFor(config, repo);
+    const agent = agentFor(config, repo, change);
     if (!agent) throw new SessionError(503, "no agent is configured");
     const launch = checkedLaunch(agent, resolveConflictsPrompt(agent, change, pr));
     if (!Bun.which(agent.command[0])) throw new SessionError(503, `${agent.name} was not found (${agent.command[0]}); install it or change its command in Settings`);

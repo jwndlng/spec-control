@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { Config, DiscoveredRepo, DiscoverResult, IntegratableRepo, Snapshot, UpdateStatus } from "../shared/types.ts";
+import type { Config, DiscoveredRepo, DiscoverResult, IntegratableRepo, RepoConfig, Snapshot, UpdateStatus } from "../shared/types.ts";
 import { isReleaseVersion } from "../shared/versions.ts";
 import { AgentSettings } from "./agentSettings.tsx";
 import { api, ApiError, ConfigConflictError, revisionOf } from "./api.ts";
@@ -339,9 +339,15 @@ export function Settings({ config, snapshot, onSaved, onRescan, environment, onR
 export function withLatestRepos(draft: Config, latest: Config | null): Config {
   const profiles = new Set(draft.agentSessions.agents.map((a) => a.id));
   const repos = (latest ?? draft).repos.map((repo) => {
-    if (!repo.agent?.agentId || profiles.has(repo.agent.agentId)) return repo;
-    const { agentId: _removed, ...agent } = repo.agent;
-    return { ...repo, agent };
+    if (!repo.agent) return repo;
+    const changeAgents = Object.fromEntries(Object.entries(repo.agent.changeAgents ?? {}).filter(([, id]) => profiles.has(id)));
+    const changeAgentsChanged = Object.keys(changeAgents).length !== Object.keys(repo.agent.changeAgents ?? {}).length;
+    if ((!repo.agent.agentId || profiles.has(repo.agent.agentId)) && !changeAgentsChanged) return repo;
+    const { agentId: _removed, changeAgents: _oldChangeAgents, ...agent } = repo.agent;
+    const updatedAgent: NonNullable<RepoConfig["agent"]> = agent;
+    if (_removed && profiles.has(_removed)) updatedAgent.agentId = _removed;
+    if (Object.keys(changeAgents).length) updatedAgent.changeAgents = changeAgents;
+    return { ...repo, agent: updatedAgent };
   });
   return { ...draft, repos };
 }

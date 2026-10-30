@@ -439,6 +439,16 @@ test("the console agent is optional, kept when it names a profile, and refused w
   expect(() => validateConfig({ ...base, agentSessions: { ...two, consoleAgent: "nope" } })).toThrow(/agentSessions\.consoleAgent: unknown agent/);
 });
 
+test("change agent overrides validate change names and configured profiles", () => {
+  const base = defaultConfig();
+  const second = { ...CLAUDE_PROFILE, id: "my-agent", name: "My Agent", command: ["my-agent-cli", "{prompt}"] };
+  const repo = { ...newRepoConfig("/w/change-agents", true), agent: { enabled: true, changeAgents: { "rotate-keys": "my-agent" } } };
+  const config = { ...base, repos: [repo], agentSessions: { ...base.agentSessions, agents: [CLAUDE_PROFILE, second] } };
+  expect(validateConfig(config).repos[0].agent?.changeAgents).toEqual({ "rotate-keys": "my-agent" });
+  expect(() => validateConfig({ ...config, repos: [{ ...repo, agent: { ...repo.agent, changeAgents: { "bad/name": "my-agent" } } }] })).toThrow(/changeAgents/);
+  expect(() => validateConfig({ ...config, repos: [{ ...repo, agent: { ...repo.agent, changeAgents: { "rotate-keys": "missing" } } }] })).toThrow(/unknown agent/);
+});
+
 test("the Resolve conflicts prompt and its suffix survive a round trip, like Ship's", () => {
   // Without this the key is silently stripped on load, and a configured prompt quietly stops being used.
   const agent = {

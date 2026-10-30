@@ -103,6 +103,7 @@ export interface Api {
   renameRepo(repoId: string, name: string): Promise<Config>;
   /** A project's agent-session toggle and agent picker, saved at once; `agentId: null` means the default agent. */
   setRepoAgent(repoId: string, patch: RepoAgentPatch): Promise<Config>;
+  setChangeAgent(repoId: string, change: string, agentId: string | null): Promise<Config>;
   /** A project's labels dialog, saved at once: either list replaced, an empty one removed. */
   setRepoLabels(repoId: string, patch: Pick<RepoConfig, "labels" | "hiddenLabels">): Promise<Config>;
   /** A project's PR titles picker, saved at once; `null` means no convention. */
@@ -324,6 +325,7 @@ export const httpApi: Api = {
   ignorePath: (path) => callConfig("/api/ignore-paths", { method: "POST", body: JSON.stringify({ path }) }),
   renameRepo: (repoId, name) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/name`, { method: "POST", body: JSON.stringify({ name }) }),
   setRepoAgent: (repoId, patch) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/agent`, { method: "POST", body: JSON.stringify(patch) }),
+  setChangeAgent: (repoId, change, agentId) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/agent`, { method: "POST", body: JSON.stringify({ agentId }) }),
   // An absent list is sent as an empty one: the route removes the key, which is what "no labels left" means.
   setRepoLabels: (repoId, patch) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/labels`, { method: "POST", body: JSON.stringify(labelLists(patch)) }),
   setRepoPrTitleConvention: (repoId, convention) =>
@@ -439,6 +441,7 @@ export const api: Api = {
   ignorePath: (path) => current.ignorePath(path),
   renameRepo: (...args) => current.renameRepo(...args),
   setRepoAgent: (...args) => current.setRepoAgent(...args),
+  setChangeAgent: (...args) => current.setChangeAgent(...args),
   setRepoLabels: (...args) => current.setRepoLabels(...args),
   setRepoPrTitleConvention: (...args) => current.setRepoPrTitleConvention(...args),
   setRepoAutoFetch: (...args) => current.setRepoAutoFetch(...args),
