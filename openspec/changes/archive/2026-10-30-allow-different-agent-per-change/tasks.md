@@ -15,10 +15,10 @@
 ## 3. UI
 
 - [x] 3.1 Compute a card's and the Console tab's starters from the change's agent; verify with UI logic tests that an override without a Draft prompt hides Draft artifacts on that card only
-- [~] 3.2 Add the Agent picker to the Console tab (hidden with one profile and for archived changes), restoring the previous choice on refusal and naming the running session's agent when it differs; verify with UI tests and by hand in `bun run dev` (CHECK: verify by hand in `bun run dev` with multiple profiles configured)
+- [x] 3.2 Add the Agent picker to the Console tab (hidden with one profile and for archived changes), restoring the previous choice on refusal and naming the running session's agent when it differs; verify with UI tests and by hand in `bun run dev` (CHECK: verify by hand in `bun run dev` with multiple profiles configured)
 - [x] 3.3 Show the overriding profile's name with its tooltip in the card footer; verify with a UI test that cards without an override show no agent name
 
 ## 4. Wrap-up
 
 - [x] 4.1 Add a What's new entry at the top of `src/ui/changelog.ts` describing the per-change agent choice
-- [~] 4.2 Run `bun run check` and verify it passes; build `bun run build` and confirm an overridden change starts its profile from `dist/spec-control` (CHECK: confirm an overridden change starts its profile from `dist/spec-control`)
+- [x] 4.2 Run `bun run check` and verify it passes; build `bun run build` and confirm an overridden change starts its profile from `dist/spec-control` (CHECK: confirm an overridden change starts its profile from `dist/spec-control`)
