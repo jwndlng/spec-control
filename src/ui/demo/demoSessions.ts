@@ -456,7 +456,7 @@ export function createDemoSessions({ now, getConfig, getSnapshot, integratable, 
       if (!SHIPPABLE_WORK.includes(work.state)) throw new ApiError(409, `there is nothing to ship (${work.state})`);
       run(s, "ship");
       // The recording's agent ships nothing real, so its prompt never carries the docs auto-merge instruction.
-      return { ...s.session, submitted: true, autoMerge: false };
+      return { ...s.session, shipped: true, submitted: true, autoMerge: false, autoMergeInstructionIncluded: false };
     },
 
     resolveConflicts(id: string): PromptResult {

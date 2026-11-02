@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { rm } from "node:fs/promises";
 import { type AppState, createFetchHandler } from "../src/server/api.ts";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
+import { createPullRequest, mergePullRequest } from "../src/server/gh.ts";
 import { PullRequests } from "../src/server/pullRequests.ts";
 import { Scanner } from "../src/server/scanner.ts";
 import type { ChangeSession, PullRequestsResponse } from "../src/shared/types.ts";
@@ -258,3 +259,70 @@ test("with docs auto-merge on and a Merge pending, a refresh still changes no re
     await gh.scenario(SCENARIO);
   }
 });
+
+test("createPullRequest invokes gh pr create in dashboard home without shell and returns url", async () => {
+  await gh.forget();
+  const res = await createPullRequest("acme/alpha-infra", {
+    head: "feat/rotate-keys",
+    base: "main",
+    title: "feat(openspec): rotate-keys",
+    body: "Closes #12",
+  });
+
+  expect(res.ok).toBe(true);
+  expect(res.url).toBe("https://github.com/acme/alpha-infra/pull/99");
+
+  const calls = await gh.calls();
+  const last = calls[calls.length - 1];
+  expect(last.argv).toEqual([
+    "pr",
+    "create",
+    "--repo",
+    "acme/alpha-infra",
+    "--head",
+    "feat/rotate-keys",
+    "--base",
+    "main",
+    "--title",
+    "feat(openspec): rotate-keys",
+    "--body",
+    "Closes #12",
+  ]);
+  // Runs in dashboard home, outside any repo
+  for (const repo of [alpha, beta, plain, offline]) {
+    expect(last.cwd.startsWith(repo)).toBe(false);
+  }
+
+  // Input validation
+  expect((await createPullRequest("invalid-repo", { head: "h", base: "b", title: "t" })).ok).toBe(false);
+  expect((await createPullRequest("acme/alpha-infra", { head: "", base: "b", title: "t" })).ok).toBe(false);
+});
+
+test("mergePullRequest invokes gh pr merge with --match-head-commit and --squash, never passing --delete-branch or --auto", async () => {
+  await gh.forget();
+  const headOid = "c0ffee0123456789abcdef0123456789abcdef01";
+  const res = await mergePullRequest("acme/alpha-infra", 88, headOid);
+
+  expect(res.ok).toBe(true);
+
+  const calls = await gh.calls();
+  const last = calls[calls.length - 1];
+  expect(last.argv).toEqual([
+    "pr",
+    "merge",
+    "88",
+    "--repo",
+    "acme/alpha-infra",
+    "--squash",
+    "--match-head-commit",
+    headOid,
+  ]);
+  expect(last.argv).not.toContain("--delete-branch");
+  expect(last.argv).not.toContain("--auto");
+
+  // Input validation
+  expect((await mergePullRequest("acme/alpha-infra", 0, headOid)).ok).toBe(false);
+  expect((await mergePullRequest("acme/alpha-infra", -1, headOid)).ok).toBe(false);
+  expect((await mergePullRequest("acme/alpha-infra", 88, "not-a-40-hex-commit")).ok).toBe(false);
+});
+

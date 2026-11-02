@@ -327,8 +327,8 @@ test("a git project with agent sessions offers auto-merge of docs-only pull requ
   expect(textOf(toggle)).toBe("Off");
   // The tooltip names both actions, which leave the pull request open; the merge is asked for once it is ready
   // (agent-merges-docs-prs), never through GitHub's auto-merge, and never for a pull request without checks.
-  expect(AUTO_MERGE_HINT).toContain("Ship and Archive ask the agent to open its pull request and not to merge it");
-  expect(AUTO_MERGE_HINT).toContain("asks that session's agent to merge it");
+  expect(AUTO_MERGE_HINT).toContain("Ship and Archive open their pull request deterministically");
+  expect(AUTO_MERGE_HINT).toContain("Spec Control merges it automatically via the GitHub CLI");
   expect(AUTO_MERGE_HINT).toContain("one without any checks is not merged this way");
   expect(AUTO_MERGE_HINT).not.toMatch(/enable auto-merge|GitHub's auto-merge/i);
   // …and what happens once it has merged (auto-merge-cleanup).

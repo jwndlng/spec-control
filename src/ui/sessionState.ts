@@ -738,9 +738,8 @@ export function mergeControl(session: ChangeSession | undefined, lists: readonly
   const readiness = pullRequestReadiness(pr);
   if (!readiness?.ready) return { pr, recordedOn, enabled: false, title: `${readiness ? readinessDetail(readiness) : "Not ready"}, so #${pr.number} cannot be merged yet.` };
   if (!pr.headOid) return { pr, recordedOn, enabled: false, title: `The pull-request list names no head commit for #${pr.number} yet; refresh it first.` };
-  if (session.state !== "running") return { pr, recordedOn, enabled: false, title: RESUME_TO_MERGE };
   const which = handed ? `the proposal's pull request #${pr.number} (from ${pr.head})` : `#${pr.number}`;
-  return { pr, recordedOn, enabled: true, title: `Sends ${session.agentName} a prompt asking it to merge ${which}, only if its head is still ${shortCommit(pr.headOid)}. The dashboard merges nothing itself.` };
+  return { pr, recordedOn, enabled: true, title: `Merges ${which}, only if its head is still ${shortCommit(pr.headOid)}. Merged directly via the GitHub CLI.` };
 }
 
 /** What the panel says next to a ready pull request whose agent has ended: nothing is merged automatically then. */
@@ -769,8 +768,8 @@ export type AutoMergeReport = { id: string; action: "ship" | "archive" };
  *  auto-merge instruction. Archive's is conditional, like the instruction: the Archive prompt may open no pull request. */
 export function autoMergeNotice(action: AutoMergeReport["action"]): string {
   return action === "ship"
-    ? "Only OpenSpec documents changed, so the pull request will be handed back to the agent to merge once its checks pass. The dashboard itself merges nothing."
-    : "Only OpenSpec documents are in this worktree, so if the agent opens a pull request it will be handed back to the agent to merge once its checks pass. The dashboard itself merges nothing.";
+    ? "Only OpenSpec documents changed, so Spec Control will merge the pull request automatically once its checks pass."
+    : "Only OpenSpec documents are in this worktree, so if a pull request is opened, Spec Control will merge it automatically once its checks pass.";
 }
 
 /** What both Ship controls report afterwards: a prompt typed but not sent, and whether auto-merge was asked for. */

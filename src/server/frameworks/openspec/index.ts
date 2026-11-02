@@ -5,9 +5,9 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { FRAMEWORK_INFO } from "../../../shared/types.ts";
 import { boundedReadWarning, CHANGE_NAME, type ChangeDirEntry, MAX_REPO_FILE_BYTES, type RepoSource } from "../../source.ts";
-import { type ChangeMetadata, type ChangeScaffold, type FrameworkChange, type FrameworkChangeOutputs, type FrameworkLayout, type FrameworkProject, SpecFramework, type SpecSyncResult } from "../framework.ts";
+import { type ChangeMetadata, type ChangeMetadataPaths, type ChangeScaffold, type FrameworkChange, type FrameworkChangeOutputs, type FrameworkLayout, type FrameworkProject, SpecFramework, type SpecSyncResult } from "../framework.ts";
 import { DEFAULT_SCHEMA, readChangeArtifacts } from "./adapter.ts";
-import { isPlainSchemaName, parseMarker } from "./marker.ts";
+import { isPlainSchemaName, parseMarker, type RecordedBranchKey, setRecordedBranchInMarker } from "./marker.ts";
 import { changeSpecsSynced } from "./specSync.ts";
 
 const ROOT = "openspec";
@@ -90,6 +90,21 @@ export class OpenSpecFramework extends SpecFramework {
 
   override specsSynced(source: RepoSource, entry: ChangeDirEntry): Promise<SpecSyncResult> {
     return changeSpecsSynced(source, entry.dir);
+  }
+
+  override recordBranchInMetadata(text: string, key: RecordedBranchKey, branch: string): string {
+    return setRecordedBranchInMarker(text, key, branch);
+  }
+
+  override changeMetadataPaths(changeName: string, archiveDirName?: string): ChangeMetadataPaths {
+    return {
+      active: `${this.layout.changesDir}/${changeName}/${CHANGE_MARKER}`,
+      ...(archiveDirName ? { archived: `${this.layout.archiveDir}/${archiveDirName}/${CHANGE_MARKER}` } : {}),
+    };
+  }
+
+  override archiveDirPath(changeName: string, date: string): string {
+    return `${this.layout.archiveDir}/${date}-${changeName}`;
   }
 
   /**

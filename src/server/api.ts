@@ -623,9 +623,17 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
     } else if (req.method === "POST") {
       if (sub === "resume") return json(await sessions.resume(id));
       if (sub === "editor") return json(await sessions.openEditor(id));
-      if (sub === "ship") return json(await sessions.ship(id));
+      if (sub === "ship") {
+        const body = (await readJson(req).catch(() => ({}))) as Record<string, unknown>;
+        const title = typeof body.title === "string" && body.title.trim() ? body.title.trim() : undefined;
+        return json(await sessions.ship(id, { title }));
+      }
       if (sub === "resolve-conflicts") return json(await sessions.resolveConflicts(id, await cachedPullRequests(state, sessions.get(id).repoId)));
-      if (sub === "merge") return json(await sessions.merge(id, lastGoodPullRequests(state, sessions.get(id))));
+      if (sub === "merge") {
+        const body = (await readJson(req).catch(() => ({}))) as Record<string, unknown>;
+        const proposal = body.proposal === true;
+        return json(await sessions.merge(id, lastGoodPullRequests(state, sessions.get(id)), { proposal }));
+      }
       if (sub === "prompt") return json(await sessions.prompt(id, await readJson(req)));
       if (sub === "close") return json(await sessions.close(id, { removeWorktree: (await readJson(req)).removeWorktree === true }));
     }
@@ -1168,6 +1176,20 @@ function handOverCompletedQuery(state: AppState, response: PullRequestsResponse)
     void sessions.endMergedAutoMerge(repo.repoId, repo.pullRequests).catch((err) => console.warn("could not end a session whose pull request merged:", err instanceof Error ? err.message : err));
     void sessions.requestReadyMerges(repo.repoId, repo.pullRequests).catch((err) => console.warn("could not hand a ready pull request to its agent:", err instanceof Error ? err.message : err));
   }
+}
+
+export async function refreshRepoPullRequests(state: AppState, repoId: string): Promise<void> {
+  const store = pullRequestStore(state);
+  const targets = pullRequestTargets(state);
+  const resp = await store.refresh(targets, { repoId, force: true });
+  handOverCompletedQuery(state, resp);
+}
+
+export async function listRepoPullRequests(state: AppState, repoId: string): Promise<readonly PullRequest[]> {
+  const store = pullRequestStore(state);
+  const targets = pullRequestTargets(state);
+  const resp = await store.list(targets);
+  return resp.repos.find((r) => r.repoId === repoId)?.pullRequests ?? [];
 }
 
 /** What the Merge action reads its pull request from: the server's last good list, never anything in the request. */

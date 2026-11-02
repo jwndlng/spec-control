@@ -15,6 +15,71 @@ const ENTRY_LINE = /^( +)([A-Za-z0-9_-]+):(?:\s+(.*))?$/;
 /** The map's entries Spec Control reads, and the record field each one fills. Every other entry is ignored. */
 const RECORD_KEYS: Record<string, keyof ChangeRecord> = { branch: "branch", "archive-branch": "archiveBranch" };
 
+export type RecordedBranchKey = "branch" | "archive-branch";
+
+/**
+ * A pure transformation that sets `branch` or `archive-branch` under `spec-control:` in a
+ * change's `.openspec.yaml` text to a validated branch name while preserving every other
+ * top-level key, comment, and the other `spec-control` key in the file.
+ * Returns the text byte-for-byte unchanged when that key already holds that branch name.
+ */
+export function setRecordedBranchInMarker(text: string, key: RecordedBranchKey, branch: string): string {
+  if (key !== "branch" && key !== "archive-branch") {
+    throw new Error(`invalid branch key: ${String(key)}`);
+  }
+  if (!validRecordedBranch(branch)) {
+    throw new Error(`invalid branch name: ${JSON.stringify(branch)}`);
+  }
+
+  const nl = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = text.length === 0 ? [] : text.split(/\r?\n/);
+  const hasTrailingNewline = text.endsWith("\n");
+  if (hasTrailingNewline && lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+
+  const start = lines.findIndex((line) => RECORD_KEY_LINE.test(line));
+  if (start < 0) {
+    const newLines = [...lines];
+    newLines.push("spec-control:", `  ${key}: ${branch}`);
+    return newLines.join(nl) + nl;
+  }
+
+  let indent = "  ";
+  let existingKeyLineIndex = -1;
+  let lastEntryLineIndex = start;
+
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*(?:#.*)?$/.test(line)) {
+      continue;
+    }
+    if (!line.startsWith(" ")) {
+      break;
+    }
+    const entry = ENTRY_LINE.exec(line);
+    if (entry) {
+      indent = entry[1];
+      lastEntryLineIndex = i;
+      if (entry[2] === key) {
+        existingKeyLineIndex = i;
+        const val = scalar(entry[3]);
+        if (val === branch) {
+          return text;
+        }
+      }
+    }
+  }
+
+  if (existingKeyLineIndex >= 0) {
+    lines[existingKeyLineIndex] = `${indent}${key}: ${branch}`;
+  } else {
+    lines.splice(lastEntryLineIndex + 1, 0, `${indent}${key}: ${branch}`);
+  }
+
+  return lines.join(nl) + nl;
+}
+
 export interface Marker {
   schema?: string;
   created?: string;

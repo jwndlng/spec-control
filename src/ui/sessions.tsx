@@ -482,7 +482,7 @@ function pullRequestItem(step: PullRequestStep, pr: PullRequest, target: ChangeS
   const where = target ? `the Console tab of ${target.branch}` : "the Console tab";
   const title =
     step === "merge"
-      ? `#${pr.number} is ready: opens ${where}, where Merge asks the agent to merge it`
+      ? `#${pr.number} is ready: opens ${where}, where Merge merges it via the GitHub CLI`
       : step === "resolveConflicts"
         ? `#${pr.number} conflicts with its base: opens ${where}, where the agent can be asked to resolve the conflicts`
         : `#${pr.number}'s checks fail: opens ${where}, where the agent can be resumed to fix them`;

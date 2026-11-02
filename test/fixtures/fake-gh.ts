@@ -92,6 +92,18 @@ if (argv[0] === "api" && argv[1] === "user") {
       fields && item && typeof item === "object" ? Object.fromEntries(Object.entries(item).filter(([key]) => fields.includes(key))) : item;
     return `${JSON.stringify(items.slice(0, limit).map(project))}\n`;
   });
+} else if (argv[0] === "pr" && argv[1] === "create") {
+  const repo = flag("repo") ?? "";
+  const mode: Mode = { ...scenario, ...(scenario.perRepo?.[repo] ?? {}) };
+  finish(mode, () => {
+    return `https://github.com/${repo}/pull/99\n`;
+  });
+} else if (argv[0] === "pr" && argv[1] === "merge") {
+  const repo = flag("repo") ?? "";
+  const mode: Mode = { ...scenario, ...(scenario.perRepo?.[repo] ?? {}) };
+  finish(mode, () => {
+    return "";
+  });
 } else if (argv[0] === "issue" && argv[1] === "list") {
   const repo = flag("repo") ?? "";
   const limit = Number(flag("limit") ?? 30);
