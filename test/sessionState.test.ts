@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import type { ChangeSession, ChangeSnapshot, PullRequest, SessionWorktree } from "../src/shared/types.ts";
-import { cardSessionControls, continueArchiveAvailable, consoleSteps, endProposalConfirmation, handedOverProposal, mergeControl, mergeNotice, pullRequestSession } from "../src/ui/sessionState.ts";
+import { cardSessionControls, cleanupNotice, continueArchiveAvailable, consoleSteps, endConfirmable, endProposalConfirmation, handedOverProposal, mergeControl, mergeNotice, pullRequestSession, sessionBadge, sessionsForChange } from "../src/ui/sessionState.ts";
 import { fakeProfile } from "./sessionHelpers.ts";
 
 // The split button a card shows (kanban-board: "A change's actions are one split button"), as the pure rule the card
@@ -143,4 +143,87 @@ test("the running session's panel offers Merge for the handed-over proposal pull
   // Its own branch's pull request comes first.
   const own = pr({ number: 91, headOid: "b".repeat(40) });
   expect(mergeControl(impl, [{ repoId: repo.id, status: "ok" as const, pullRequests: [own, ready] }], ended)).toMatchObject({ pr: { number: 91 }, recordedOn: { id: "i1" } });
+});
+
+test("session badge and notice cover pending, failed, interrupted, and completed cleanup states", () => {
+  const baseSession = session({ state: "exited", exitCode: 0 });
+
+  // Pending state
+  const pendingSession = { ...baseSession, cleanup: { kind: "worktree" as const, state: "pending" as const, startedAt: "2026-10-01T10:00:00Z" } };
+  expect(sessionBadge(pendingSession)).toMatchObject({
+    icon: "●",
+    label: "cleaning up…",
+    live: true,
+    tone: "info",
+    title: expect.stringContaining("Removing worktree of rotate-keys"),
+  });
+  expect(cleanupNotice(pendingSession.cleanup, "rotate-keys")).toContain("Removing worktree of rotate-keys in the background…");
+
+  // Failed state
+  const failedSession = {
+    ...baseSession,
+    cleanup: { kind: "worktree" as const, state: "failed" as const, startedAt: "2026-10-01T10:00:00Z", reason: "worktree has uncommitted changes" },
+  };
+  expect(sessionBadge(failedSession)).toMatchObject({
+    icon: "⚠",
+    label: "cleanup failed",
+    tone: "danger",
+    title: expect.stringContaining("uncommitted changes"),
+  });
+  expect(cleanupNotice(failedSession.cleanup, "rotate-keys")).toContain("Cleanup of rotate-keys failed: worktree has uncommitted changes");
+
+  // Interrupted state
+  const interruptedSession = {
+    ...baseSession,
+    cleanup: { kind: "worktree" as const, state: "interrupted" as const, startedAt: "2026-10-01T10:00:00Z", reason: "dashboard stopped" },
+  };
+  expect(sessionBadge(interruptedSession)).toMatchObject({
+    icon: "⚠",
+    label: "cleanup interrupted",
+    tone: "warning",
+    title: "dashboard stopped",
+  });
+  expect(cleanupNotice(interruptedSession.cleanup, "rotate-keys")).toBe("dashboard stopped");
+
+  // Completed - worktree removed
+  const doneRemoved = {
+    ...baseSession,
+    cleanup: { kind: "worktree" as const, state: "done" as const, startedAt: "2026-10-01T10:00:00Z", worktreeRemoved: true },
+  };
+  expect(sessionBadge(doneRemoved)).toMatchObject({
+    icon: "✓",
+    label: "ended · cleaned up",
+    tone: "success",
+  });
+  expect(cleanupNotice(doneRemoved.cleanup, "rotate-keys")).toBe("Session ended and worktree of rotate-keys removed.");
+
+  // Completed - worktree kept
+  const doneKept = {
+    ...baseSession,
+    cleanup: { kind: "worktree" as const, state: "done" as const, startedAt: "2026-10-01T10:00:00Z", worktreeRemoved: false, reason: "kept until stale" },
+  };
+  expect(sessionBadge(doneKept)).toMatchObject({
+    icon: "⚠",
+    label: "ended · worktree kept",
+    tone: "warning",
+  });
+  expect(cleanupNotice(doneKept.cleanup, "rotate-keys")).toBe("Worktree of rotate-keys kept: kept until stale");
+});
+
+test("sessionsForChange and endConfirmable respect cleanup states", () => {
+  const baseSession = session({ state: "exited", exitCode: 0 });
+
+  // A clean ended session without cleanup is omitted
+  expect(sessionsForChange([baseSession], repo.id, "rotate-keys")).toEqual([]);
+
+  // Pending, failed, or interrupted cleanup keeps the session on the card
+  const pendingSession = { ...baseSession, cleanup: { kind: "worktree" as const, state: "pending" as const, startedAt: "2026-10-01T10:00:00Z" } };
+  expect(sessionsForChange([pendingSession], repo.id, "rotate-keys")).toEqual([pendingSession]);
+
+  const failedSession = { ...baseSession, cleanup: { kind: "worktree" as const, state: "failed" as const, startedAt: "2026-10-01T10:00:00Z" } };
+  expect(sessionsForChange([failedSession], repo.id, "rotate-keys")).toEqual([failedSession]);
+
+  // endConfirmable is disabled while cleanup is pending
+  expect(endConfirmable(pendingSession, { removable: true }, false)).toBe(false);
+  expect(endConfirmable(baseSession, { removable: true }, false)).toBe(true);
 });

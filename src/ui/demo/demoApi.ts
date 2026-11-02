@@ -699,6 +699,10 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
     // The demo's changes leave nothing over once archived: nothing is stale, so nothing is offered or removed.
     staleCleanupPreview: (repoId, name) => attempt(() => ({ repoId, name, backupRoot: "~/.spec-control/branch-backups" })),
     staleCleanup: (repoId, name) => attempt(() => ({ repoId, name, items: [], refused: "the demo has no leftovers to clean up" })),
+    staleCleanupInBackground: () =>
+      attempt(() => {
+        throw new ApiError(409, "the demo has no leftovers to clean up");
+      }),
     // Dismissing in the demo deletes nothing anywhere: the change leaves the in-memory board until a reload.
     dismissPreview: (repoId, name) => attempt(() => demoDismissPreview(repoId, name)),
     dismissChange: (repoId, name, fingerprint) =>
@@ -766,6 +770,7 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
     openWorktreeEditor: () => new Promise((_, reject) => setTimeout(() => reject(new ApiError(503, "The demo opens no editor")), latencyMs)),
     removeWorktree: (repoId, name) => attempt(() => demoSessions.removeWorktree(repoId, name)),
     closeSession: (id, removeWorktree) => attempt(() => demoSessions.close(id, removeWorktree)),
+    closeSessionInBackground: (id) => attempt(() => demoSessions.closeInBackground(id)),
     deleteSession: (id) => attempt(() => demoSessions.delete(id)),
     worktreeStatus: (id) => attempt(() => demoSessions.status(id)),
     promptSession: (id, action) => attempt(() => demoSessions.prompt(id, action)),

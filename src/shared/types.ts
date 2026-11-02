@@ -866,6 +866,32 @@ export interface ChangeSession extends SessionBase {
    * re-created for it starts from `origin/<branch>` rather than from the base (resolve-pr-conflicts D2).
    */
   pullRequest?: number;
+  /**
+   * The worktree cleanup the user confirmed when ending this session, carried on in the background once the session
+   * had ended (cleanup-background). Stored, so an outcome — or a cleanup a restart interrupted — outlives a reload.
+   */
+  cleanup?: SessionCleanup;
+}
+
+/**
+ * `pending`: still running. `done`: it ran — a stale cleanup may still have kept or copied some items, see `stale`.
+ * `failed`: the worktree was kept, or nothing was attempted (`reason`). `interrupted`: the dashboard stopped before it
+ * finished; every step re-checks what it removes, so confirming the cleanup again is safe.
+ */
+export type SessionCleanupState = "pending" | "done" | "failed" | "interrupted";
+
+/** A cleanup confirmed in the end-session dialog: the plain worktree removal, or Clean up leftovers of a stale change. */
+export interface SessionCleanup {
+  kind: "worktree" | "stale";
+  state: SessionCleanupState;
+  startedAt: string;
+  finishedAt?: string;
+  /** Whether the session's own worktree is gone afterwards. */
+  worktreeRemoved?: boolean;
+  /** Why the cleanup failed or was interrupted, in the words of the check that refused it. */
+  reason?: string;
+  /** A stale cleanup's per-item outcomes, exactly as the cleanup route reports them. */
+  stale?: StaleCleanupResult;
 }
 
 /** A Merge prompt sent to a session (agent-merges-docs-prs D4). */
