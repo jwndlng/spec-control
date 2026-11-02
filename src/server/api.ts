@@ -6,7 +6,7 @@ import { labelKey } from "../shared/labels.ts";
 import { withAutoFetch, withPrTitleConvention, withRepoAgent } from "../shared/repoSettings.ts";
 import { MAX_PAGE, type ActivityLog, type PageQuery } from "./activity/log.ts";
 import { isTimeZone, pageEvents } from "../shared/activity.ts";
-import type { AutoFetchSeconds, BranchDeleteRequest, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequest, PullRequestsResponse, PullResult, RepoPullRequests, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Session, StaleCleanupRequest, UpdateStatus } from "../shared/types.ts";
+import type { AutoFetchSeconds, BranchDeleteRequest, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequest, PullRequestsResponse, PullResult, RepoPullRequests, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Session, StaleCleanupRequest, StaleCleanupResult, UpdateStatus } from "../shared/types.ts";
 import type { AutoFetcher } from "./autoFetch.ts";
 import { applyCleanup, applyStaleCleanup, CleanupBusyError, deleteBranch, isBranchName, previewBranchDelete, previewCleanup, previewStaleCleanup, StaleCleanupError, type StaleScope } from "./cleanup.ts";
 import { changeDirFor, listArtifactFiles, readArtifactFile } from "./artifacts.ts";
@@ -627,7 +627,12 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
       if (sub === "resolve-conflicts") return json(await sessions.resolveConflicts(id, await cachedPullRequests(state, sessions.get(id).repoId)));
       if (sub === "merge") return json(await sessions.merge(id, lastGoodPullRequests(state, sessions.get(id))));
       if (sub === "prompt") return json(await sessions.prompt(id, await readJson(req)));
-      if (sub === "close") return json(await sessions.close(id, { removeWorktree: (await readJson(req)).removeWorktree === true }));
+      if (sub === "close") {
+        const body = await readJson(req);
+        // `background`: the end-session dialog's way — answered once the agent has ended, the removal carried on after it.
+        if (body.removeWorktree === true && body.background === true) return json(await sessions.closeInBackground(id), 202);
+        return json(await sessions.close(id, { removeWorktree: body.removeWorktree === true }));
+      }
     }
   } catch (err) {
     if (err instanceof SessionError) return json({ error: err.message }, err.status);
@@ -1073,21 +1078,48 @@ function staleCleanupRequest(body: Record<string, unknown>): StaleCleanupRequest
   };
 }
 
-/** Cleans up the stale leftovers the user confirmed, each re-checked by the server; the third route that deletes a branch. */
+/**
+ * The ended session a stale cleanup is carried on for in the background (`session` in the body), if one is named: it
+ * must be a worktree session of this very change. Undefined runs the cleanup within the request, as before.
+ */
+function backgroundSession(state: AppState, body: Record<string, unknown>, repoId: string, name: string): string | undefined | Response {
+  if (body.session === undefined) return undefined;
+  const session = typeof body.session === "string" ? state.sessions?.list().find((s) => s.id === body.session) : undefined;
+  if (!session || isChangeless(session) || session.repoId !== repoId || session.change !== name || session.inPlace) {
+    return json({ error: "not a worktree session of this change" }, 400);
+  }
+  return session.id;
+}
+
+/**
+ * Cleans up the stale leftovers the user confirmed, each re-checked by the server; the third route that deletes a
+ * branch. With `session`, it answers once the cleanup is recorded as pending on that ended session and runs on.
+ */
 async function postStaleCleanup(state: AppState, req: Request, repoId: string, name: string): Promise<Response> {
   const target = await staleTarget(state, repoId, name);
   if (target instanceof Response) return target;
   try {
-    const request = staleCleanupRequest(await readJson(req));
+    const body = await readJson(req);
+    const request = staleCleanupRequest(body);
     if (!request) {
       return json({ error: "expected { worktrees: [{ path, branch, commit, uncommitted }], branches: [{ name, commit }], mainCheckout: { files: [{ path, hash }] } | null, acknowledged: boolean }" }, 400);
     }
-    const result = await applyStaleCleanup(target.repo, target.scope, name, request);
-    if (result.items.some((i) => i.outcome !== "kept")) {
-      state.sessions?.forgetWorktrees();
-      state.scanner.trigger();
-    }
-    return json(result);
+    const run = async (): Promise<StaleCleanupResult> => {
+      // Read again when it runs: a background cleanup starts after its session ended, which changes what is running.
+      const current = await staleTarget(state, repoId, name);
+      if (current instanceof Response) return { repoId, name, items: [], refused: ((await current.json()) as { error: string }).error };
+      const result = await applyStaleCleanup(current.repo, current.scope, name, request);
+      if (result.items.some((i) => i.outcome !== "kept")) {
+        state.sessions?.forgetWorktrees();
+        state.scanner.trigger();
+      }
+      return result;
+    };
+    const sessionId = backgroundSession(state, body, repoId, name);
+    if (sessionId instanceof Response) return sessionId;
+    // From the end-session dialog: carried on after the answer, its outcome recorded on the ended session (cleanup-background).
+    if (sessionId !== undefined && state.sessions) return json(await state.sessions.staleCleanupInBackground(sessionId, run), 202);
+    return json(await run());
   } catch (err) {
     if (err instanceof CleanupBusyError) return json({ error: err.message }, 409);
     if (err instanceof StaleCleanupError) return json({ error: err.message }, err.status);

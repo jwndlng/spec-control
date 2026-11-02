@@ -504,6 +504,16 @@ export function createDemoSessions({ now, getConfig, getSnapshot, integratable, 
       return { session: s.session, worktree };
     },
 
+    /** Nothing in the demo is slow: the "background" removal has finished by the time the answer arrives. */
+    closeInBackground(id: string) {
+      const { session, worktree } = this.close(id, true);
+      if (isChangeless(session)) throw new ApiError(409, "this session belongs to no change");
+      const at = iso(now());
+      const removed = worktree?.removable === true;
+      session.cleanup = { kind: "worktree", state: removed ? "done" : "failed", startedAt: at, finishedAt: at, worktreeRemoved: removed, ...(removed ? {} : { reason: worktree?.reason ?? "the worktree is not safe to remove" }) };
+      return { session, cleanup: session.cleanup };
+    },
+
     removeWorktree(repoId: string, name: string) {
       if (!getConfig().repos.some((r) => r.id === repoId)) throw new ApiError(404, "unknown repository");
       const path = sessionWorktreePath(repoId, name);

@@ -6,7 +6,7 @@ import { rmSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { blockedReason } from "../../shared/dependencies.ts";
-import { availableActions, changeSessions, pastDraftingReason, isChangeless, isConsole, isIntegration, isProjectConsole, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type ChangeSnapshot, type RepoPullRequests, type RepoSnapshot, type Session, type SessionAction, type SessionWorktree, type Snapshot, type WorkStatus, type MergeAsked, type PromptResult, type PullRequest, type RepoConfig, type ShipResult, type AutoMergePromptResult, type StartResult } from "../../shared/types.ts";
+import { availableActions, changeSessions, pastDraftingReason, isChangeless, isConsole, isIntegration, isProjectConsole, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type ChangeSnapshot, type RepoPullRequests, type RepoSnapshot, type Session, type SessionAction, type SessionWorktree, type Snapshot, type WorkStatus, type MergeAsked, type PromptResult, type PullRequest, type RepoConfig, type ShipResult, type AutoMergePromptResult, type StartResult, type SessionCleanup, type StaleCleanupResult } from "../../shared/types.ts";
 import { isEndedProposalSession, isProposalSession, proposalBranch, receivingSession, runningProposalSession, sessionBranch } from "../../shared/sessionBranch.ts";
 import { isBranchName, isCleaningUp } from "../cleanup.ts";
 import { isDismissing } from "../dismissChange.ts";
@@ -27,6 +27,7 @@ import { frameworkById } from "../frameworks/registry.ts";
 import { conflictSignal } from "../../shared/conflictSignal.ts";
 import { linkedPullRequest } from "../../shared/pullRequestLink.ts";
 import { mergeReady, pullRequestReadiness, readinessDetail } from "../../shared/pullRequestReadiness.ts";
+import { BackgroundCleanups, removalOutcome, staleOutcome } from "./backgroundCleanup.ts";
 import { checkWorktreeRemovable, copyChangeIfMissing, ensureWorktree, implementStartPoint, linkedWorktreeOf, NoCommitError, removeWorktree, UnknownBranchError, WorktreeMismatchError, type Removable } from "./worktree.ts";
 
 export const SCROLLBACK_BYTES = 1024 * 1024;
@@ -181,6 +182,8 @@ export class SessionManager {
   private merging = new Set<string>();
   /** Per `repoId` and change, the tail of its starts and worktree removals: one at a time (harden-session-lifecycle D3). */
   private changeLocks = new Map<string, Promise<unknown>>();
+  /** Worktree cleanups confirmed with an end and carried on after it (cleanup-background); recorded on each session. */
+  private readonly cleanups = new BackgroundCleanups((session) => this.touch(session));
 
   constructor(private readonly deps: ManagerDeps) {
     this.store = deps.store ?? new SessionStore();
@@ -191,6 +194,8 @@ export class SessionManager {
     for (const session of await this.store.loadAll()) {
       this.sessions.set(session.id, session);
       if (session.state === "running") await this.end(session, null, "the dashboard was restarted while this session was running");
+      // A background cleanup cannot outlive the dashboard either: say it was cut off, so the user can confirm it again.
+      if (!isChangeless(session) && BackgroundCleanups.markInterrupted(session)) await this.touch(session);
     }
   }
 
@@ -1419,6 +1424,46 @@ export class SessionManager {
     return { session, worktree };
   }
 
+  /**
+   * Ends the agent like `close`, then removes its worktree in the background (cleanup-background): resolves once the
+   * session has ended and the removal is recorded as pending, never later. A failed end starts nothing. The removal is
+   * the one `close` makes — under the change's lock, re-checked at that moment — and its outcome is stored on the
+   * session (`cleanup`), not returned.
+   */
+  async closeInBackground(id: string): Promise<{ session: Session; cleanup: SessionCleanup }> {
+    const session = this.cleanableChange(id);
+    await this.close(id);
+    const cleanup = await this.cleanups.start(session, "worktree", async () =>
+      removalOutcome(session.adopted ? NOT_OURS : await this.withChangeLock(session.repoId, session.change, () => this.removeSessionWorktree(session))),
+    );
+    return { session, cleanup };
+  }
+
+  /**
+   * Runs a stale cleanup the user confirmed for an ended session in the background, recorded on that session like the
+   * plain removal. `run` is the cleanup route's own, with its own re-checks; this only refuses a session still running.
+   */
+  async staleCleanupInBackground(id: string, run: () => Promise<StaleCleanupResult>): Promise<{ session: Session; cleanup: SessionCleanup }> {
+    const session = this.cleanableChange(id);
+    if (session.state === "running") throw new SessionError(409, "end the session before cleaning up after it");
+    const cleanup = await this.cleanups.start(session, "stale", async () => staleOutcome(await run(), session));
+    return { session, cleanup };
+  }
+
+  /** Resolves once the session's background cleanup, if any, has finished and its outcome is stored. */
+  cleanupSettled(id: string): Promise<void> {
+    return this.cleanups.settled(id);
+  }
+
+  /** A change session with a worktree of its own and no cleanup running for it: the only kind a cleanup is started for. */
+  private cleanableChange(id: string): ChangeSession {
+    const session = this.get(id);
+    if (isChangeless(session)) throw new SessionError(409, notAChange(session));
+    if (session.inPlace) throw new SessionError(409, "this session ran in the repository folder itself, so it has no worktree to clean up");
+    if (this.cleanups.isRunning(id)) throw new SessionError(409, "a cleanup after this session is still running");
+    return session;
+  }
+
   /** The ended session's worktree, removed when it is safe — and never while another session runs in it. */
   private async removeSessionWorktree(session: ChangeSession): Promise<Removable> {
     if (this.runningInFolder(session.worktreePath).some((s) => s.id !== session.id)) return RUNNING_HERE;
@@ -1445,6 +1490,7 @@ export class SessionManager {
   async remove(id: string): Promise<void> {
     const session = this.get(id);
     if (session.state === "running") throw new SessionError(409, "close the session first");
+    if (this.cleanups.isRunning(id)) throw new SessionError(409, "a cleanup after this session is still running");
     await this.store.delete(id);
     this.sessions.delete(id);
     this.live.delete(id);

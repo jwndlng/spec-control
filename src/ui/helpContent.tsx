@@ -217,7 +217,9 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           <li>
             <strong>Open work</strong> in the top bar lists running agents and worktrees that still hold something.{" "}
             <strong>End session</strong> stops an agent and, by default, pulls the repository and — when nothing would be
-            lost — removes its worktree; clear either box before confirming to skip it. Once the change is archived and
+            lost — removes its worktree; clear either box before confirming to skip it. Confirmed worktree cleanup continues
+            in the background so you can keep working immediately; while running, the session shows <em>cleaning up…</em>,
+            and its completion, kept worktree, or failure is reported on the card and console. Once the change is archived and
             merged, it offers <strong>Clean up leftovers</strong> instead: the session's worktree and whatever else of the
             change is left over go in the same confirmation, after a copy of their uncommitted files is kept. It is selected
             unless a file outside the change would be deleted.
