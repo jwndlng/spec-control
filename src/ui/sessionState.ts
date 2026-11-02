@@ -5,7 +5,7 @@ import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { relTime } from "./format.ts";
 import { isEndedProposalSession, isProposalSession, receivingSession } from "../shared/sessionBranch.ts";
 import { mergePending, pullRequestReadiness, readinessDetail } from "../shared/pullRequestReadiness.ts";
-import { availableActions, DEFAULT_EDITOR, editorCommandLine, type EditorAvailability, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type RepoPullRequests, type Session, type SessionAction, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
+import { availableActions, DEFAULT_EDITOR, editorCommandLine, type EditorAvailability, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type RepoPullRequests, type Session, type SessionAction, type SessionCleanup, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
 import { changeAgentFor } from "../shared/changeAgent.ts";
 
 /** Session starters are shown when the feature is on, for every tracked repository that has not been switched off. */
@@ -48,12 +48,31 @@ export function sessionsForChange(sessions: ChangeSession[], repoId: string, cha
   if (running.length > 0) return running;
   const latest = mine[0];
   // An end the dashboard decided on (its auto-merge pull request merged) stays on the card, so the user sees what happened.
-  return latest && (latest.state === "failed" || latest.autoEnded !== undefined || (latest.exitCode ?? 0) !== 0) ? [latest] : [];
+  // A background cleanup (pending, failed, or interrupted) also stays on the card so the user sees what happened.
+  return latest && (latest.state === "failed" || latest.autoEnded !== undefined || latest.cleanup?.state === "pending" || latest.cleanup?.state === "failed" || latest.cleanup?.state === "interrupted" || (latest.exitCode ?? 0) !== 0) ? [latest] : [];
 }
 
 /** Why the dashboard ended a session on its own, and what became of its worktree (auto-merge-cleanup D6). */
 export function autoEndedText(ended: AutoEnded): string {
   return `Ended because #${ended.pr} merged; ${ended.removed ? "worktree removed" : `worktree kept: ${ended.reason ?? "it could not be removed"}`}`;
+}
+
+/** What became of a background worktree or stale cleanup (cleanup-background). */
+export function cleanupNotice(cleanup: SessionCleanup, change?: string): string {
+  const target = change ? ` of ${change}` : "";
+  if (cleanup.state === "pending") {
+    return cleanup.kind === "stale" ? `Cleaning up leftovers${target} in the background…` : `Removing worktree${target} in the background…`;
+  }
+  if (cleanup.state === "interrupted") {
+    return cleanup.reason ?? `Cleanup${target} was interrupted.`;
+  }
+  if (cleanup.state === "failed") {
+    return `Cleanup${target} failed: ${cleanup.reason ?? "the worktree could not be removed"}`;
+  }
+  if (cleanup.worktreeRemoved === false) {
+    return `Worktree${target} kept: ${cleanup.reason ?? "not safe to remove"}`;
+  }
+  return cleanup.kind === "stale" ? `Leftovers${target} cleaned up.` : `Session ended and worktree${target} removed.`;
 }
 
 /**
@@ -265,8 +284,8 @@ export function worktreeRemovalPossible(session: Pick<Session, "inPlace"> | unde
  * worktree only once its status arrived, since the warning and the removal are decided on it. An in-place session has
  * no worktree status to wait for, so it can be confirmed at once.
  */
-export function endConfirmable(session: Pick<Session, "inPlace"> | undefined, status: unknown, busy: boolean): boolean {
-  return !busy && (!worktreeRemovalPossible(session) || status !== undefined);
+export function endConfirmable(session: (Pick<Session, "inPlace"> & { cleanup?: SessionCleanup }) | undefined, status: unknown, busy: boolean): boolean {
+  return !busy && session?.cleanup?.state !== "pending" && (!worktreeRemovalPossible(session) || status !== undefined);
 }
 
 /**
@@ -365,6 +384,26 @@ export function sessionBadge(session: Session, now = Date.now()): SessionBadge {
   if (!isChangeless(session) && session.autoEnded) {
     const ended = session.autoEnded;
     return { icon: "✓", label: `ended · #${ended.pr} merged`, tone: ended.removed ? "success" : "warning", title: autoEndedText(ended) };
+  }
+  if (!isChangeless(session) && session.cleanup) {
+    const c = session.cleanup;
+    if (c.state === "pending") {
+      return { icon: "●", label: "cleaning up…", live: true, tone: "info", title: cleanupNotice(c, session.change) };
+    }
+    if (c.state === "failed") {
+      return { icon: "⚠", label: "cleanup failed", tone: "danger", title: cleanupNotice(c, session.change) };
+    }
+    if (c.state === "interrupted") {
+      return { icon: "⚠", label: "cleanup interrupted", tone: "warning", title: cleanupNotice(c, session.change) };
+    }
+    if (c.state === "done") {
+      return {
+        icon: c.worktreeRemoved ? "✓" : "⚠",
+        label: c.worktreeRemoved ? "ended · cleaned up" : "ended · worktree kept",
+        tone: c.worktreeRemoved ? "success" : "warning",
+        title: cleanupNotice(c, session.change),
+      };
+    }
   }
   if (session.state === "failed") return { icon: "⚠", label: "failed", tone: "danger", title: session.error ?? "the agent could not be started" };
   const code = session.exitCode;
@@ -560,7 +599,7 @@ export interface OpenWorkItem {
 export function openWork(worktrees: SessionWorktree[], all: readonly Session[], now = Date.now()): { items: OpenWorkItem[]; unshipped: number; running: number } {
   // The main console belongs to no repository and no change: it is never open work.
   const sessions = changeSessions(all);
-  const live = sessions.filter((s) => s.state === "running").sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const live = sessions.filter((s) => s.state === "running" || s.cleanup?.state === "pending").sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const items: OpenWorkItem[] = live.map((session) => ({
     key: session.id,
     repoId: session.repoId,

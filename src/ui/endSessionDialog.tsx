@@ -13,7 +13,7 @@ import { inPlaceLeftover } from "./inPlaceText.ts";
 import { endConfirmable, endDialogEscape, endSeverity, endWarning, ownReports, pullOffer, removalPreselected, reportShip, worktreeRemovalPossible } from "./sessionState.ts";
 import { useSessionUi } from "./sessions.tsx";
 import { outsideNote, StaleCleanupOutcome, StaleLeftoverList } from "./staleCleanup.tsx";
-import { cleanupNeedsReport, endCleanupOffer, keptUntilStale, outsidePaths, staleRequest } from "./staleState.ts";
+import { endCleanupOffer, keptUntilStale, outsidePaths, staleRequest } from "./staleState.ts";
 
 interface Status {
   removable: boolean;
@@ -177,52 +177,67 @@ export function EndSessionDialog() {
 
   /**
    * End, then remove, then pull: the removal is decided on the work status the user was shown, and a fast-forward
-   * moves the base that status is derived from. An outcome that left the checkout behind turns the dialog into a
-   * report instead of closing it — a pull that did not happen is the outdated view this offer exists to prevent.
+   * moves the base that status is derived from. When worktree cleanup is confirmed, the session ends and the dialog
+   * closes without waiting for cleanup to finish, so the user can continue using the dashboard (cleanup-background).
    */
   const confirm = async () => {
     const dialog = own();
     setBusy(true);
     setError(undefined);
-    let worktreeRemoved = false;
+    const willCleanWorktree = !cleanupOffer.offered && remove && status?.removable === true;
+    const willCleanStale = cleanupOffer.offered && cleanupSelected && "change" in session && Boolean(session.change);
+
+    if (willCleanWorktree) {
+      try {
+        await api.closeSessionInBackground(session.id);
+      } catch (err) {
+        dialog.setError(err instanceof Error ? err.message : String(err));
+        dialog.setBusy(false);
+        return;
+      }
+      if (pullSelected) void pulls.pull(session.repoId).then(() => ui.refresh());
+      await ui.refresh();
+      dialog.close();
+      return;
+    }
+
+    if (willCleanStale) {
+      try {
+        await api.closeSession(session.id, false);
+        await api.staleCleanupInBackground(session.repoId, session.change as string, staleRequest(leftovers, true), session.id);
+      } catch (err) {
+        dialog.setError(err instanceof Error ? err.message : String(err));
+        dialog.setBusy(false);
+        return;
+      }
+      if (pullSelected) void pulls.pull(session.repoId).then(() => ui.refresh());
+      await ui.refresh();
+      dialog.close();
+      return;
+    }
+
     try {
-      const result = await api.closeSession(session.id, !cleanupOffer.offered && remove && status?.removable === true);
-      worktreeRemoved = result.worktree?.removable === true;
+      await api.closeSession(session.id, false);
     } catch (err) {
       dialog.setError(err instanceof Error ? err.message : String(err));
       dialog.setBusy(false);
       return;
     }
-    // End, clean up, pull: the cleanup removes the main checkout's leftover copy before the fast-forward.
-    let cleanup: StaleCleanupResult | undefined;
-    if (cleanupSelected && "change" in session && session.change) {
-      try {
-        // Selecting the offer is the acknowledgement for files outside the change, which the offer named.
-        cleanup = await api.staleCleanup(session.repoId, session.change, staleRequest(leftovers, true));
-        worktreeRemoved = cleanup.items.some((i) => i.kind === "worktree" && i.outcome !== "kept" && (i.id === session.worktreePath || i.branch === session.branch));
-      } catch (err) {
-        cleanup = { repoId: session.repoId, name: session.change, items: [], refused: err instanceof Error ? err.message : String(err) };
-      }
-    }
-    const reportCleanup = cleanup && cleanupNeedsReport(cleanup) ? cleanup : undefined;
+
     if (!pullSelected) {
       await ui.refresh();
-      if (!reportCleanup) {
-        dialog.close();
-        return;
-      }
-      dialog.setReport({ cleanup: reportCleanup, worktreeRemoved });
-      dialog.setBusy(false);
-      return;
-    }
-    dialog.setPulling(true);
-    const result = await pulls.pull(session.repoId); // never rejects; a failed call comes back as a `failed` result
-    await ui.refresh();
-    if (!pullNeedsReport(result) && !reportCleanup) {
       dialog.close();
       return;
     }
-    dialog.setReport({ result: pullNeedsReport(result) ? result : undefined, cleanup: reportCleanup, worktreeRemoved });
+
+    dialog.setPulling(true);
+    const result = await pulls.pull(session.repoId);
+    await ui.refresh();
+    if (!pullNeedsReport(result)) {
+      dialog.close();
+      return;
+    }
+    dialog.setReport({ result, worktreeRemoved: false });
     dialog.setPulling(false);
     dialog.setBusy(false);
   };

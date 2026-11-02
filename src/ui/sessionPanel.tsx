@@ -12,8 +12,9 @@ import { cdCommand } from "./format.ts";
 import { inPlaceReason } from "./inPlaceText.ts";
 import { NOT_SUBMITTED_NOTICE, shortcutHint, shortcutMessage, visibleShortcuts } from "./quickReplies.ts";
 import { usePullRequests } from "./pullRequests.tsx";
-import { autoEndedText, autoMergeNotice, conflictAction, consoleSteps, handedOverProposal, mergeControl, mergeNotice, oneAtATime, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, sessionsEnabledFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
+import { autoEndedText, autoMergeNotice, cleanupNotice, conflictAction, consoleSteps, handedOverProposal, mergeControl, mergeNotice, oneAtATime, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, sessionsEnabledFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
 import { ConflictBadge, OpenInEditor, SessionBadgeView, SessionControls, useSessionUi } from "./sessions.tsx";
+import { StaleCleanupOutcome } from "./staleCleanup.tsx";
 
 export function Copy({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false);
@@ -466,8 +467,8 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
             />
           )}
           {session && (
-            <button type="button" class="btn sm" onClick={() => ui.requestEnd(session.id)}>
-              {session.state === "running" ? "End session" : "Clean up"}
+            <button type="button" class="btn sm" disabled={session.cleanup?.state === "pending"} onClick={() => ui.requestEnd(session.id)}>
+              {session.state === "running" ? "End session" : session.cleanup?.state === "pending" ? "Cleaning up…" : "Clean up"}
             </button>
           )}
           {session && session.state !== "running" && (
@@ -480,6 +481,12 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
         </div>
         {(error ?? session?.error) && <div class="notice danger">{error ?? session?.error}</div>}
         {session?.autoEnded && <div class={`notice ${session.autoEnded.removed ? "ok" : "warn"}`}>{autoEndedText(session.autoEnded)}</div>}
+        {session?.cleanup && (
+          <div class={`notice ${session.cleanup.state === "done" ? (session.cleanup.worktreeRemoved ? "ok" : "warn") : session.cleanup.state === "pending" ? "" : "danger"}`} role="status">
+            {cleanupNotice(session.cleanup, session.change)}
+          </div>
+        )}
+        {session?.cleanup?.stale && <StaleCleanupOutcome result={session.cleanup.stale} />}
         {pendingMerge && (
           <div class={`notice ${pendingMerge.tone === "warn" ? "warn" : ""}`} role="status" title={pendingMerge.title}>
             {pendingMerge.text}

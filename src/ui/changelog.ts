@@ -22,6 +22,13 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
       "**Ship** and **Merge** now execute directly on the server without typing into an agent or requiring a running session, recording branches in `.openspec.yaml`. Synced changes archive, clean carry-overs cherry-pick, and identical duplicates clean up with zero LLM tokens across all coding agents.",
   },
   {
+    id: "2026-11-02-background-worktree-cleanup",
+    date: "2026-11-02",
+    title: "Worktree cleanup continues in the background",
+    summary:
+      "Ending a session now closes the dialog as soon as the agent has ended, so you can continue using the dashboard while confirmed worktree cleanup runs in the background. The cleanup outcome is reported on the card and console once it finishes.",
+  },
+  {
     id: "2026-10-28-agent-per-change",
     date: "2026-10-28",
     title: "Choose an agent for each change",

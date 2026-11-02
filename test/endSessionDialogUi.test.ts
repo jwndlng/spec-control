@@ -78,3 +78,15 @@ test("every report, error and close after an await goes through the guard", () =
     expect(afterFirstAwait).not.toMatch(/(?<![\w.])(setReport|setBusy|setError|setPulling|close)\(/);
   }
 });
+
+test("when cleanup continues, confirm closes dialog once session ends and reports errors without closing", () => {
+  const confirmBody = source.slice(source.indexOf("const confirm = async"), source.indexOf("if (report && !report.result)"));
+  // Both worktree removal and stale cleanup in background close the dialog
+  expect(confirmBody).toContain("await api.closeSessionInBackground(session.id)");
+  expect(confirmBody).toContain("await api.staleCleanupInBackground(");
+  // On error, dialog stays open with error and busy is false
+  expect(confirmBody).toContain("dialog.setError(err instanceof Error ? err.message : String(err))");
+  expect(confirmBody).toContain("dialog.setBusy(false)");
+  // Dialog closes without waiting for cleanup
+  expect(confirmBody).toContain("dialog.close()");
+});
