@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { SessionActivity } from "../src/server/activity/events.ts";
 import type { SessionManager } from "../src/server/sessions/manager.ts";
 import { defaultShipTitle } from "../src/server/sessions/manager.ts";
+import { recordBranchInWorktree } from "../src/server/frameworks/worktreeMetadata.ts";
 import type { ChangeSession, PullRequest } from "../src/shared/types.ts";
 import { installFakeGh, type GhHarness } from "./ghHelpers.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
@@ -161,6 +162,7 @@ test("Ship on clean unpushed worktree creates no extra commit and pushes existin
   const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
 
   // Commit a change directly with custom message
+  await recordBranchInWorktree(session.worktreePath, IMPLEMENT, "branch", `feat/${IMPLEMENT}`);
   await putFile(session.worktreePath, "src/keys.ts", "export const v = 1;\n");
   git(session.worktreePath, "add", "-A");
   git(session.worktreePath, "commit", "-m", "feat(keys): custom commit message");

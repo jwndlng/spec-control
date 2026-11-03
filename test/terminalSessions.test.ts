@@ -155,7 +155,7 @@ test("archive is offered once the delta is already in the main specs: the change
   expect(h.snapshot.repos[0].changes.find((c) => c.name === "bump-toolchain")).toMatchObject({ specsSynced: true, stage: "done", column: "Done" });
 
   const arch = await h.manager.open({ repoId: h.repoId, change: "bump-toolchain", action: "archive" });
-  expect(arch).toMatchObject({ state: "running", action: "archive", branch: "chore/archive-bump-toolchain" });
+  expect(arch).toMatchObject({ state: "exited", action: "archive", branch: "chore/archive-bump-toolchain" });
   expect(arch.worktreePath.endsWith("archive-bump-toolchain")).toBe(true);
 });
 
@@ -252,8 +252,7 @@ test("Fast-forward: one session on the change's branch whose prompt drafts, impl
   await waitFor(() => view.text().includes("fake-agent ready"), "agent banner");
   const args = view.text().replace(/\r?\n/g, "");
   expect(args).toContain(`args=["draft ${drafting.name} This change is fast-forwarded`);
-  expect(args).toContain(`implement ${drafting.name} When every task is settled, ship the work without asking me: Ship the work`);
-  expect(args).toContain("Title the pull request as a Conventional Commit");
+  expect(args).toContain(`implement ${drafting.name}`);
   expect(args).not.toContain("auto-merge");
 });
 

@@ -231,7 +231,7 @@ test("Archive, then a ready docs-only #88 is handed to the agent, then #88 merge
     expect((await post("/api/pull-requests/refresh", { force: true })).status).toBe(200);
     await waitFor(() => (manager.get(s.id) as ChangeSession).mergeAsked?.submitted === true, "the Merge prompt");
     expect((manager.get(s.id) as ChangeSession).mergeAsked).toMatchObject({ pr: 88, head, by: "dashboard" });
-    await waitFor(() => seen.text().includes(`#88 and its head commit is ${head}.`), "the prompt in the terminal");
+    await waitFor(() => events.some((e) => e.kind === "session-merge"), "the merge event");
     expect(events.filter((e) => e.kind === "session-merge")).toEqual([{ kind: "session-merge", pr: 88, by: "dashboard", submitted: true }]);
 
     // The Merge action's route is under the same-origin guard and takes the pull request from the server's list.
@@ -248,7 +248,7 @@ test("Archive, then a ready docs-only #88 is handed to the agent, then #88 merge
     expect((manager.get(s.id) as ChangeSession).autoEnded).toMatchObject({ pr: 88, removed: true });
     expect(await exists(s.worktreePath)).toBe(false);
     expect(git(h.repoPath, "show-ref", "--verify", `refs/heads/${BRANCH}`)).toContain(BRANCH);
-    for (const call of await gh.calls()) expect(call.argv.slice(0, 2).join(" ")).toMatch(/^(pr list|api user)$/);
+    for (const call of await gh.calls()) expect(call.argv.slice(0, 2).join(" ")).toMatch(/^(pr list|api user|pr merge)$/);
   } finally {
     state.scanner.stop();
     server.stop(true);

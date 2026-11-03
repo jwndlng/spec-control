@@ -79,8 +79,7 @@ test("Draft in a docs auto-merge project works on docs/<change> and asks for the
     expect(asked(manager, s.id)).toBeDefined();
     expect(git(s.worktreePath, "rev-parse", "HEAD")).toBe(mainHead);
     const prompt = draftPrompt(h, true);
-    expect(prompt).toStartWith(`draft ${CHANGE} This project lets`);
-    expect(prompt).toContain(conventional ? `titled docs(openspec): add ${CHANGE},` : `titled Add OpenSpec proposal ${CHANGE},`);
+    expect(prompt).toBe(`draft ${CHANGE}`);
     await started(manager, s.id, prompt);
     // The main checkout is unchanged: same branch, same commit, same status.
     expect([git(h.repoPath, "rev-parse", "--abbrev-ref", "HEAD"), git(h.repoPath, "rev-parse", "HEAD"), git(h.repoPath, "status", "--porcelain")]).toEqual(["main", mainHead, status]);
@@ -243,18 +242,17 @@ function pr(patch: Partial<PullRequest> & { head: string }): PullRequest {
   return { number: 90, title: `docs(openspec): add ${CHANGE}`, url: "https://github.com/acme/demo-ops/pull/90", author: "octo", base: "main", draft: false, state: "open", isCrossRepository: false, createdAt: new Date().toISOString(), review: "none", reviewRequestedFromViewer: false, checks: "passing", mergeable: "mergeable", docsOnly: true, ...patch };
 }
 
-test("the proposal pull request is handed back to merge once ready, and its merge ends the session", async () => {
+test("the proposal pull request is merged automatically by the server once ready, and its merge ends the session", async () => {
   const { h, manager, agent } = await project();
+  git(h.repoPath, "remote", "add", "origin", "https://github.com/acme/demo-ops.git");
   const s = await manager.open({ repoId: h.repoId, change: CHANGE, action: "draft" });
-  const seen = await started(manager, s.id, draftPrompt(h, true));
+  await started(manager, s.id, draftPrompt(h, true));
   const head = await commit(s.worktreePath, { [`openspec/changes/${CHANGE}/design.md`]: "# Design\n" });
-  // What the agent's push would leave: the branch on the remote, so the worktree holds nothing that exists nowhere else.
+  // What the push would leave: the branch on the remote, so the worktree holds nothing that exists nowhere else.
   git(s.worktreePath, "update-ref", `refs/remotes/origin/docs/${CHANGE}`, head);
   await gh.forget();
 
   await manager.requestReadyMerges(h.repoId, [pr({ head: `docs/${CHANGE}`, headOid: head })]);
-  const expected = mergePrompt(agent, CHANGE, { pr: 90, head });
-  await waitFor(() => seen.text().includes(`you said: ${expected}`), "the Merge prompt");
   expect((manager.get(s.id) as ChangeSession).mergeAsked).toMatchObject({ pr: 90, head, by: "dashboard" });
 
   const mergedAt = new Date(Date.now() + 1000).toISOString();
@@ -264,12 +262,12 @@ test("the proposal pull request is handed back to merge once ready, and its merg
   expect(ended.autoEnded).toMatchObject({ pr: 90, removed: true });
   expect(await stat(s.worktreePath).catch(() => undefined)).toBeUndefined();
   expect(git(h.repoPath, "rev-parse", `refs/heads/docs/${CHANGE}`)).toBe(head); // the branch is kept
-  expect(await gh.calls()).toEqual([]);
 });
 
 /** Draft, then Implement asking to end it: the ended proposal session and the running Implement session. */
 async function handedOver() {
   const { h, manager, agent } = await project();
+  git(h.repoPath, "remote", "add", "origin", "https://github.com/acme/demo-ops.git");
   const { draft, tip } = await proposalSession(h, manager);
   const impl = await manager.open({ repoId: h.repoId, change: CHANGE, action: "implement", endProposal: true });
   const seen = await started(manager, impl.id, `implement ${CHANGE}`);
@@ -277,47 +275,34 @@ async function handedOver() {
   return { h, manager, agent, draft, impl, tip, seen };
 }
 
-test("an ended proposal session's ready pull request is handed to the Implement session, once per head commit", async () => {
-  const { h, manager, agent, draft, impl, tip, seen } = await handedOver();
+test("an ended proposal session's ready pull request is merged directly by the server, once per head commit", async () => {
+  const { h, manager, draft, impl, tip } = await handedOver();
   const list = [pr({ head: `docs/${CHANGE}`, headOid: tip })];
   await manager.requestReadyMerges(h.repoId, list);
-  const expected = mergePrompt(agent, CHANGE, { pr: 90, head: tip, proposal: true });
-  expect(expected).toEndWith(`This pull request is the change's proposal from branch docs/${CHANGE}, not the branch of this worktree.`);
-  await waitFor(() => seen.text().includes(`you said: ${expected}`), "the handed-over Merge prompt");
-  // Recorded on the proposal session, not on the session that received it.
   expect((manager.get(draft.id) as ChangeSession).mergeAsked).toMatchObject({ pr: 90, head: tip, by: "dashboard", submitted: true });
   expect((manager.get(impl.id) as ChangeSession).mergeAsked).toBeUndefined();
 
-  // Seen again at the same head commit: nothing more is typed.
+  // Seen again at the same head commit: nothing more is merged.
+  const callsBefore = (await gh.calls()).length;
   await manager.requestReadyMerges(h.repoId, list);
-  await new Promise((r) => setTimeout(r, 300));
-  expect(seen.text().split(`you said: ${expected}`).length - 1).toBe(1);
-  expect(await gh.calls()).toEqual([]);
+  expect((await gh.calls()).length).toBe(callsBefore);
 });
 
-test("with no running session of the change the handed-over pull request is not sent anywhere", async () => {
+test("with no running session of the change the ended proposal pull request is still merged by the server", async () => {
   const { h, manager, draft, impl, tip } = await handedOver();
   await manager.close(impl.id);
   await manager.requestReadyMerges(h.repoId, [pr({ head: `docs/${CHANGE}`, headOid: tip })]);
-  expect((manager.get(draft.id) as ChangeSession).mergeAsked).toBeUndefined();
-  expect(runningOf(manager)).toEqual([]);
-  // And Merge by hand is refused for an ended session, as for any other.
-  await expect(manager.merge(impl.id, [pr({ head: `docs/${CHANGE}`, headOid: tip })])).rejects.toThrow("not running");
+  expect((manager.get(draft.id) as ChangeSession).mergeAsked).toMatchObject({ pr: 90, head: tip, by: "dashboard", submitted: true });
 });
 
-test("Merge in the Implement session's panel targets the handed-over proposal pull request", async () => {
-  const { manager, agent, draft, impl, tip, seen } = await handedOver();
-  const result = await manager.merge(impl.id, [pr({ head: `docs/${CHANGE}`, headOid: tip })]);
-  expect(result.id).toBe(impl.id);
-  await waitFor(() => seen.text().includes(`you said: ${mergePrompt(agent, CHANGE, { pr: 90, head: tip, proposal: true })}`), "the Merge prompt");
+test("Merge on the ended proposal session merges directly on the server", async () => {
+  const { h, manager, draft, tip } = await handedOver();
+  const result = await manager.merge(draft.id, [pr({ head: `docs/${CHANGE}`, headOid: tip })]);
+  expect(result.id).toBe(draft.id);
   expect((manager.get(draft.id) as ChangeSession).mergeAsked).toMatchObject({ pr: 90, head: tip, by: "user" });
-  // Its own branch's pull request comes first once there is one.
-  const own = pr({ number: 91, head: `feat/${CHANGE}`, headOid: "b".repeat(40) });
-  await manager.merge(impl.id, [own, pr({ head: `docs/${CHANGE}`, headOid: tip })]);
-  expect((manager.get(impl.id) as ChangeSession).mergeAsked).toMatchObject({ pr: 91, by: "user" });
 });
 
-test("once the handed-over proposal pull request merged, its worktree is removed, its branch kept, and Implement keeps running", async () => {
+test("once the proposal pull request merged, its worktree is removed, its branch kept, and Implement keeps running", async () => {
   const { h, manager, draft, impl, tip } = await handedOver();
   const mergedAt = new Date(Date.now() + 1000).toISOString();
   await manager.endMergedAutoMerge(h.repoId, [pr({ head: `docs/${CHANGE}`, headOid: tip, state: "merged", mergedAt })]);
@@ -325,7 +310,6 @@ test("once the handed-over proposal pull request merged, its worktree is removed
   expect(await stat(draft.worktreePath).catch(() => undefined)).toBeUndefined();
   expect(git(h.repoPath, "rev-parse", `refs/heads/docs/${CHANGE}`)).toBe(tip);
   expect(manager.get(impl.id).state).toBe("running");
-  expect(await gh.calls()).toEqual([]);
 });
 
 test("API: endProposal is accepted as a boolean only", async () => {

@@ -121,7 +121,6 @@ test("lifecycle: closeInBackground ends session first, then executes removal", a
   expect(s.state).toBe("running");
 
   // Merge the branch into main so the worktree is safely removable
-  git(s.worktreePath, "commit", "-q", "-am", "prep");
   git(h.repoPath, "merge", "--no-ff", "-m", "merge upgrade-runtime", s.branch!);
 
   const { session, cleanup } = await h.manager.closeInBackground(s.id);
@@ -198,7 +197,6 @@ test("lifecycle: interrupted cleanup across restart is reported and can be safel
   expect(loaded.cleanup?.reason).toBe(INTERRUPTED_REASON);
 
   // Now retry cleanup safely
-  git(s.worktreePath, "commit", "-q", "-am", "prep");
   git(h.repoPath, "merge", "--no-ff", "-m", "merge upgrade-runtime", s.branch!);
   const retried = await again.closeInBackground(s.id);
   expect(retried.cleanup.state).toBe("pending");
@@ -221,7 +219,6 @@ test("API: close with background flag returns 202 and pending cleanup", async ()
   const handler = createFetchHandler({ state, indexHtml: "" });
 
   // Merge so removal will succeed once executed
-  git(s.worktreePath, "commit", "-q", "-am", "prep");
   git(h.repoPath, "merge", "--no-ff", "-m", "merge upgrade-runtime", s.branch!);
 
   const req = new Request(`http://127.0.0.1/api/sessions/${s.id}/close`, {

@@ -527,7 +527,6 @@ export class SessionManager {
         // The change may live only in some other worktree (on another branch), not in the main checkout. A duplicate is
         // on the default branch the worktree was made from; nothing is copied into it.
         if (!duplicate) await copyChangeIfMissing(snapshot.checkout?.path ?? repo.path, session.worktreePath, change);
-        await recordBranchInWorktree(session.worktreePath, change, action === "archive" ? "archive-branch" : "branch", branch).catch(() => undefined);
       } catch (err) {
         throw new SessionError(err instanceof NoCommitError || err instanceof WorktreeMismatchError ? 409 : 500, err instanceof Error ? err.message : String(err));
       }
@@ -948,17 +947,19 @@ export class SessionManager {
       }
     }
 
-    // 4. Push branch to origin
-    const pushRes = await pushWorktreeBranch(session.worktreePath, branch, "origin");
-    if (!pushRes.ok) {
-      throw new SessionError(500, pushRes.err || "could not push branch to origin");
+    // 4. Push branch to origin if configured
+    const origin = await originUrl(repo.path);
+    if (origin) {
+      const pushRes = await pushWorktreeBranch(session.worktreePath, branch, "origin");
+      if (!pushRes.ok) {
+        throw new SessionError(500, pushRes.err || "could not push branch to origin");
+      }
     }
 
     // 5. Open or reuse pull request on GitHub
     let pullRequestUrl: string | undefined;
     let pullRequestNumber: number | undefined;
 
-    const origin = await originUrl(repo.path);
     const github = origin ? githubRepoFromRemote(origin) : undefined;
     if (github) {
       const cachedPrs = (await this.deps.listPullRequests?.(repo.id)) ?? [];
