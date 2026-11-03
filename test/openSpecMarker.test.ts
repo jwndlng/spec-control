@@ -87,6 +87,6 @@ describe("setRecordedBranchInMarker", () => {
   });
 
   test("malformed inputs: throws on invalid key", () => {
-    expect(() => setRecordedBranchInMarker(BASE, "invalid" as any, "feat/valid")).toThrow();
+    expect(() => setRecordedBranchInMarker(BASE, "invalid" as unknown as "branch", "feat/valid")).toThrow();
   });
 });
