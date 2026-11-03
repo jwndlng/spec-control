@@ -76,15 +76,13 @@ The dashboard SHALL start agents from user-configurable profiles. A profile cons
 - **THEN** every prompt of every profile is composed exactly as it was, and the profile carries no additional instructions
 
 ### Requirement: Session starters run a fixed prompt for a validated change
-The dashboard SHALL offer the starters **Draft artifacts** (change in `Unknown`, `Backlog` or `Drafts`, or in `Ready` while an artifact the schema does not require for implementing is not done), **Implement** (change in `Ready` or `Implementing`), **Validate** (change in `Done` with the sub-state `validate`) and **Archive** (change in `Done`, in either sub-state), each only when the repository's agent has an opening prompt configured for it, and none for archived changes. **Implement** SHALL NOT be offered for a change in `Done`: nothing is left to implement there, and offering it is what sends an agent back into finished code. **Draft artifacts** SHALL NOT be offered for a change in `Implementing` or `Done`, whatever artifacts it lacks: an artifact the schema does not require is no reason to send an agent back to planning once implementation started, and a request for it SHALL be refused with the reason that the change is past drafting. Which of the available starters a card or the Console tab recommends is a matter of display (`kanban-board`: "A change's actions are one split button"); the available starters and every refusal SHALL be decided by stage, sub-state and dependencies alone, never by a linked pull request. **Implement** SHALL NOT be offered for a change that is **blocked** by its dependencies (change-dependencies), whatever its stage: it is offered again on the first scan after the change stops being blocked. Being blocked SHALL NOT withhold **Draft artifacts**, **Validate** or **Archive**, and SHALL NOT end, interrupt or send anything to a session that is already running. A request to start a starter that is not available for the change's current stage, sub-state and dependencies SHALL be refused; a request for **Implement** refused because the change is blocked SHALL name, as its reason, each dependency that is not `met` together with its state, or say that the change's `depends-on.yaml` could not be read. The opening prompt SHALL be produced from the profile's template, in which `{change}` is the only placeholder, replaced by the change name after it passed change-name validation. The agent MUST be started without a shell from an argument list; the prompt MUST reach it either as exactly one argument (where the command contains `{prompt}`) or by being submitted to its terminal after start-up under the rules for text sent on the user's behalf (where it does not). No text from the browser other than the validated change name may become part of the command line.
+The dashboard SHALL offer the starters **Draft artifacts** (change in `Unknown`, `Backlog` or `Drafts`, or in `Ready` while an artifact the schema does not require for implementing is not done), **Implement** (change in `Ready` or `Implementing`), **Validate** (change in `Done` with the sub-state `validate`) and **Archive** (change in `Done`, in either sub-state), each only when the repository's agent has an opening prompt configured for it (except that **Archive** on a `Done` change with `subState: "complete"` and `specsSynced !== false` runs deterministically on the server and SHALL be offered even if the profile has no Archive prompt), and none for archived changes. **Implement** SHALL NOT be offered for a change in `Done`: nothing is left to implement there, and offering it is what sends an agent back into finished code. **Draft artifacts** SHALL NOT be offered for a change in `Implementing` or `Done`, whatever artifacts it lacks: an artifact the schema does not require is no reason to send an agent back to planning once implementation started, and a request for it SHALL be refused with the reason that the change is past drafting. Which of the available starters a card or the Console tab recommends is a matter of display (`kanban-board`: "A change's actions are one split button"); the available starters and every refusal SHALL be decided by stage, sub-state and dependencies alone, never by a linked pull request. **Implement** SHALL NOT be offered for a change that is **blocked** by its dependencies (change-dependencies), whatever its stage: it is offered again on the first scan after the change stops being blocked. Being blocked SHALL NOT withhold **Draft artifacts**, **Validate** or **Archive**, and SHALL NOT end, interrupt or send anything to a session that is already running. A request to start a starter that is not available for the change's current stage, sub-state and dependencies SHALL be refused; a request for **Implement** refused because the change is blocked SHALL name, as its reason, each dependency that is not `met` together with its state, or say that the change's `depends-on.yaml` could not be read. The opening prompt SHALL be produced from the profile's template, in which `{change}` is the only placeholder, replaced by the change name after it passed change-name validation. The agent MUST be started without a shell from an argument list; the prompt MUST reach it either as exactly one argument (where the command contains `{prompt}`) or by being submitted to its terminal after start-up under the rules for text sent on the user's behalf (where it does not). No text from the browser other than the validated change name may become part of the command line.
 
-Every preset's prompts SHALL carry the meaning of the `- [~]` task marker, which OpenSpec itself does not define: `- [~]` means that a task **needs the user**: the agent did every part of it it can, and what is left is for a person — either to verify the result or to carry out a step only they can (enter a secret, sign in to an account, try it on a real device). The **Implement** prompt SHALL instruct the agent, for a task only the user can verify or carry out, to do every part of it it can, then leave it as `- [~]` rather than ticking it or leaving it open, and add to that task's own line, after its text, what exactly the user has to check or do; the **Validate** prompt SHALL instruct the agent to take the change's `- [~]` tasks one at a time, tell the user exactly what to check or do, help with what it can, and tick off only those the user confirms as done, leaving the rest as `- [~]`; and the **Archive** prompt SHALL instruct the agent to sync the change's delta specs into the main specs and then archive the change, without asking whether to sync, to archive right away when nothing is left to sync, to tick off the tasks left for the user to validate once the user has confirmed them, and to include in its commit every file the archive moved or removed, so that no part of the move is left uncommitted in the worktree. Each preset's prompts SHALL invoke the OpenSpec workflow in the form that `openspec init --tools <tool>` installs for that agent — Claude Code's `/opsx:<workflow>` commands, Antigravity's `/opsx-<workflow>` workflows, and, for Codex, which gets skills and no commands, a plain-language instruction that names the OpenSpec skill and `{change}`. Each SHALL remain an ordinary prompt template the user can edit or remove, and each SHALL be a single line, so that it can be typed into a terminal.
+Every preset's prompts SHALL carry the meaning of the `- [~]` task marker, which OpenSpec itself does not define: `- [~]` means that a task **needs the user**: the agent did every part of it it can, and what is left is for a person — either to verify the result or to carry out a step only they can (enter a secret, sign in to an account, try it on a real device). The **Implement** prompt SHALL instruct the agent, for a task only the user can verify or carry out, to do every part of it it can, then leave it as `- [~]` rather than ticking it or leaving it open, and add to that task's own line, after its text, what exactly the user has to check or do; the **Validate** prompt SHALL instruct the agent to take the change's `- [~]` tasks one at a time, tell the user exactly what to check or do, help with what it can, and tick off only those the user confirms as done, leaving the rest as `- [~]`; and the **Archive** prompt (used when `specsSynced === false` or `subState === "validate"`, or when sent into a running session) SHALL instruct the agent to sync the change's delta specs into the main specs and then archive the change, without asking whether to sync, to archive right away when nothing is left to sync, and to tick off the tasks left for the user to validate once the user has confirmed them. Because Spec Control itself stages, commits, pushes, and opens the archive pull request once the archive session exits cleanly, the preset Archive prompt SHALL NOT ask the agent to commit, push, or open a pull request, and no prose archive auto-merge instruction or branch-recording instruction SHALL be appended to any starter prompt. Each preset's prompts SHALL invoke the OpenSpec workflow in the form that `openspec init --tools <tool>` installs for that agent — Claude Code's `/opsx:<workflow>` commands, Antigravity's `/opsx-<workflow>` workflows, and, for Codex, which gets skills and no commands, a plain-language instruction that names the OpenSpec skill and `{change}`. Each SHALL remain an ordinary prompt template the user can edit or remove, and each SHALL be a single line, so that it can be typed into a terminal.
 
 A saved configuration in which a profile whose id is a preset's id still carries one of that preset's former prompts for a starter verbatim SHALL be read as carrying that preset's current prompt for that starter; any other prompt, a removed one, and every prompt of a profile whose id is no preset's SHALL be left as saved. This SHALL apply per preset and per starter, so upgrading one prompt never rewrites another and one preset's former prompts never upgrade another preset's profile.
 
-When an **Archive** prompt is produced for a session of a git repository that has auto-merge of docs-only pull requests switched on, the dashboard SHALL decide whether the session's worktree holds **nothing outside OpenSpec documents**: that holds when the worktree's base is known and every path that differs between the base and the branch's last commit, and every path reported by the worktree's status — modified, staged, deleted, untracked, and both sides of a rename — lies under `openspec/` at the repository root. Unlike the check Ship makes, no path at all also holds: an Archive session normally starts in a fresh worktree on its own branch from the base, where nothing has changed yet. It SHALL be decided with read-only git, without contacting a remote, after the session's worktree exists and before the prompt is sent, and never from a cached status or from anything the agent printed. A git command that fails, an unknown base, or any path outside `openspec/` SHALL count as not holding. Only when it holds SHALL the dashboard append to the Archive prompt, after the profile's additional Archive instructions, a fixed agent-neutral instruction — the archive **auto-merge instruction** — that: states that this project lets a pull request changing only files under `openspec/` merge without review once its checks pass, and that the dashboard will ask the agent to merge such a pull request when it is ready; tells the agent not to open a pull request only because of this; and asks the agent, **if** it opens a pull request for this work, not to merge it and not to enable GitHub's auto-merge on it, and to say whether every file it changes is under `openspec/`. It MUST NOT ask the agent to enable auto-merge. In every other case — the setting off or absent, an in-place session, the check failing — the Archive prompt SHALL be exactly the prompt without this setting. No other starter's prompt SHALL ever carry this instruction. The result of starting a session SHALL state whether the instruction was included — never for a session that was already open and was returned instead of started — and when it was, the session's panel SHALL say that, because only OpenSpec documents changed, an archive pull request the agent opens will be handed back to it to merge once its checks pass. Opening a pull request is the agent's action under its own permission prompts; the dashboard MUST NOT itself open, merge or enable auto-merge on a pull request.
-
-Syncing, archiving and ticking off a validated task are done by the agent in the session's working directory; the dashboard itself MUST NOT write specs, move a change or change a checkbox in `tasks.md`.
+When **Archive** is activated on a change in `Done` with `subState: "complete"` (no `- [~]` tasks) and `specsSynced !== false` (the change has no delta specs, carries `skip_specs: true`, or its delta specs are already reflected in `openspec/specs/`) in a git repository whose sessions use worktrees, Spec Control SHALL execute the archive deterministically on the server without starting an agent process: it prepares the `chore/archive-<change>` worktree from the default branch, moves `openspec/changes/<change>` to `openspec/changes/archive/<YYYY-MM-DD>-<change>` (using today's UTC date), writes `spec-control.archive-branch: chore/archive-<change>` into the archived `.openspec.yaml`, commits all changes, pushes `chore/archive-<change>` to `origin`, opens the pull request via `gh pr create`, and records a completed `archive` session (with the auto-merge timestamp when docs auto-merge is on and the branch changes only files under `openspec/`). When `specsSynced === false` or `subState === "validate"` (or the repository runs sessions in place), **Archive** SHALL start an agent session with the profile's Archive prompt; when that agent session exits with code `0` and `openspec/changes/archive/*-<change>` exists in its worktree, Spec Control SHALL automatically run the deterministic Ship flow to record `archive-branch`, commit any remaining changes, push, and open the pull request.
 
 A starter that does not result in a session MUST NOT fail silently. When starting is refused or fails, the dashboard SHALL show the reason to the user in the place the starter was activated from, without requiring a session panel to be open — a session that could not be created has no panel to report itself in. The message SHALL be the reason the request was refused with. It SHALL be cleared once a later start from the same place succeeds.
 
@@ -117,7 +115,7 @@ A starter that does not result in a session MUST NOT fail silently. When startin
 - **THEN** the **Archive** starter is offered for it, and starting it opens an archive session
 
 #### Scenario: Preconfigured Archive prompt syncs without asking
-- **WHEN** the user starts **Archive** on change `cache-api-calls` with the preconfigured profile
+- **WHEN** the user starts **Archive** on change `cache-api-calls` with `specsSynced: false` and the preconfigured profile
 - **THEN** the agent is started with two arguments, `claude` and one prompt that begins with `/opsx:archive cache-api-calls`, tells it to sync the delta specs before archiving without asking, and tells it to tick off the tasks left for the user to validate once the user has confirmed them
 
 #### Scenario: Agent without a Validate prompt
@@ -149,7 +147,7 @@ A starter that does not result in a session MUST NOT fail silently. When startin
 - **THEN** the loaded configuration carries the current preconfigured Archive prompt and exactly the edited Implement prompt
 
 #### Scenario: Antigravity preset uses its installed workflows
-- **WHEN** the user starts **Archive** on change `cache-api-calls` with the Antigravity preset
+- **WHEN** the user starts **Archive** on change `cache-api-calls` with `specsSynced: false` and the Antigravity preset
 - **THEN** the prompt begins with `/opsx-archive cache-api-calls`, tells the agent to sync the delta specs before archiving without asking, and tells it to tick off the tasks left for the user to validate once the user has confirmed them
 
 #### Scenario: Codex preset names the skill in plain language
@@ -161,7 +159,7 @@ A starter that does not result in a session MUST NOT fail silently. When startin
 - **THEN** the loaded configuration carries exactly that prompt for the `agy` profile
 
 #### Scenario: Agent without a prompt for a starter
-- **WHEN** a repository's agent has no Archive prompt and a change is in `Done`
+- **WHEN** a repository's agent has no Archive prompt and a change is in `Done` with `specsSynced: false`
 - **THEN** no Archive starter is offered for it
 
 #### Scenario: Command without a prompt placeholder
@@ -173,8 +171,8 @@ A starter that does not result in a session MUST NOT fail silently. When startin
 - **THEN** no Enter is pressed and the dialog is left for the user to answer in the terminal
 
 #### Scenario: Archive on a synced change
-- **WHEN** change `cache-api-calls` is in `Done` with its delta specs already synced and the repository's agent has an Archive prompt
-- **THEN** the Archive starter is offered for it, and starting it opens an archive session
+- **WHEN** change `cache-api-calls` is in `Done` with `subState: "complete"` and its delta specs already synced
+- **THEN** the Archive starter is offered for it, and starting it moves `openspec/changes/cache-api-calls` to `openspec/changes/archive/<YYYY-MM-DD>-cache-api-calls`, records `archive-branch`, commits, pushes, and opens the pull request deterministically without starting an agent process
 
 #### Scenario: Archive is refused before every task is done
 - **WHEN** an Archive session is requested for a change in `Implementing`
@@ -205,32 +203,32 @@ A starter that does not result in a session MUST NOT fail silently. When startin
 - **THEN** the session keeps running and nothing is sent to it, and no new **Implement** is offered for the change
 
 #### Scenario: Archive in a fresh worktree with auto-merge on
-- **WHEN** a repository has auto-merge of docs-only pull requests on and the user starts **Archive** on change `rotate-keys`, whose worktree is created fresh from the base
-- **THEN** the opening prompt is the profile's Archive prompt with its additional Archive instructions, followed by the archive auto-merge instruction, and the start result states that it was included
+- **WHEN** a repository has auto-merge of docs-only pull requests on and the user starts **Archive** on change `rotate-keys` with `specsSynced: false`, whose worktree is created fresh from the base
+- **THEN** the opening prompt is the profile's Archive prompt with its additional Archive instructions (with no prose auto-merge tail), and the session carries the auto-merge record so Spec Control auto-ships on clean exit and auto-merges once checks pass
 
 #### Scenario: The archive instruction presumes no pull request
-- **WHEN** the archive auto-merge instruction is included
-- **THEN** it tells the agent not to open a pull request only because of it, and asks for auto-merge only on a pull request the agent opens for this work
+- **WHEN** an Archive session starts with `specsSynced: false`
+- **THEN** its prompt contains no git push or pull-request instruction because Spec Control ships the branch once the session exits cleanly
 
 #### Scenario: Archive with auto-merge off
-- **WHEN** a repository without auto-merge of docs-only pull requests starts **Archive** on `rotate-keys`
-- **THEN** the opening prompt is the profile's Archive prompt with its additional instructions and nothing else, and the start result states that no auto-merge instruction was included
+- **WHEN** a repository without auto-merge of docs-only pull requests starts **Archive** on `rotate-keys` with `specsSynced: false`
+- **THEN** the opening prompt is the profile's Archive prompt with its additional instructions and nothing else, and the session carries no auto-merge record
 
 #### Scenario: Archive branch already carrying code
 - **WHEN** a repository has auto-merge on and **Archive** is started for `rotate-keys` whose archive branch already exists with a commit changing `src/keys.ts`
-- **THEN** the opening prompt carries no auto-merge instruction
+- **THEN** the session carries no auto-merge record
 
 #### Scenario: Archive without git
 - **WHEN** a folder without git has auto-merge recorded in its configuration and **Archive** is started in place
-- **THEN** no git command runs for the check and the opening prompt carries no auto-merge instruction
+- **THEN** no git command runs for the check and the session carries no auto-merge record
 
 #### Scenario: Other starters never carry it
-- **WHEN** a repository has auto-merge on and **Draft artifacts**, **Implement** or **Validate** is started in a worktree that holds only OpenSpec documents
-- **THEN** the opening prompt carries no auto-merge instruction
+- **WHEN** a repository has auto-merge on and **Implement** or **Validate** is started in a worktree that holds only OpenSpec documents
+- **THEN** the session carries no auto-merge record
 
 #### Scenario: A session that was already open
 - **WHEN** a repository has auto-merge on and **Archive** is requested for a change whose session is already open, so that session is returned
-- **THEN** nothing is typed into it and the result states that no auto-merge instruction was included
+- **THEN** nothing is typed into it
 
 #### Scenario: Done change without a design offers no Draft
 - **WHEN** change `rotate-keys` is in `Done`, its `design.md` was never written and the schema does not require it for implementing
@@ -249,24 +247,23 @@ A starter that does not result in a session MUST NOT fail silently. When startin
 - **THEN** its available starters are **Implement** only
 
 #### Scenario: The Archive prompt asks for the whole move to be committed
-- **WHEN** the Claude Code preset's Archive prompt is composed for `cache-api-calls`
-- **THEN** it also tells the agent to include in its commit every file the archive moved or removed, and a saved
-  configuration still carrying the previous preconfigured Archive prompt verbatim is read as carrying this one
+- **WHEN** a saved configuration still carrying the previous preconfigured Archive prompt verbatim (which asked the agent to include in its commit every file the archive moved or removed) is loaded
+- **THEN** it is read as carrying the current preconfigured Archive prompt
 
 ### Requirement: Additional instructions extend an action's prompt without replacing it
-A profile SHALL be able to carry **additional instructions** for each of its prompts — the session starters, Ship and Integrate — kept separately from the prompt itself. Whenever the dashboard produces the prompt of an action, it SHALL append that action's additional instructions to the prompt it would otherwise have sent, and SHALL send nothing else: the prompt template stays as configured, and additional instructions for one action MUST NOT reach another. This applies wherever that prompt is used — starting a session, sending a starter's prompt into a running session, Ship on a running or an ended session, and Integrate.
+A profile SHALL be able to carry **additional instructions** for each of its prompts — the session starters, Resolve conflicts and Integrate — kept separately from the prompt itself; saved additional instructions for `ship` or `merge` in an existing `config.json` SHALL still be accepted when loaded and saved so existing configurations remain valid, even though Ship and Merge now execute deterministically on the server without sending a prompt to an agent. Whenever the dashboard produces the prompt of an agent action, it SHALL append that action's additional instructions to the prompt it would otherwise have sent, and SHALL send nothing else: the prompt template stays as configured, and additional instructions for one action MUST NOT reach another. This applies wherever that prompt is used — starting a session, sending a starter's prompt into a running session, Resolve conflicts and Integrate.
 
-The composed text SHALL be one line: additional instructions SHALL be trimmed and any run of whitespace in them, including a line break, SHALL become a single space before they are appended, separated from the prompt by one space. Placeholders SHALL be substituted in the composed text under the rules of the prompt being extended, so additional instructions for a starter or for Ship MAY use `{change}` and MUST use no other placeholder, additional Integrate instructions MUST contain no placeholder at all, and no additional instructions may carry a permission-bypass mode or flag. Additional instructions that break these rules SHALL be refused when the configuration is saved, with a message naming the field, leaving the stored configuration unchanged.
+The composed text SHALL be one line: additional instructions SHALL be trimmed and any run of whitespace in them, including a line break, SHALL become a single space before they are appended, separated from the prompt by one space. Placeholders SHALL be substituted in the composed text under the rules of the prompt being extended, so additional instructions for a starter or Resolve conflicts MAY use `{change}` and MUST use no other placeholder, additional Integrate instructions MUST contain no placeholder at all, and no additional instructions may carry a permission-bypass mode or flag. Additional instructions that break these rules SHALL be refused when the configuration is saved, with a message naming the field, leaving the stored configuration unchanged.
 
-Additional instructions SHALL be an addition, never a prompt of their own: an action whose prompt is not configured SHALL stay unavailable and its additional instructions SHALL NOT be sent anywhere. Ship, Resolve conflicts and Integrate SHALL be the exceptions in effect, because each has an agent-neutral default prompt: their additional instructions SHALL be appended to the profile's own prompt for that action, or to that action's default when the profile has none. Settings SHALL offer the additional instructions of each prompt beside that prompt, saying that the text is appended to it; empty additional instructions SHALL be stored as absent.
+Additional instructions SHALL be an addition, never a prompt of their own: an action whose prompt is not configured SHALL stay unavailable and its additional instructions SHALL NOT be sent anywhere. Resolve conflicts and Integrate SHALL be the exceptions in effect, because each has an agent-neutral default prompt: their additional instructions SHALL be appended to the profile's own prompt for that action, or to that action's default when the profile has none. Settings SHALL offer the additional instructions of each prompt beside that prompt, saying that the text is appended to it; empty additional instructions SHALL be stored as absent.
 
 #### Scenario: Additional instructions reach a starter's prompt
 - **WHEN** the repository's agent has the Implement prompt `/opsx:apply {change}` and additional Implement instructions `Run the linter before you finish.`, and Implement is started for change `cache-api-calls`
 - **THEN** the agent receives one prompt reading `/opsx:apply cache-api-calls Run the linter before you finish.`
 
 #### Scenario: Additional instructions extend the default Ship prompt
-- **WHEN** a profile has no Ship prompt of its own but additional Ship instructions `Add the checklist from CONTRIBUTING.md to the pull request body.`, and Ship is used on a session whose work is `unpushed`
-- **THEN** the text submitted to the agent is the agent-neutral default Ship prompt followed by one space and that sentence
+- **WHEN** a saved configuration carries additional Ship instructions `Add the checklist from CONTRIBUTING.md to the pull request body.`
+- **THEN** the configuration loads and saves without error, while Ship itself executes deterministically on the server
 
 #### Scenario: Additional instructions extend the default Integrate prompt
 - **WHEN** the default agent's profile has no Integrate prompt of its own but additional Integrate instructions `Commit nothing.`, and **Integrate** is activated
@@ -278,11 +275,11 @@ Additional instructions SHALL be an addition, never a prompt of their own: an ac
 
 #### Scenario: Additional instructions stay with their own action
 - **WHEN** a profile carries additional instructions for Implement only
-- **THEN** the Draft, Validate, Archive, Ship and Integrate prompts are sent exactly as they are configured
+- **THEN** the Draft, Validate, Archive, Resolve conflicts and Integrate prompts are sent exactly as they are configured
 
 #### Scenario: Additional instructions do not make an action available
-- **WHEN** a profile has no Archive prompt but additional Archive instructions, and a change is in `Done`
-- **THEN** Archive is still not offered for that change, an Archive request is still refused with the reason that the agent has no Archive prompt, and the additional instructions are not sent
+- **WHEN** a profile has no Validate prompt but additional Validate instructions, and a change is in `Done` with `subState: "validate"`
+- **THEN** Validate is still not offered for that change, a Validate request is still refused with the reason that the agent has no Validate prompt, and the additional instructions are not sent
 
 #### Scenario: Unknown placeholder is refused
 - **WHEN** additional Implement instructions containing `{repo}` are saved
@@ -799,91 +796,34 @@ For a status of `uncommitted`, `unpushed` or `pushed` the dashboard SHALL additi
 - **WHEN** the installed git cannot merge two commits without touching the working tree
 - **THEN** every work status is still reported, none carries conflict information, and no error is shown
 
-### Requirement: Ship asks the agent to commit, push and open a pull request
-For a session whose worktree has status `uncommitted`, `unpushed` or `pushed` the dashboard SHALL offer a Ship action. It uses the agent profile's Ship prompt, or an agent-neutral default asking to commit with a message that follows the repository's own conventions, push the branch, open a pull request against the default branch if none exists, not to merge it, and to report its URL. When the session is running the prompt SHALL be submitted to its terminal under the rules for text sent on the user's behalf, so that one activation sends it; otherwise the agent SHALL be started in the session's worktree — with its resume command and the prompt submitted after start-up when it has one, else with its command and the prompt as opening prompt — in the same session record, under the same checks as resuming. The result of Ship SHALL state whether the prompt was submitted, and when it was only typed the panel SHALL say so. The dashboard itself MUST NOT commit, push, merge, enable auto-merge or contact a remote.
-
-When the session's repository has auto-merge of docs-only pull requests switched on, the dashboard SHALL decide before composing the prompt whether the session ships **only OpenSpec documents**: that holds when the worktree's base is known and every path that differs between the base and the branch's last commit, and every path reported by the worktree's status — modified, staged, deleted, untracked, and both sides of a rename — lies under `openspec/` at the repository root, and at least one such path exists. It SHALL be decided with read-only git, without contacting a remote, at the moment of the Ship request and never from a cached status or from anything the agent printed. A git command that fails, an unknown base, or any path outside `openspec/` SHALL count as not only OpenSpec documents. Only when the session ships only OpenSpec documents SHALL the dashboard append to the Ship prompt, after the profile's additional Ship instructions, a fixed agent-neutral instruction — Ship's **auto-merge instruction** — that: states that this project lets a pull request changing only files under `openspec/` merge without review once its checks pass, and that the dashboard will ask the agent to merge it when it is ready; asks the agent to open the pull request as the prompt says, not to merge it and not to enable GitHub's auto-merge on it; and asks the agent to say whether every file the pull request changes is under `openspec/`. It MUST NOT ask the agent to enable auto-merge or to merge. In every other case — the setting off or absent, the check failing — the Ship prompt SHALL be exactly the prompt without this setting. The result of Ship SHALL state whether the instruction was included, and when it was, the panel SHALL say that, because only OpenSpec documents changed, the pull request will be handed back to the agent to merge once its checks pass. Whether and when that happens is decided under "A ready docs-only pull request is handed to its agent to merge", never from anything the agent printed. An in-place session has no worktree and no branch: it has no work status, Ship MUST NOT be offered for it, and a Ship request for it SHALL be refused.
-
-#### Scenario: Ship in a running session
-- **WHEN** Ship is used on a running session whose agent waits at its text prompt
-- **THEN** the Ship prompt is typed, shown by the agent, submitted with a separate Enter, the agent starts working on it, and no process is started
-
-#### Scenario: Ship while the agent shows a menu
-- **WHEN** Ship is used on a running session whose agent shows a selection menu
-- **THEN** no Enter is pressed, nothing is confirmed, and the panel says that the Ship prompt was typed but not sent
-
-#### Scenario: Ship after the session ended
-- **WHEN** Ship is used on an ended session of an agent with a resume command
-- **THEN** the agent is started with the resume command in the session's worktree, the prompt is submitted to it after start-up, and the session is `running` again
-
-#### Scenario: Nothing to ship
-- **WHEN** Ship is requested for a session whose worktree is `merged`, `clean` or `missing`
-- **THEN** the request is refused and nothing is started
-
-#### Scenario: Ship is not offered without git
-- **WHEN** the panel of an in-place session is open
-- **THEN** no Ship control is shown, no work status is shown for it, and a Ship request for that session is refused
-
-#### Scenario: Shipping an archive branch with auto-merge on
-- **WHEN** Ship is used on the archive session of `rotate-keys` in a repository with auto-merge of docs-only pull requests on, and the branch only moves `openspec/changes/rotate-keys/` under `openspec/changes/archive/` and changes `openspec/specs/secrets/spec.md`
-- **THEN** the Ship prompt ends with the auto-merge instruction, which asks the agent not to merge and not to enable auto-merge, the result states that it was included, and the panel says the pull request will be handed back to the agent to merge once its checks pass
-
-#### Scenario: Code in the branch
-- **WHEN** Ship is used in a repository with auto-merge on and the branch changes `openspec/changes/rotate-keys/tasks.md` and `src/keys.ts`
-- **THEN** the Ship prompt carries no auto-merge instruction and the result states that it was not included
-
-#### Scenario: An uncommitted file outside openspec
-- **WHEN** Ship is used in a repository with auto-merge on, every committed change of the branch is under `openspec/`, and the worktree has an untracked `notes.txt` at its root
-- **THEN** the Ship prompt carries no auto-merge instruction
-
-#### Scenario: Auto-merge off
-- **WHEN** Ship is used on a branch that changes only files under `openspec/` in a repository without auto-merge of docs-only pull requests
-- **THEN** the Ship prompt is the profile's Ship prompt with its additional instructions and nothing else, and the result states that no auto-merge instruction was included
-
-#### Scenario: Base unknown
-- **WHEN** Ship is used in a repository with auto-merge on and the worktree's base cannot be determined
-- **THEN** the Ship prompt carries no auto-merge instruction
-
-#### Scenario: A look-alike path
-- **WHEN** Ship is used in a repository with auto-merge on and the branch changes `docs/openspec/notes.md` and `openspec-notes.md`
-- **THEN** the Ship prompt carries no auto-merge instruction
-
-#### Scenario: The dashboard still merges nothing
-- **WHEN** Ship with the auto-merge instruction is used
-- **THEN** the dashboard ran no `gh` process, no git command that writes, and contacted no remote for it
-
-#### Scenario: Auto-merge is never asked for
-- **WHEN** Ship or Archive carries the auto-merge instruction
-- **THEN** neither the instruction nor anything else the dashboard sends for it asks the agent to enable GitHub's auto-merge
-
-#### Scenario: The default prompt prescribes no convention
-- **WHEN** Ship is used for a repository without a pull request title convention and the profile has no Ship prompt of its own
-- **THEN** the submitted prompt asks for commit messages that follow the repository's own conventions and does not mention Conventional Commits
-
 ### Requirement: A repository can require Conventional Commits pull request titles
 Each repository entry in the configuration MAY carry `prTitleConvention`, whose only valid value is `conventional-commits`; absent means the repository has no pull request title convention. A configuration without the field SHALL load unchanged with no convention for any repository, and a configuration carrying any other value SHALL be rejected when saved, leaving the stored configuration unchanged. The setting SHALL be stored only in the dashboard's own configuration and MUST NOT be written to, or read from, any tracked repository.
 
-Whenever the dashboard produces the Ship prompt for a session of a repository whose convention is `conventional-commits`, it SHALL append, separated by one space, a fixed sentence asking the agent to title the pull request as a Conventional Commit — `<type>(<optional scope>): <summary>`, with an example — and to write the commit messages in the same form. The sentence SHALL be appended to the profile's own Ship prompt or, when the profile has none, to the default, and the profile's additional Ship instructions SHALL follow it; the auto-merge instruction for docs-only pull requests, when included, SHALL still come after both. The composed prompt SHALL remain one line and `{change}` SHALL be substituted in it as before. This SHALL apply wherever the Ship prompt is used — typed into a running session or handed to an ended session's agent on start-up. For a repository without a convention the Ship prompt SHALL be exactly what it would be without this requirement. No other prompt — the session starters, Resolve conflicts, Integrate — SHALL carry the sentence. The dashboard MUST NOT title, rename or edit a pull request itself, and the setting MUST NOT change whether Ship is offered.
+Whenever Spec Control generates a deterministic commit message and pull request title during Ship (manual or automatic):
+- When `prTitleConvention` is `conventional-commits`, Spec Control SHALL format the default title as `docs(openspec): add <change>` for a proposal branch (`docs/<change>`), `chore(openspec): archive <change>` for an archive branch (`chore/archive-<change>`), and `feat: <change>` for an implementation branch (`feat/<change>`, unless the user supplied an explicit title or the branch already has a commit ahead of the base whose subject follows Conventional Commits).
+- When `prTitleConvention` is absent, Spec Control SHALL format the default title as `Add OpenSpec proposal <change>` for a proposal branch, `Archive OpenSpec change <change>` for an archive branch, and `<change>` (or the branch's latest commit subject ahead of base) for an implementation branch.
+
+No agent prompt — the session starters, Resolve conflicts, Integrate — SHALL carry a Conventional Commits sentence.
 
 #### Scenario: Ship for a repository with the convention
-- **WHEN** `demo-ops` has `prTitleConvention: conventional-commits`, its agent has no Ship prompt and no additional Ship instructions, and Ship is used on a session whose work is `unpushed`
-- **THEN** the submitted prompt is the default Ship prompt followed by one space and the Conventional Commits sentence, on one line
+- **WHEN** `demo-ops` has `prTitleConvention: conventional-commits` and Ship commits and opens a pull request for an implementation session of `rotate-keys`
+- **THEN** the commit message and pull request title default to `feat: rotate-keys`
 
 #### Scenario: The convention and additional instructions
-- **WHEN** the repository has the convention and the profile has its own Ship prompt and additional Ship instructions `Add the checklist from CONTRIBUTING.md.`
-- **THEN** the submitted prompt is the profile's Ship prompt, then the Conventional Commits sentence, then `Add the checklist from CONTRIBUTING.md.`, each separated by one space
+- **WHEN** the repository has `prTitleConvention: conventional-commits` and Ship runs on a proposal session on `docs/rotate-keys`
+- **THEN** the commit message and pull request title default to `docs(openspec): add rotate-keys`
 
 #### Scenario: The convention and auto-merge of docs-only pull requests
-- **WHEN** the repository has the convention and auto-merge of docs-only pull requests on, and Ship is used on a session that ships only OpenSpec documents
-- **THEN** the submitted prompt is the Ship prompt, then the Conventional Commits sentence, then the profile's additional Ship instructions if any, then the auto-merge instruction
+- **WHEN** the repository has the convention and auto-merge of docs-only pull requests on, and Ship runs on an archive session for `rotate-keys` that ships only OpenSpec documents
+- **THEN** the commit message and pull request title default to `chore(openspec): archive rotate-keys` and the session records `autoMergeAskedAt`
 
 #### Scenario: Ship after the session ended
-- **WHEN** the repository has the convention and Ship is used on an ended session of an agent with a resume command
-- **THEN** the prompt submitted to the resumed agent carries the Conventional Commits sentence
+- **WHEN** the repository has the convention and Ship is used on an ended session for `rotate-keys`
+- **THEN** the server commits, pushes, and opens the pull request with the Conventional Commits title without starting an agent
 
 #### Scenario: Repository without the convention
-- **WHEN** a repository has no `prTitleConvention` and Ship is used
-- **THEN** the submitted prompt contains no Conventional Commits sentence
+- **WHEN** a repository has no `prTitleConvention` and Ship runs on an archive session of `rotate-keys`
+- **THEN** the commit message and pull request title default to `Archive OpenSpec change rotate-keys`
 
 #### Scenario: Other prompts are unaffected
 - **WHEN** the repository has the convention and Implement or Resolve conflicts is started for one of its changes
@@ -1199,24 +1139,24 @@ configuration file; the upgraded command reaches it with the next save. The Anti
 - **THEN** the loaded profile's command is exactly that
 
 ### Requirement: A merged auto-merge pull request ends its session
-When the dashboard appends the Ship or Archive auto-merge instruction, or the proposal instruction of a Draft session ("A Draft session in a docs auto-merge project opens its proposal pull request"), to a prompt for a change session — starting the session, sending the action into its running session, or Ship — it SHALL record on that session the time it did so (the latest such time when it happens more than once). The same record is what makes a session eligible for an automatic Merge prompt ("A ready docs-only pull request is handed to its agent to merge"); a Merge prompt SHALL NOT change it. A session without that record SHALL never be ended or have its worktree removed by this requirement.
+When the dashboard records `autoMergeAskedAt` on a change session — for a Draft session on `docs/<change>` in a docs auto-merge project, an Archive session in a docs auto-merge project whose worktree holds only OpenSpec documents, or a Ship whose branch changes only OpenSpec documents in a docs auto-merge project — it SHALL record on that session the time it did so (the latest such time when it happens more than once). The same record is what makes a session eligible for automatic docs-only merging ("A ready docs-only pull request is merged automatically by the server"). A session without that record SHALL never be ended or have its worktree removed by this requirement.
 
-Whenever a pull-request query for a repository completes — whatever started it: the user's Refresh, opening a view that shows pull requests, or the board's pull-request watch — the dashboard SHALL look in that query's result for each session of that repository that carries the record, is not in place and did not adopt its worktree, and whose worktree still exists or whose agent still runs. When the result holds a pull request in the merged state whose head branch is that session's branch and whose merge time is later than the recorded time, and the repository has auto-merge of docs-only pull requests switched on at that moment, the dashboard SHALL, without asking, end the session's agent as ending the session does, and then remove its worktree under exactly the rules of "Worktree clean-up is offered only when safe": by a non-forcing `git worktree remove`, only when it holds no uncommitted change and either its work status is `merged` or no commit exists only on its branch. When those checks refuse, the agent SHALL still be ended, the worktree SHALL be kept, and the session SHALL keep the reason. It SHALL decide this only from the pull-request query's result and read-only git; it MUST NOT start a pull-request query, a `gh` process or a timer for it, MUST NOT fetch, and MUST NOT delete the session's branch or any other ref — the branch is left for repository cleanup. A session that this ended SHALL keep, and its panel and card SHALL show, that it was ended because pull request `#<number>` merged, and whether its worktree was removed or why it was kept. A merged pull request found again in a later query SHALL change nothing more. In the demo nothing SHALL be ended or removed.
+Whenever a pull-request query for a repository completes — whatever started it: the user's Refresh, opening a view that shows pull requests, or the board's pull-request watch — the dashboard SHALL look in that query's result for each session of that repository that carries the record, is not in place and did not adopt its worktree, and whose worktree still exists or whose agent still runs. When the result holds a pull request in the merged state whose head branch is that session's branch and whose merge time is later than the recorded time, and the repository has auto-merge of docs-only pull requests switched on at that moment, the dashboard SHALL, without asking, end the session's agent if it is still running, and then remove its worktree under exactly the rules of "Worktree clean-up is offered only when safe": by a non-forcing `git worktree remove`, only when it holds no uncommitted change and either its work status is `merged` or no commit exists only on its branch. When those checks refuse, the agent SHALL still be ended, the worktree SHALL be kept, and the session SHALL keep the reason. It SHALL decide this only from the pull-request query's result and read-only git; it MUST NOT fetch, and MUST NOT delete the session's branch or any other ref — the branch is left for repository cleanup. A session that this ended or cleaned up SHALL keep, and its panel and card SHALL show, that it was ended because pull request `#<number>` merged, and whether its worktree was removed or why it was kept. A merged pull request found again in a later query SHALL change nothing more. In the demo nothing SHALL be ended or removed.
 
 #### Scenario: Archive pull request merges while the board is watching
-- **WHEN** a repository has docs auto-merge on, the archive session of `rotate-keys` was started with the archive auto-merge instruction, its agent pushed branch `archive-rotate-keys` and opened `#88`, the dashboard sent it a Merge prompt once `#88` was ready, and a later pull-request watch refresh shows `#88` merged
-- **THEN** the session's agent is ended, its clean, pushed worktree is removed, branch `archive-rotate-keys` still exists locally, and the panel says the session ended because `#88` merged and its worktree was removed
+- **WHEN** a repository has docs auto-merge on, the archive session of `rotate-keys` carries `autoMergeAskedAt`, Spec Control shipped branch `chore/archive-rotate-keys` and opened `#88`, merged `#88` via `gh pr merge` once `#88` was ready, and a later pull-request watch refresh shows `#88` merged
+- **THEN** the session's agent (if still running) is ended, its clean, pushed worktree is removed, branch `chore/archive-rotate-keys` still exists locally, and the panel says the session ended because `#88` merged and its worktree was removed
 
 #### Scenario: Nothing was asked
-- **WHEN** a pull-request refresh shows the pull request of an Implement session's branch merged, and that session's prompts never carried the auto-merge instruction
+- **WHEN** a pull-request refresh shows the pull request of an Implement session's branch merged, and that session never carried `autoMergeAskedAt`
 - **THEN** the session keeps running and its worktree is kept
 
 #### Scenario: Auto-merge switched off since
-- **WHEN** the user switched docs auto-merge off for the repository after the Ship that carried the instruction, and a refresh then shows that pull request merged
+- **WHEN** the user switched docs auto-merge off for the repository after the Ship that recorded `autoMergeAskedAt`, and a refresh then shows that pull request merged
 - **THEN** the session keeps running and its worktree is kept
 
 #### Scenario: An earlier pull request of the same branch
-- **WHEN** a session's prompt carried the auto-merge instruction at 10:00 and the refresh shows a pull request of its branch that merged at 09:30
+- **WHEN** a session recorded `autoMergeAskedAt` at 10:00 and the refresh shows a pull request of its branch that merged at 09:30
 - **THEN** nothing is ended or removed
 
 #### Scenario: Uncommitted work keeps the worktree
@@ -1236,8 +1176,8 @@ Whenever a pull-request query for a repository completes — whatever started it
 - **THEN** nothing else is ended, removed or recorded
 
 #### Scenario: Proposal pull request merges
-- **WHEN** the Draft session of `rotate-keys` on `docs/rotate-keys` was started with the proposal instruction, its agent opened `#90`, and a later refresh shows `#90` merged after that time while docs auto-merge is on
-- **THEN** the session's agent is ended, its clean, pushed worktree `docs-rotate-keys` is removed, branch `docs/rotate-keys` still exists locally, and the panel says the session ended because `#90` merged
+- **WHEN** the Draft session of `rotate-keys` on `docs/rotate-keys` carries `autoMergeAskedAt`, Spec Control opened `#90`, and a later refresh shows `#90` merged after that time while docs auto-merge is on
+- **THEN** the clean worktree `docs-rotate-keys` is removed, branch `docs/rotate-keys` still exists locally, and the panel says the session ended because `#90` merged
 
 ### Requirement: Fast-forward drafts, implements and ships in one session
 The dashboard SHALL offer a fifth starter, **Fast-forward**, for a change that should go from its artifacts to a pull
@@ -1257,34 +1197,35 @@ session's action is named (the session panel, Open work and the activity log).
 Its opening prompt SHALL be composed, as one line, of, in this order: the agent's **Draft artifacts** prompt with that
 prompt's additional instructions; a fixed agent-neutral sentence telling the agent not to stop for the user's review once
 every artifact is written, because this change is fast-forwarded and the pull request will be its only review, and to go
-straight on to implementing it; the agent's **Implement** prompt with its additional instructions; a fixed agent-neutral
-sentence telling the agent, once every task is settled, to ship the work without asking; and the **Ship** prompt exactly
-as Ship would produce it for the change's repository — the profile's Ship prompt or the agent-neutral default, the
-project's pull request title convention and the additional Ship instructions. `{change}` SHALL be replaced in every part
-by the validated change name and is the only placeholder; nothing else from the browser SHALL reach the prompt. The
-profile SHALL NOT have a Fast-forward prompt of its own, so every profile that has a Draft and an Implement prompt can
-fast-forward without being configured for it, and editing those prompts or Ship's changes the Fast-forward prompt with
-them. The `- [~]` meaning carried by the Implement prompt therefore holds in a Fast-forward session too.
+straight on to implementing it; and the agent's **Implement** prompt with its additional instructions. Because Spec
+Control ships the branch deterministically once the Fast-forward session exits with status `0` and all tasks are settled
+(`done` or `awaiting`), the Fast-forward prompt SHALL NOT append a Ship prompt, branch-recording instruction, or
+Conventional Commits sentence. `{change}` SHALL be replaced in every part by the validated change name and is the only
+placeholder; nothing else from the browser SHALL reach the prompt. The profile SHALL NOT have a Fast-forward prompt of
+its own, so every profile that has a Draft and an Implement prompt can fast-forward without being configured for it, and
+editing those prompts changes the Fast-forward prompt with them. The `- [~]` meaning carried by the Implement prompt
+therefore holds in a Fast-forward session too.
 
-A Fast-forward prompt MUST NOT carry the docs-only auto-merge instruction of Ship or Archive, whatever the project's
-auto-merge setting and whatever its worktree holds, and a Fast-forward session SHALL NOT record that auto-merge was
-requested; the pull request it asks for is the change's only review and MUST stay open for it. The dashboard itself
-SHALL NOT commit, push, open or merge anything for it: as for Ship, it only hands over the prompt.
+A Fast-forward session SHALL NOT record that docs auto-merge was requested; the pull request Spec Control opens for it is
+the change's only review and MUST stay open for review. When the Fast-forward session's agent exits with code `0` and the
+change in its worktree has at least one task and no open (`- [ ]`) tasks remaining, Spec Control SHALL automatically run
+the deterministic Ship flow (record `branch`, commit any uncommitted work, push `feat/<change>`, and open the pull
+request).
 
 While a session of the change runs, **Fast-forward** MAY be sent into it as a next step under the rules for sending a
 starter's prompt into a running session, under the same availability conditions.
 
 #### Scenario: Fast-forward on a drafted-nothing change
 - **WHEN** change `cache-api-calls` is in `Backlog`, is not blocked, and the repository's agent is the preconfigured Claude Code profile
-- **THEN** **Fast-forward** is offered next to **Draft artifacts**, and starting it creates the worktree on `feat/cache-api-calls` and starts `claude` with one prompt that begins with `/opsx:ff cache-api-calls`, then says not to stop for review, then contains `/opsx:apply cache-api-calls` with the `- [~]` instruction, then asks to ship, ending with the Ship prompt
+- **THEN** **Fast-forward** is offered next to **Draft artifacts**, and starting it creates the worktree on `feat/cache-api-calls` and starts `claude` with one prompt that begins with `/opsx:ff cache-api-calls`, then says not to stop for review, and ends with `/opsx:apply cache-api-calls` and its `- [~]` instruction
 
 #### Scenario: Project with a pull request title convention
-- **WHEN** **Fast-forward** is started for a change of a repository whose `prTitleConvention` is `conventional-commits`
-- **THEN** its prompt ends with the Ship prompt including the Conventional Commits sentence, followed by the profile's additional Ship instructions if any
+- **WHEN** **Fast-forward** is started for `cache-api-calls` in a repository whose `prTitleConvention` is `conventional-commits` and the agent finishes all tasks and exits with code `0`
+- **THEN** Spec Control automatically commits any uncommitted files in `feat/cache-api-calls` and opens the pull request with a Conventional Commits title (`feat: cache-api-calls`)
 
 #### Scenario: Never auto-merge
-- **WHEN** **Fast-forward** is started for a change of a project with docs-only auto-merge switched on
-- **THEN** its prompt contains neither auto-merge instruction and the session records no auto-merge request
+- **WHEN** **Fast-forward** is started and completed for a change of a project with docs-only auto-merge switched on
+- **THEN** the session records no auto-merge request and its pull request is not auto-merged
 
 #### Scenario: Not offered without an Implement prompt
 - **WHEN** the repository's agent has a Draft artifacts prompt but no Implement prompt
@@ -1333,128 +1274,6 @@ saved, leaving the stored configuration unchanged.
 #### Scenario: Turning the warning back on
 - **WHEN** `confirmFastForward` is `false` and the user ticks **Warn before fast-forwarding** in Settings and saves
 - **THEN** the next **Fast-forward** asks for confirmation again
-
-### Requirement: Merge asks the agent to merge its ready pull request
-For a running change session that is not in place and whose branch is the head branch of an **open** pull request in the session's repository's last good pull-request list, — and, for the proposal pull request of the change's ended proposal session, as "An ended proposal session's pull request is merged through the change's running session" extends this — the dashboard SHALL offer a **Merge** action while that pull request is ready (`pull-requests`: "A linked open pull request has a readiness") and carries a head commit, whether or not the project has docs auto-merge on. Merge is a prompt, not a starter: it uses the agent profile's Merge prompt, or an agent-neutral default asking the agent to merge the pull request of this worktree's branch into its base with the merge method this repository uses, only if its head is still the commit named — with the GitHub CLI, `gh pr merge <number> --match-head-commit <commit>` — not to delete the branch, and, if the merge is refused or anything was pushed since, to stop and say why. `{change}` SHALL be the profile prompt's only placeholder. After the profile's prompt and its additional Merge instructions the dashboard SHALL append, separated by one space, a fixed sentence naming the pull request as `#<number>` and its head commit as the full 40-character object name, both taken from the pull-request list after validation (a positive integer; exactly 40 hexadecimal characters) and never from the browser. The composed prompt SHALL be one line and SHALL be submitted to the session's terminal under the rules for text sent on the user's behalf; the result SHALL state whether it was submitted, and when it was only typed the panel SHALL say so.
-
-A Merge request SHALL be refused, and nothing written to the terminal, when the session is not running, is in place, has no linked open pull request in the last good list, or that pull request is not ready or has no head commit. Merge SHALL NOT start, resume or restart an agent: for an ended session the user resumes it first. The dashboard itself MUST NOT merge, enable auto-merge, run `gh` or git, or contact a remote for it; whether the pull request merged is learned only from a later pull-request query. No other prompt SHALL carry the Merge sentence.
-
-#### Scenario: Merging a ready pull request by hand
-- **WHEN** the Implement session of `cache-api-calls` runs, its branch `feat/cache-api-calls` heads open pull request `#41` whose checks pass and which is mergeable, and the user activates Merge in its panel
-- **THEN** one line is submitted to its terminal: the default Merge prompt followed by a sentence naming `#41` and its head commit, Enter is pressed as a separate key press once the terminal shows it, and no `gh` or git process is started by the dashboard
-
-#### Scenario: Not ready
-- **WHEN** Merge is requested for a session whose pull request's checks are still running
-- **THEN** the request is refused and nothing is written to the terminal
-
-#### Scenario: Ended session
-- **WHEN** Merge is requested for a session whose agent has exited
-- **THEN** the request is refused, nothing is started, and the panel offers to resume the session first
-
-#### Scenario: A profile's own Merge prompt
-- **WHEN** the profile's Merge prompt is `Squash-merge the pull request for {change}.` and Merge is used for `cache-api-calls`
-- **THEN** the submitted line is `Squash-merge the pull request for cache-api-calls.` followed by the sentence naming the pull request and its head commit
-
-### Requirement: A ready docs-only pull request is handed to its agent to merge
-Whenever a pull-request query for a repository completes with a good list — whatever started it: the user's Refresh, opening a view that shows pull requests, or the board's pull-request watch — the dashboard SHALL, for each change session of that repository that carries the auto-merge record of "A merged auto-merge pull request ends its session", is running, is not in place and did not adopt its worktree — and for each ended proposal session as "An ended proposal session's pull request is merged through the change's running session" extends this — look in that query's result for an open pull request whose head branch is the session's branch, and SHALL send that session a Merge prompt, exactly as the Merge action composes and submits it, only when **all** of these hold at that moment:
-
-- agent sessions are enabled, the repository has docs auto-merge switched on, and this is not the demo;
-- the pull request is open and not a draft, its base branch is the repository's default branch, its mergeability is `mergeable` and its checks are `passing` — checks `none` SHALL NOT count, because a pull request whose checks have not registered yet looks the same;
-- the pull request is docs-only (`pull-requests`: "What a pull-request list contains") and carries a head commit;
-- the session's worktree's checked-out commit is that head commit, and the worktree holds only OpenSpec documents under the check Ship makes — decided with read-only git, without contacting a remote, at that moment; a git command that fails counts as not holding;
-- no Merge prompt was sent to this session, by the dashboard or by the user, for this pull request at this head commit.
-
-When it sends one, the session SHALL record the pull request's number, the head commit and the time, whether or not the prompt was submitted, before anything is typed, so that a second query completing meanwhile sends nothing more. At most one Merge prompt SHALL be sent per session, pull request and head commit; a new head commit makes the pull request eligible again. A Merge prompt that was typed but not confirmed SHALL NOT be retyped automatically: the panel SHALL say that the Merge prompt was typed but not sent and that Enter in the terminal sends it. The dashboard SHALL decide this only from the completed query and read-only git: it MUST NOT start a pull-request query, a `gh` process, a timer or a fetch for it, and MUST NOT start, resume or restart an agent — a session whose agent does not run gets nothing, and its card and panel show the pull request as ready like any other, with Merge offered once it is resumed. While a Merge prompt sent for a pull request's current head commit has not been followed by that pull request merging or closing, the session's panel and its card SHALL say that the agent was asked to merge `#<number>`. Sessions started by Fast-forward never carry the record and SHALL never be sent a Merge prompt on their own.
-
-#### Scenario: Archive pull request goes green
-- **WHEN** `demo-ops` has docs auto-merge on, the running archive session of `rotate-keys` carries the auto-merge record, its worktree is at commit `c0ffee…` with only `openspec/` changes, and a watch refresh lists `#88` from `archive-rotate-keys` open against the default branch, not a draft, mergeable, checks passing, docs-only, head commit `c0ffee…`
-- **THEN** the Merge prompt naming `#88` and `c0ffee…` is submitted to that session's terminal, the session records it, its card says the agent was asked to merge `#88`, and the dashboard ran no `gh` and no git that writes for it
-
-#### Scenario: No checks at all
-- **WHEN** everything holds except that `#88` has no checks
-- **THEN** no Merge prompt is sent and `#88` is shown as ready as before
-
-#### Scenario: A file outside openspec
-- **WHEN** everything holds except that `#88` is not docs-only
-- **THEN** no Merge prompt is sent
-
-#### Scenario: Draft, conflict or another base
-- **WHEN** everything holds except that `#88` is a draft, or conflicts with its base, or targets a branch other than the default branch
-- **THEN** no Merge prompt is sent
-
-#### Scenario: The worktree is ahead of the pull request
-- **WHEN** everything holds except that the worktree's commit is not `#88`'s head commit
-- **THEN** no Merge prompt is sent
-
-#### Scenario: Seen again
-- **WHEN** a later refresh lists `#88` still open at the same head commit after a Merge prompt for it was sent
-- **THEN** nothing more is typed into the session
-
-#### Scenario: A fix was pushed
-- **WHEN** the agent's merge was refused because a check failed, the agent pushed a fix, and a later refresh lists `#88` ready again at a new head commit with checks passing
-- **THEN** one Merge prompt naming the new head commit is sent
-
-#### Scenario: The agent has exited
-- **WHEN** everything holds except that the session's agent no longer runs
-- **THEN** no agent is started or resumed, nothing is typed, and the card shows `#88` as ready
-
-#### Scenario: Docs auto-merge switched off
-- **WHEN** the user switched docs auto-merge off for `demo-ops` after Ship carried the instruction, and a refresh lists `#88` ready and docs-only
-- **THEN** no Merge prompt is sent
-
-#### Scenario: Typed but not confirmed
-- **WHEN** the dashboard sends the Merge prompt while the agent shows a selection menu, so its echo never appears
-- **THEN** no Enter is pressed, the session records the Merge prompt for that head commit, the panel says it was typed but not sent, and later refreshes do not type it again
-
-#### Scenario: Demo
-- **WHEN** the demo lists a ready docs-only pull request for a session that carries the record
-- **THEN** nothing is sent
-
-### Requirement: An agent asked to open a pull request is asked to record its branch
-Whenever the dashboard composes text that asks or allows an agent to open a pull request for a change — the Ship
-prompt, Fast-forward's prompt through the Ship text it ends with, and the archive auto-merge instruction — it SHALL
-include the record instruction the repository's framework module supplies for that change (spec-frameworks: "OpenSpec
-changes record their pull request's branch in `.openspec.yaml`"). For a session whose action is archive it SHALL be the
-archive branch's instruction; for every other session the implementation branch's. Which one SHALL be decided by the server from the
-session record, never from the request or from anything the agent printed.
-
-The instruction SHALL be appended and SHALL NOT replace any part of the prompt: in Ship it SHALL follow the profile's
-Ship prompt (or the agent-neutral default) and the Conventional Commits sentence when the project has one, and precede
-the profile's additional Ship instructions and the auto-merge instruction; in Fast-forward it SHALL appear once, as part
-of the Ship text; with the archive auto-merge instruction it SHALL follow that instruction. A profile with its own Ship
-prompt SHALL get it all the same. When the module supplies no record instruction, the text SHALL be exactly what it is
-without this requirement.
-
-The dashboard MUST NOT write the record itself, and MUST NOT check, read back or act on anything the agent printed about
-it: what the agent recorded is read from the repository by the scan like any other file.
-
-#### Scenario: Ship carries the implementation record instruction
-- **WHEN** Ship is used on the implement session of `rotate-keys` in an OpenSpec repository with no title convention and no additional Ship instructions
-- **THEN** the submitted text is the Ship prompt followed by the implementation record instruction for `rotate-keys`
-
-#### Scenario: Order with every addition
-- **WHEN** Ship is used in a project with Conventional Commits titles, additional Ship instructions and auto-merge included
-- **THEN** the text is the Ship prompt, the Conventional Commits sentence, the record instruction, the additional instructions and the auto-merge instruction, in that order
-
-#### Scenario: A custom Ship prompt
-- **WHEN** the profile has its own Ship prompt
-- **THEN** the record instruction is still appended to it
-
-#### Scenario: Archive session
-- **WHEN** Ship is used on the archive session of `rotate-keys`
-- **THEN** the record instruction is the archive branch's, naming `archive-branch`
-
-#### Scenario: Fast-forward
-- **WHEN** Fast-forward is started for `rotate-keys`
-- **THEN** its prompt contains the implementation record instruction exactly once, within its Ship part
-
-#### Scenario: Archive with docs auto-merge
-- **WHEN** an Archive prompt is started with the archive auto-merge instruction
-- **THEN** the archive record instruction follows that instruction
-
-#### Scenario: Nothing written by the dashboard
-- **WHEN** Ship with the record instruction is used
-- **THEN** the dashboard wrote no file in the repository or worktree and ran no git command that writes
 
 ### Requirement: A conflicting pull request without a worktree gets a session on its head branch
 When Resolve conflicts is used for a change whose GitHub signal holds and no session worktree of the change exists, the
@@ -1615,35 +1434,33 @@ branch. An in-place session SHALL never get the offer.
   worktree is still cleaned up
 
 ### Requirement: A Draft session in a docs auto-merge project opens its proposal pull request
-When a **Draft artifacts** session works on `docs/<change>` and the repository has docs auto-merge switched on, the dashboard SHALL append a fixed **proposal instruction** to the Draft prompt — after the profile's Draft prompt and its additional Draft instructions, separated by one space — when it starts the session and when Draft is sent into that same running session. The instruction SHALL ask the agent, once every artifact of the change is written, to commit them on the session's branch, push it and open a pull request against the default branch titled `docs(openspec): add <change>` when the project declares Conventional Commits pull request titles and `Add OpenSpec proposal <change>` otherwise, containing only files under `openspec/`; not to merge it and not to enable auto-merge on it, because Spec Control asks for the merge once it is ready; and not to start implementing the change. `<change>` SHALL be the validated change name and nothing in the instruction SHALL come from the request.
+When a **Draft artifacts** session works on `docs/<change>` and the repository has docs auto-merge switched on, Spec Control SHALL record `autoMergeAskedAt` on the session when the worktree holds nothing outside `openspec/` (with an empty worktree counting as holding nothing outside), and SHALL NOT append a prose proposal git/PR instruction to the Draft prompt; the agent receives only the profile's Draft prompt and its additional Draft instructions.
 
-The instruction SHALL be appended only when read-only git, in the session's worktree at that moment, proves the worktree holds nothing outside `openspec/` under the check Ship makes, with an empty worktree counting as holding nothing outside; a git command that fails counts as not holding. It SHALL NOT be appended to a Draft session on `feat/<change>`, to a session in place, to a Fast-forward session, or to any other action, and sending Draft into a running session on another branch SHALL NOT carry it. The start or send result SHALL state whether it was included. Appending it SHALL set the session's auto-merge record exactly as the Ship and Archive auto-merge instructions do, so that "A ready docs-only pull request is handed to its agent to merge" and "A merged auto-merge pull request ends its session" apply to the proposal pull request unchanged.
-
-The dashboard itself MUST NOT commit, push, open or merge anything for this, and MUST NOT run any git command beyond the read-only check above and the worktree commands of any session.
+When that Draft session on `docs/<change>` exits with code `0`, `autoMergeDocs` is on, every required artifact of `<change>` in the worktree is `done`, and the worktree holds only files under `openspec/`, Spec Control SHALL automatically run the deterministic Ship flow in that worktree: it writes `spec-control.branch: docs/<change>` in `openspec/changes/<change>/.openspec.yaml`, commits all changes with title `docs(openspec): add <change>` when the project declares Conventional Commits pull request titles and `Add OpenSpec proposal <change>` otherwise, pushes `docs/<change>` to `origin`, opens the pull request against the default branch via `gh pr create`, and sets `autoMergeAskedAt` on the session so that "A ready docs-only pull request is merged automatically by the server" and "A merged auto-merge pull request ends its session" merge the proposal pull request and clean up its worktree once its checks pass.
 
 #### Scenario: Draft opens the proposal pull request
-- **WHEN** `demo-ops` declares Conventional Commits titles, has docs auto-merge on, and the user starts **Draft artifacts** for `rotate-keys`
-- **THEN** the opening prompt is the profile's Draft prompt with its additional Draft instructions, followed by the proposal instruction naming `docs(openspec): add rotate-keys`, the session carries the auto-merge record, and the start result states that the instruction was included
+- **WHEN** `demo-ops` declares Conventional Commits titles, has docs auto-merge on, the user starts **Draft artifacts** for `rotate-keys`, and the agent writes all required artifacts under `openspec/changes/rotate-keys/` and exits with code `0`
+- **THEN** the agent's opening prompt was only the profile's Draft prompt with its additional Draft instructions, and on exit Spec Control commits the artifacts on `docs/rotate-keys` with message `docs(openspec): add rotate-keys`, pushes `docs/rotate-keys`, opens the pull request against the default branch, and records `autoMergeAskedAt` on the session
 
 #### Scenario: Without a title convention
-- **WHEN** the same project declares no title convention
-- **THEN** the proposal instruction asks for the title `Add OpenSpec proposal rotate-keys`
+- **WHEN** the same project declares no title convention and the Draft session on `docs/rotate-keys` exits with all required artifacts written
+- **THEN** Spec Control commits and opens the proposal pull request with the title `Add OpenSpec proposal rotate-keys`
 
 #### Scenario: The worktree holds code
-- **WHEN** the `docs-rotate-keys` worktree, reused from an earlier session, holds an uncommitted `src/app.ts`, and Draft is started for `rotate-keys`
-- **THEN** the proposal instruction is not appended, the session carries no auto-merge record, and the result states that it was not included
+- **WHEN** the `docs-rotate-keys` worktree, reused from an earlier session, holds an uncommitted `src/app.ts`, and Draft is started or exits for `rotate-keys`
+- **THEN** Spec Control does not auto-ship or set `autoMergeAskedAt` on the session
 
 #### Scenario: Without docs auto-merge
 - **WHEN** `demo-ops` has docs auto-merge off and the user starts **Draft artifacts**
-- **THEN** no proposal instruction is appended and the session works on `feat/rotate-keys`
+- **THEN** the session works on `feat/rotate-keys` and does not auto-ship on exit
 
 #### Scenario: Draft sent into an Implement session
 - **WHEN** Draft is sent into the running Implement session of `rotate-keys` on `feat/rotate-keys`
-- **THEN** the prompt carries no proposal instruction
+- **THEN** the prompt carries no proposal instruction and the session does not auto-ship as a proposal PR
 
 #### Scenario: Fast-forward is unchanged
 - **WHEN** the user starts **Fast-forward** for `rotate-keys` in a project with docs auto-merge on
-- **THEN** the session works on `feat/rotate-keys`, its prompt carries no proposal instruction, and it never carries the auto-merge record
+- **THEN** the session works on `feat/rotate-keys` and never carries the auto-merge record
 
 ### Requirement: The proposal session gives way to the next step
 While a change's running session is a **Draft artifacts** session on `docs/<change>`, the dashboard SHALL accept a request to open **Implement**, **Validate** or **Archive** for that change — never Draft, which goes into that session, and never Fast-forward — that explicitly asks to end the proposal session first. It SHALL first apply every refusal an opening is subject to (the change's stage, its dependencies, the repository's agent), so a refused request ends nothing. It SHALL then end the proposal session as **End session** does and wait until its agent has ended, and only then open the requested action as a new session under the usual rules — Implement on `feat/<change>`, created from the local `docs/<change>` while the default branch does not hold the change, as "Every session works in its own git worktree, created by the dashboard" specifies. Ending it SHALL keep the proposal session's worktree and branch whatever their work status, because its pull request may still be open: it MUST NOT remove a worktree, delete a branch or run any git command beyond those the new session's worktree needs. The ended proposal session SHALL keep its auto-merge record. When its agent does not end, the request SHALL be refused and nothing SHALL be started. The result SHALL be the new session. A request without that explicit ask is refused as "Session lifecycle and control" says, so a card or a stale page can never end an agent by starting a step.
@@ -1659,21 +1476,6 @@ While a change's running session is a **Draft artifacts** session on `docs/<chan
 #### Scenario: The agent does not end
 - **WHEN** the proposal session's agent cannot be ended
 - **THEN** the request is refused, no new session or worktree is created, and the proposal session is shown as it is
-
-### Requirement: An ended proposal session's pull request is merged through the change's running session
-A Draft session on `docs/<change>` that has ended, carries the auto-merge record, was not ended by the dashboard (`autoEnded`) and whose worktree still exists is an **ended proposal session**. Its pull request — the open pull request whose head branch is `docs/<change>` — SHALL be handed to the change's running session to merge: whenever a pull-request query for the repository completes with a good list, the dashboard SHALL apply every condition of "A ready docs-only pull request is handed to its agent to merge" to that pull request and to the ended proposal session's worktree, except that instead of the proposal session running it SHALL require that exactly one session of the change runs, that it is not in place and did not adopt its worktree. When all hold, it SHALL send that running session the Merge prompt, composed as "Merge asks the agent to merge its ready pull request" composes it and followed by one more fixed sentence saying that this pull request is the change's proposal from branch `docs/<change>`, not the branch of this worktree. It SHALL record the pull request and head commit on the ended proposal session before anything is typed, so the at-most-once rule holds per proposal pull request and head commit whichever session received it. The running session's panel SHALL offer the same Merge for that pull request while it is ready, composed the same way. Without a running session of the change nothing SHALL be sent and no agent started; the pull request is shown as ready, as for any session whose agent does not run. Once a query lists that pull request merged, "A merged auto-merge pull request ends its session" applies to the ended proposal session unchanged, so its clean worktree is removed and its branch kept. The dashboard itself MUST NOT merge, run `gh` or git that writes, start a query, a timer or a fetch for any of this.
-
-#### Scenario: The proposal goes green while implementing
-- **WHEN** `demo-ops` has docs auto-merge on, the Draft session of `rotate-keys` ended when Implement started, it carries the auto-merge record, its worktree is at `#90`'s head commit with only `openspec/` changes, the Implement session on `feat/rotate-keys` runs, and a refresh lists `#90` from `docs/rotate-keys` ready and docs-only
-- **THEN** one Merge prompt naming `#90`, its head commit and branch `docs/rotate-keys` is submitted to the Implement session's terminal, and the ended Draft session records it
-
-#### Scenario: Nobody to ask
-- **WHEN** the same holds but no session of `rotate-keys` runs
-- **THEN** nothing is typed, no agent is started, and the card shows `#90` as ready
-
-#### Scenario: The proposal merges
-- **WHEN** a later refresh lists `#90` merged after the recorded time
-- **THEN** the clean worktree `docs-rotate-keys` is removed, branch `docs/rotate-keys` is kept, and the Implement session keeps running
 
 ### Requirement: A profile's launch arguments are added to every start of its agent
 An agent profile MAY carry **launch arguments**: an argument list the user adds to the agent's command line, for
@@ -1916,3 +1718,117 @@ repository.
 #### Scenario: Nothing in the repository
 - **WHEN** the user sets and clears the override of `rotate-keys`
 - **THEN** no file in the repository changes, no git command runs and no scan is triggered
+
+### Requirement: Ship commits, pushes and opens a pull request deterministically
+For a session whose worktree has status `uncommitted`, `unpushed` or `pushed` the dashboard SHALL offer a **Ship** action that executes deterministically on the server without starting, resuming, or typing into an agent. When Ship is activated (or triggered automatically when a managed `Draft` session on `docs/<change>`, `Archive` session, or `Fast-forward` session exits cleanly after completing its work), the server SHALL:
+
+1. Write `spec-control.branch` (or `spec-control.archive-branch` for an archive session) into the change's `.openspec.yaml` (or archived `.openspec.yaml`) in the session's worktree if not already set to the session's branch.
+2. Check with read-only git whether the worktree has uncommitted or untracked changes (`status --porcelain=v1 -z`) and, if so, stage all changes (`git add --all`) and commit them (`git commit --no-verify -m <title>`) in the session's worktree with repository hooks disabled.
+3. Push the session's branch to `origin` (`git push --no-verify --set-upstream origin HEAD:refs/heads/<branch>`) with batch SSH and credentials masked.
+4. Determine whether an open pull request for `<branch>` already exists in the repository's GitHub repository; if none exists, create one against the repository's default branch via `gh pr create --repo <owner/name> --head <branch> --base <defaultBranch> --title <title> --body <body>` and refresh the repository's pull-request cache.
+
+When the session's repository has auto-merge of docs-only pull requests switched on, the server SHALL decide with read-only git in the session's worktree whether the branch ships **only OpenSpec documents**: every path that differs between the base and `HEAD` lies under `openspec/` at the repository root, and at least one such path exists. When that holds, the server SHALL record `autoMergeAskedAt` on the session (and return `autoMergeInstructionIncluded: true`), and the panel SHALL say that, because only OpenSpec documents changed, Spec Control will merge the pull request automatically once its checks pass. An in-place session has no worktree and no branch: it has no work status, Ship MUST NOT be offered for it, and a Ship request for it SHALL be refused.
+
+#### Scenario: Ship commits, pushes and opens a pull request without an agent
+- **WHEN** Ship is used on a running or ended session for `rotate-keys` whose worktree on `feat/rotate-keys` has uncommitted files
+- **THEN** the server writes `branch: feat/rotate-keys` in `.openspec.yaml`, commits all changes in the worktree, pushes `feat/rotate-keys` to `origin`, opens a pull request via `gh pr create`, refreshes the repository's pull-request cache, and starts or types into no agent process
+
+#### Scenario: Ship when commits are already made and only unpushed
+- **WHEN** the agent already committed its changes in the worktree and `.openspec.yaml` already records `branch: feat/rotate-keys`, so the worktree is clean and `unpushed`
+- **THEN** Ship creates no extra commit, pushes `feat/rotate-keys` to `origin`, and opens the pull request using the existing commit subject as the default title
+
+#### Scenario: Nothing to ship
+- **WHEN** Ship is requested for a session whose worktree is `merged`, `clean` or `missing`
+- **THEN** the request is refused and no git write or `gh` command runs
+
+#### Scenario: Ship is not offered without git
+- **WHEN** the panel of an in-place session is open
+- **THEN** no Ship control is shown, no work status is shown for it, and a Ship request for that session is refused
+
+#### Scenario: Shipping a docs-only branch with auto-merge on
+- **WHEN** Ship runs on the archive session of `rotate-keys` in a repository with auto-merge of docs-only pull requests on, and the branch only moves `openspec/changes/rotate-keys/` under `openspec/changes/archive/` and changes `openspec/specs/secrets/spec.md`
+- **THEN** the session records `autoMergeAskedAt`, the result states `autoMergeInstructionIncluded: true`, and the panel says the pull request will be merged once its checks pass
+
+#### Scenario: Code in the branch
+- **WHEN** Ship runs in a repository with auto-merge on and the branch changes `openspec/changes/rotate-keys/tasks.md` and `src/keys.ts`
+- **THEN** the session records no `autoMergeAskedAt` and the result states `autoMergeInstructionIncluded: false`
+
+### Requirement: Merge merges a ready pull request deterministically
+For a change session (whether `running` or `exited`) that is not in place and whose branch is the head branch of an **open** pull request in the session's repository's last good pull-request list, the dashboard SHALL offer a **Merge** action while that pull request is ready (`pull-requests`: "A linked open pull request has a readiness") and carries a head commit, whether or not the project has docs auto-merge on. Merge executes directly on the server without starting, resuming, or typing into an agent: it runs `gh pr merge <number> --repo <owner/name> --squash --match-head-commit <commit>` via `runGh`, where `<number>` (a positive integer) and `<commit>` (a 40-character hexadecimal SHA) are taken from the server's pull-request list and never from the browser, and refreshes the repository's pull-request cache. Spec Control MUST NOT pass `--delete-branch` or `--auto`.
+
+A Merge request SHALL be refused when agent sessions are disabled, the session is in place, has no linked open pull request in the last good list, or that pull request is not ready or has no head commit.
+
+#### Scenario: Merging a ready pull request by hand on a running or ended session
+- **WHEN** the Implement session of `cache-api-calls` (running or exited) has branch `feat/cache-api-calls` heading open pull request `#41` whose checks pass and which is mergeable at head commit `c0ffee0123456789abcdef0123456789abcdef01`, and the user activates Merge in its panel
+- **THEN** the server runs `gh pr merge 41 --repo acme/demo-ops --squash --match-head-commit c0ffee0123456789abcdef0123456789abcdef01`, refreshes the pull-request list, and writes nothing to any agent terminal
+
+#### Scenario: Not ready
+- **WHEN** Merge is requested for a session whose pull request's checks are still running
+- **THEN** the request is refused and no `gh pr merge` process is started
+
+### Requirement: A ready docs-only pull request is merged automatically by the server
+Whenever a pull-request query for a repository completes with a good list — whatever started it: the user's Refresh, opening a view that shows pull requests, or the board's pull-request watch — the dashboard SHALL, for each change session of that repository (whether `running` or `exited`) that carries the auto-merge record of "A merged auto-merge pull request ends its session", is not in place and did not adopt its worktree, look in that query's result for an open pull request whose head branch is the session's branch, and SHALL merge that pull request directly via `gh pr merge <number> --repo <owner/name> --squash --match-head-commit <headOid>` only when **all** of these hold at that moment:
+
+- agent sessions are enabled, the repository has docs auto-merge switched on, and this is not the demo;
+- the pull request is open and not a draft, its base branch is the repository's default branch, its mergeability is `mergeable` and its checks are `passing` — checks `none` SHALL NOT count, because a pull request whose checks have not registered yet looks the same;
+- the pull request is docs-only (`pull-requests`: "What a pull-request list contains") and carries a head commit;
+- when the session's worktree still exists, its checked-out commit is that head commit and the worktree holds only OpenSpec documents under the check Ship makes — decided with read-only git, without contacting a remote, at that moment; a git command that fails counts as not holding;
+- no merge was already attempted by the dashboard for this session, pull request and head commit.
+
+Before running `gh pr merge`, the session SHALL record the pull request's number, the head commit and the time (`mergeAsked`), so that a second query completing meanwhile starts no duplicate merge. At most one automatic merge attempt SHALL be made per session, pull request and head commit; a new head commit makes the pull request eligible again. Because the merge runs directly through `gh pr merge` on the server, it works identically whether the session's agent is still running or has already exited, and never starts, resumes, or types into an agent. Sessions started by Fast-forward never carry the record and SHALL never be auto-merged.
+
+#### Scenario: Archive pull request goes green after the agent exited
+- **WHEN** `demo-ops` has docs auto-merge on, the archive session of `rotate-keys` carries the auto-merge record, its worktree is at commit `c0ffee0123456789abcdef0123456789abcdef01` with only `openspec/` changes, and a watch refresh lists `#88` from `chore/archive-rotate-keys` open against the default branch, not a draft, mergeable, checks passing, docs-only, head commit `c0ffee0123456789abcdef0123456789abcdef01`
+- **THEN** the server records `#88` and `c0ffee0123456789abcdef0123456789abcdef01` on the session and runs `gh pr merge 88 --repo acme/demo-ops --squash --match-head-commit c0ffee0123456789abcdef0123456789abcdef01` without starting or typing into an agent
+
+#### Scenario: No checks at all
+- **WHEN** everything holds except that `#88` has no checks
+- **THEN** no merge is run and `#88` is shown as ready as before
+
+#### Scenario: A file outside openspec
+- **WHEN** everything holds except that `#88` is not docs-only
+- **THEN** no merge is run
+
+#### Scenario: Draft, conflict or another base
+- **WHEN** everything holds except that `#88` is a draft, or conflicts with its base, or targets a branch other than the default branch
+- **THEN** no merge is run
+
+#### Scenario: The worktree is ahead of the pull request
+- **WHEN** everything holds except that the worktree's commit is not `#88`'s head commit
+- **THEN** no merge is run
+
+#### Scenario: Seen again at the same head commit
+- **WHEN** a later refresh lists `#88` still open at the same head commit after a merge for it was already attempted
+- **THEN** no second `gh pr merge` is run for that head commit
+
+#### Scenario: A fix was pushed
+- **WHEN** a check failed, a fix was pushed, and a later refresh lists `#88` ready again at a new head commit with checks passing
+- **THEN** one `gh pr merge` naming the new head commit is run
+
+#### Scenario: Docs auto-merge switched off
+- **WHEN** the user switched docs auto-merge off for `demo-ops` after the session recorded `autoMergeAskedAt`, and a refresh lists `#88` ready and docs-only
+- **THEN** no merge is run
+
+#### Scenario: Demo
+- **WHEN** the demo lists a ready docs-only pull request for a session that carries the record
+- **THEN** nothing is run
+
+### Requirement: Spec Control records a change's branch in `.openspec.yaml`
+Whenever Spec Control prepares a managed session worktree for a change or executes a deterministic Ship (manual or automatic) in that worktree, the server SHALL record the session's branch directly in the change's `.openspec.yaml` (or archived `.openspec.yaml`) using the pure transformation supplied by the repository's framework module (`spec-frameworks`: "OpenSpec changes record their pull request's branch in `.openspec.yaml`"):
+
+- For a session whose action is `archive`, it SHALL set `archive-branch` under `spec-control:` to the session's branch.
+- For every other change session, it SHALL set `branch` under `spec-control:` to the session's branch.
+
+The write SHALL check with `lstat` that neither `openspec/`, `openspec/changes/`, the change or archive directory, nor `.openspec.yaml` is a symbolic link, and SHALL replace `.openspec.yaml` by atomic rename of a temporary file in the same directory. If the key already holds that branch name, the file SHALL be left untouched. Spec Control SHALL NOT append a branch-recording instruction to any agent prompt.
+
+#### Scenario: Worktree setup records the implementation branch
+- **WHEN** an Implement session is started for `rotate-keys` in worktree `rotate-keys` on branch `feat/rotate-keys`
+- **THEN** `openspec/changes/rotate-keys/.openspec.yaml` in that worktree carries `branch: feat/rotate-keys` under `spec-control:`, and the agent's prompt contains no branch-recording instruction
+
+#### Scenario: Archive Ship records the archive branch
+- **WHEN** an Archive session for `rotate-keys` on branch `chore/archive-rotate-keys` ships `openspec/changes/archive/2026-10-20-rotate-keys/.openspec.yaml`
+- **THEN** that file carries `archive-branch: chore/archive-rotate-keys` under `spec-control:` alongside its existing `branch` entry, included in the shipped commit
+
+#### Scenario: Symbolic link is refused
+- **WHEN** `openspec/changes/rotate-keys/.openspec.yaml` in a worktree is a symbolic link
+- **THEN** Spec Control does not follow or overwrite the link
