@@ -96,12 +96,19 @@ export async function cherryPickWorktreeCommit(
   commit: string,
   options: GitWriteOptions = {}
 ): Promise<GitWriteResult> {
-  let res = await gitWrite(cwd, ["cherry-pick", commit], options);
-  if (!res.ok && /user\.name|user\.email|author identity unknown|tell me who you are/i.test(res.err)) {
+  const fallbackEnv = {
+    ...options.env,
+    GIT_AUTHOR_NAME: "Spec Control",
+    GIT_AUTHOR_EMAIL: "spec-control@localhost",
+    GIT_COMMITTER_NAME: "Spec Control",
+    GIT_COMMITTER_EMAIL: "spec-control@localhost",
+  };
+  let res = await gitWrite(cwd, ["cherry-pick", commit], { ...options, env: fallbackEnv });
+  if (!res.ok && /user\.name|user\.email|author identity unknown|tell me who you are|empty ident name/i.test(res.err)) {
     res = await gitWrite(
       cwd,
       ["-c", "user.name=Spec Control", "-c", "user.email=spec-control@localhost", "cherry-pick", commit],
-      options
+      { ...options, env: fallbackEnv }
     );
   }
   return { ...res, err: maskCredentials(res.err) };
