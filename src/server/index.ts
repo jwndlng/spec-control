@@ -1,6 +1,6 @@
 // CLI entry point: `spec-control [--port N] [--no-open] [--version]`.
 import indexHtmlAsset from "../../dist/ui/index.html" with { type: "text" };
-import { createFetchHandler, createWebSocketHandlers, escapedErrorResponse, startingFetchHandler, type AppState, type TerminalSocketData } from "./api.ts";
+import { createFetchHandler, createWebSocketHandlers, escapedErrorResponse, listRepoPullRequests, refreshRepoPullRequests, startingFetchHandler, type AppState, type TerminalSocketData } from "./api.ts";
 import { diffSnapshots, sessionEvent } from "./activity/events.ts";
 import { ActivityLog } from "./activity/log.ts";
 import { AutoFetcher } from "./autoFetch.ts";
@@ -114,6 +114,8 @@ async function main(): Promise<void> {
     // The marker, not the agent's word: if `openspec/config.yaml` is there now, the repository becomes tracked.
     onIntegrationEnded: (session) => void confirmIntegrationSession(state, session).catch(() => undefined),
     onRunningChanged: () => state.keepAwake?.evaluate(),
+    refreshPullRequests: (repoId: string) => refreshRepoPullRequests(state, repoId),
+    listPullRequests: (repoId: string) => listRepoPullRequests(state, repoId),
   });
   await state.sessions.init();
   // Holds idle sleep off while an agent is busy, with the system's own `caffeinate` (macOS only; off in Settings).

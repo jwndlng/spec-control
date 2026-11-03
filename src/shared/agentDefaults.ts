@@ -21,10 +21,13 @@ const PREVIOUS_IMPLEMENT_TAIL = "when a task can only be verified by me, do the 
 const PREVIOUS_VALIDATE_TAIL = "take its `- [~]` tasks one at a time, tell me exactly what to check, and tick off only the ones I confirm, leaving the rest as `- [~]`.";
 
 /**
- * Syncs the delta specs first instead of stopping at the archive workflow's "sync now?" question, and commits the whole
- * move: a half-committed archive leaves the old change directory behind in the worktree (stale-changes).
+ * Syncs the delta specs first instead of stopping at the archive workflow's "sync now?" question.
  */
 const ARCHIVE_TAIL =
+  "sync the delta specs into openspec/specs first without asking me whether to sync, then archive; if they are already in sync, archive right away; tick off the tasks left for me to validate once I have confirmed them.";
+
+/** The previous Archive tail which included git instructions to commit moved/removed files; saved verbatim copies upgrade. */
+const PREVIOUS_ARCHIVE_TAIL_WITH_COMMIT =
   "sync the delta specs into openspec/specs first without asking me whether to sync, then archive; if they are already in sync, archive right away; tick off the tasks left for me to validate once I have confirmed them, and include in your commit every file the archive moved or removed.";
 
 /** The Archive tail before it asked for the whole move to be committed; a saved verbatim copy upgrades. */
@@ -121,7 +124,7 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
       archive: [
         "/opsx:archive {change}",
         "/opsx:archive {change} — sync the delta specs into openspec/specs first without asking me whether to sync, then archive; if they are already in sync, archive right away.",
-        `/opsx:archive {change} — ${PREVIOUS_ARCHIVE_TAIL}`,
+        `/opsx:archive {change} — ${PREVIOUS_ARCHIVE_TAIL_WITH_COMMIT}`,
       ],
     },
     install: CLAUDE_INSTALL,
@@ -131,7 +134,9 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
     formerPrompts: {
       implement: [`Use the openspec-apply-change skill on the OpenSpec change {change} — ${PREVIOUS_IMPLEMENT_TAIL}`],
       validate: [`Use the openspec-apply-change skill on the OpenSpec change {change} — ${PREVIOUS_VALIDATE_TAIL}`],
-      archive: [`Use the openspec-archive-change skill to archive the OpenSpec change {change} — ${PREVIOUS_ARCHIVE_TAIL}`],
+      archive: [
+        `Use the openspec-archive-change skill to archive the OpenSpec change {change} — ${PREVIOUS_ARCHIVE_TAIL_WITH_COMMIT}`,
+      ],
     },
     install: CODEX_INSTALL,
   },
@@ -141,7 +146,9 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
     formerPrompts: {
       implement: [`/opsx-apply {change} — ${PREVIOUS_IMPLEMENT_TAIL}`],
       validate: [`/opsx-apply {change} — ${PREVIOUS_VALIDATE_TAIL}`],
-      archive: [`/opsx-archive {change} — ${PREVIOUS_ARCHIVE_TAIL}`],
+      archive: [
+        `/opsx-archive {change} — ${PREVIOUS_ARCHIVE_TAIL_WITH_COMMIT}`,
+      ],
     },
     formerCommands: [["agy", "-i", "{prompt}"]],
     install: ANTIGRAVITY_INSTALL,
@@ -157,6 +164,7 @@ export function agentInstallSteps(agent: Pick<AgentProfile, "id" | "name" | "com
 
 /** The Claude Code preset's former prompts. */
 export const FORMER_PROMPTS = AGENT_PRESETS[0].formerPrompts;
+export const FORMER_PRESET_PROMPTS = FORMER_PROMPTS;
 
 /**
  * The shortcuts the console offers until the user edits them: the four answers an agent's questions usually need, each

@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-11-02-agent-interoperability",
+    date: "2026-11-02",
+    title: "Deterministic Ship, Merge, and zero-token cleanup",
+    summary:
+      "**Ship** and **Merge** now execute directly on the server without typing into an agent or requiring a running session, recording branches in `.openspec.yaml`. Synced changes archive, clean carry-overs cherry-pick, and identical duplicates clean up with zero LLM tokens across all coding agents.",
+  },
+  {
     id: "2026-11-02-background-worktree-cleanup",
     date: "2026-11-02",
     title: "Worktree cleanup continues in the background",

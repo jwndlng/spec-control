@@ -9,7 +9,7 @@ import { sessionBranch } from "../src/server/sessions/manager.ts";
 import { shipsOnlyOpenSpec } from "../src/server/sessions/workStatus.ts";
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
 import { afterStart, autoMergeNotice, reportShip, type AutoMergeReport } from "../src/ui/sessionState.ts";
-import { useTempHome } from "./helpers.ts";
+import { tempDir, useTempHome } from "./helpers.ts";
 import { installFakeGh } from "./ghHelpers.ts";
 import { git, harness, recordFor, tempGitRepo, waitFor, watch, type Harness } from "./sessionHelpers.ts";
 
@@ -117,12 +117,21 @@ test("Archive's variant also accepts a worktree with nothing in it yet, and stil
   expect(await shipsOnlyOpenSpec(code, "main")).toBe(false);
 });
 
+async function setupFakeRemote(repoPath: string): Promise<string> {
+  const bare = await tempDir("bare-remote-");
+  git(bare, "init", "--bare", "-q");
+  git(repoPath, "remote", "add", "origin", "https://github.com/acme/demo-ops.git");
+  git(repoPath, "config", "remote.origin.pushurl", bare);
+  return bare;
+}
+
 /** When the session was last asked to enable auto-merge (auto-merge-cleanup D1). */
 const askedAt = (h: Harness, id: string) => (h.manager.get(id) as ChangeSession).autoMergeAskedAt;
 
 /** A running session of `upgrade-runtime` whose project has the setting as given, with `files` written into it. */
 async function shipping(autoMergeDocs: boolean | undefined, files: string[], opts: { resume?: boolean } = {}) {
   const h = await harness();
+  await setupFakeRemote(h.repoPath);
   h.config.repos[0].agent = { enabled: true, ...(autoMergeDocs === undefined ? {} : { autoMergeDocs }) };
   managers.push(h.manager);
   const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
@@ -141,47 +150,44 @@ async function shipping(autoMergeDocs: boolean | undefined, files: string[], opt
 test("Ship asks for auto-merge in an opted-in project when only OpenSpec documents are shipped", async () => {
   const gh = await installFakeGh();
   try {
-    const { h, s, seen, withAutoMerge } = await shipping(true, ["openspec/changes/upgrade-runtime/notes.md", "openspec/specs/runtime/spec.md"]);
-    const refs = git(h.repoPath, "for-each-ref");
+    const { h, s } = await shipping(true, ["openspec/changes/upgrade-runtime/notes.md", "openspec/specs/runtime/spec.md"]);
     const result = await h.manager.ship(s.id);
     expect(result).toMatchObject({ submitted: true, autoMerge: true });
     expect(askedAt(h, s.id)).toBeDefined();
-    await waitFor(() => seen.text().includes(`you said: ${withAutoMerge}`), "the ship prompt with the auto-merge instruction");
-    // The dashboard itself merged nothing: no gh, no ref moved.
-    expect(await gh.calls()).toEqual([]);
-    expect(git(h.repoPath, "for-each-ref")).toBe(refs);
+    // Deterministic server ship created the PR
+    expect((await gh.calls()).some((c) => c.argv.includes("create"))).toBe(true);
   } finally {
     gh.restore();
   }
 });
 
-test("Ship asks for auto-merge when it starts an ended agent again, too", async () => {
-  const { h, s, seen, withAutoMerge } = await shipping(true, ["openspec/changes/upgrade-runtime/notes.md"], { resume: true });
-  expect(await h.manager.ship(s.id)).toMatchObject({ submitted: true, autoMerge: true });
-  expect(askedAt(h, s.id)).toBeDefined();
-  await waitFor(() => seen.text().includes('args=["--resumed"]') && seen.text().includes(`you said: ${withAutoMerge}`), "resume command plus the prompt");
-});
-
-test("Ship through the resume command with a prompt that cannot be typed is refused: no agent started, no record (D1)", async () => {
-  const { h, s } = await shipping(true, ["openspec/changes/upgrade-runtime/notes.md"], { resume: true });
-  h.config.agentSessions.agents[0].promptSuffixes = { ship: "x ".repeat(2100) };
-  await expect(h.manager.ship(s.id)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/4096/) });
-  expect(h.manager.get(s.id).state).toBe("exited");
-  expect(askedAt(h, s.id)).toBeUndefined();
-  expect(h.manager.anyRunning()).toBe(false);
+test("Ship asks for auto-merge on an ended session without starting the agent", async () => {
+  const gh = await installFakeGh();
+  try {
+    const { h, s } = await shipping(true, ["openspec/changes/upgrade-runtime/notes.md"], { resume: true });
+    const result = await h.manager.ship(s.id);
+    expect(result).toMatchObject({ submitted: true, autoMerge: true });
+    expect(askedAt(h, s.id)).toBeDefined();
+    expect(h.manager.get(s.id).state).toBe("exited");
+  } finally {
+    gh.restore();
+  }
 });
 
 test("Ship's prompt is today's when the project did not opt in, or code is shipped", async () => {
-  for (const [autoMergeDocs, files] of [
-    [true, ["openspec/changes/upgrade-runtime/notes.md", "src/runtime.ts"]],
-    [false, ["openspec/changes/upgrade-runtime/notes.md"]],
-    [undefined, ["openspec/changes/upgrade-runtime/notes.md"]],
-  ] as const) {
-    const { h, s, seen, plain } = await shipping(autoMergeDocs, [...files]);
-    expect(await h.manager.ship(s.id)).toMatchObject({ submitted: true, autoMerge: false });
-    expect(askedAt(h, s.id)).toBeUndefined();
-    await waitFor(() => seen.text().includes(`you said: ${plain}`), "the plain ship prompt");
-    expect(seen.text()).not.toContain("enable auto-merge");
+  const gh = await installFakeGh();
+  try {
+    for (const [autoMergeDocs, files] of [
+      [true, ["openspec/changes/upgrade-runtime/notes.md", "src/runtime.ts"]],
+      [false, ["openspec/changes/upgrade-runtime/notes.md"]],
+      [undefined, ["openspec/changes/upgrade-runtime/notes.md"]],
+    ] as const) {
+      const { h, s } = await shipping(autoMergeDocs, [...files]);
+      expect(await h.manager.ship(s.id)).toMatchObject({ submitted: true, autoMerge: false });
+      expect(askedAt(h, s.id)).toBeUndefined();
+    }
+  } finally {
+    gh.restore();
   }
 });
 
@@ -193,14 +199,12 @@ test("both Ship controls report the auto-merge notice only when Ship asked for a
   reportShip(ui, "s1", { submitted: false, autoMerge: true });
   expect(seen).toEqual(["unsent undefined", "autoMerge s1 ship", "unsent undefined", "autoMerge undefined", "unsent s1", "autoMerge s1 ship"]);
   for (const action of ["ship", "archive"] as const) {
-    // The pull request is handed back to the agent to merge; GitHub's auto-merge is no longer asked for.
-    expect(autoMergeNotice(action)).toContain("will be handed back to the agent to merge once its checks pass");
-    expect(autoMergeNotice(action)).not.toContain("auto-merge");
-    expect(autoMergeNotice(action)).toContain("merges nothing");
+    // Spec Control merges automatically directly on the server
+    expect(autoMergeNotice(action)).toContain("Spec Control will merge");
+    expect(autoMergeNotice(action)).not.toContain("handed back to the agent");
   }
   expect(autoMergeNotice("ship")).toContain("Only OpenSpec documents changed");
-  // Archive's is conditional, like its instruction: the Archive prompt may open no pull request at all.
-  expect(autoMergeNotice("archive")).toContain("if the agent opens a pull request");
+  expect(autoMergeNotice("archive")).toContain("Only OpenSpec documents are in this worktree");
 });
 
 test("a start reports Archive's notice when its prompt carried the instruction, and clears only its own session's", () => {
@@ -219,7 +223,7 @@ async function archiving(autoMergeDocs: boolean | undefined, opts: { git?: boole
   h.config.repos[0].agent = { enabled: true, ...(autoMergeDocs === undefined ? {} : { autoMergeDocs }) };
   managers.push(h.manager);
   const agent = h.config.agentSessions.agents[0];
-  const archive = (change: string, autoMerge: boolean) => openingPrompt(agent, "archive", change, { autoMerge, record: recordFor(change, true) }) as string;
+  const archive = (change: string, _autoMerge: boolean) => openingPrompt(agent, "archive", change) as string;
   return { h, archive };
 }
 
@@ -235,7 +239,7 @@ test("Archive in a fresh worktree of an opted-in project ends with the archive a
   const s = await h.manager.open({ repoId: h.repoId, change: "confirm-retention", action: "archive" });
   expect(s.autoMerge).toBe(true);
   expect(askedAt(h, s.id)).toBeDefined();
-  expect(archive("confirm-retention", true)).toEndWith(`${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION} ${recordFor("confirm-retention", true)}`);
+  expect(archive("confirm-retention", true)).toBe("archive confirm-retention");
   await openedWith(h, s.id, archive("confirm-retention", true));
   // Read-only: the only new ref is the archive branch the worktree was created on.
   const added = git(h.repoPath, "for-each-ref").split("\n").filter((line) => !refs.includes(line));

@@ -255,46 +255,19 @@ function expectsNoAutoMerge(text: string): void {
   expect(text.replaceAll(refusal, "").replaceAll(later, "")).not.toMatch(/auto-merge|\bmerge (it|the)\b/i);
 }
 
-test("Archive: the archive auto-merge instruction comes last when asked for, and no other starter ever carries it", () => {
+test("Archive: branch recording and auto-merge are handled server-side, so prompts carry neither suffix", () => {
   const extra = "Create a PR whenever you finished the archive.";
   const profile = fakeProfile({ promptSuffixes: { archive: extra } });
-  expect(openingPrompt(profile, "archive", "cache-api-calls", { autoMerge: false })).toBe(`archive cache-api-calls ${extra}`);
-  expect(openingPrompt(profile, "archive", "cache-api-calls", { autoMerge: true })).toBe(`archive cache-api-calls ${extra} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION}`);
-  for (const action of ["draft", "implement", "validate"] as const) {
-    expect(openingPrompt(profile, action, "cache-api-calls", { autoMerge: true })).toBe(openingPrompt(profile, action, "cache-api-calls"));
-  }
-  // An agent without an Archive prompt still has no Archive starter: the instruction is never a prompt of its own.
-  expect(openingPrompt(fakeProfile({ prompts: { implement: "x {change}" } }), "archive", "c", { autoMerge: true })).toBeUndefined();
-  // One line, agent-neutral, no placeholder; conditional on a pull request, and it asks for none.
-  expect(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION).not.toMatch(/[\r\n{}]/);
-  expect(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION).not.toMatch(/\bgh\b|claude|codex/i);
-  expect(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION).toContain("Do not open a pull request just because of this");
-  expect(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION).toContain("if you open one");
-  expectsNoAutoMerge(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION);
+  expect(openingPrompt(profile, "archive", "cache-api-calls")).toBe(`archive cache-api-calls ${extra}`);
+  // An agent without an Archive prompt still has no Archive starter
+  expect(openingPrompt(fakeProfile({ prompts: { implement: "x {change}" } }), "archive", "c")).toBeUndefined();
 });
 
-test("Draft: the proposal instruction comes last when asked for, with the title the convention decides", () => {
+test("Draft: server handles branch recording and proposal shipping, so Draft carries no git/PR suffix", () => {
   const extra = "Keep the design short.";
   const profile = fakeProfile({ promptSuffixes: { draft: extra } });
-  const conventional = openingPrompt(profile, "draft", "rotate-keys", { proposal: true, convention: "conventional-commits" });
-  expect(conventional).toBe(`draft rotate-keys ${extra} ${proposalInstruction("rotate-keys", "conventional-commits")}`);
-  expect(conventional).toContain("titled docs(openspec): add rotate-keys,");
-  const plain = openingPrompt(profile, "draft", "rotate-keys", { proposal: true }) as string;
-  expect(plain).toContain("titled Add OpenSpec proposal rotate-keys,");
-  expect(plain).not.toContain("docs(openspec)");
-  // Not asked for, or any other starter: never carried; Archive's `autoMerge` never turns it on.
   expect(openingPrompt(profile, "draft", "rotate-keys")).toBe(`draft rotate-keys ${extra}`);
-  expect(openingPrompt(profile, "draft", "rotate-keys", { autoMerge: true })).toBe(`draft rotate-keys ${extra}`);
-  for (const action of ["implement", "validate", "archive"] as const) expect(openingPrompt(profile, action, "rotate-keys", { proposal: true })).toBe(openingPrompt(profile, action, "rotate-keys"));
-  expect(fastForwardPrompt(profile, "rotate-keys")).not.toContain(proposalInstruction("rotate-keys", undefined));
-  // One line, agent-neutral, only `{title}`; it asks for the pull request but no merge, no auto-merge, no implementation.
-  expect(AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION.replace("{title}", "")).not.toMatch(/[\r\n{}]/);
-  expect(AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION).not.toMatch(/\bgh\b|claude|codex/i);
-  expect(AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION).toContain("open a pull request against the default branch");
-  expect(AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION).toContain("containing only files under openspec/");
-  expect(AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION).toContain("do not start implementing the change");
-  expectsNoAutoMerge(AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION);
-  expect(() => proposalInstruction("../x", undefined)).toThrow();
+  expect(fastForwardPrompt(profile, "rotate-keys")).not.toContain("proposal");
 });
 
 const HEAD = "c0ffee0000000000000000000000000000000001";
@@ -308,14 +281,6 @@ test("Merge: the default prompt, then the sentence naming the pull request and i
   expect(prompt).not.toMatch(/[\r\n]/);
   // Agent-neutral: it names the host's GitHub CLI and no agent vendor.
   expect(DEFAULT_MERGE_PROMPT).not.toMatch(/claude|codex|antigravity/i);
-});
-
-test("Merge: a handed-over proposal pull request gets one more sentence naming docs/<change>, after the Merge sentence", () => {
-  const prompt = mergePrompt(fakeProfile(), "rotate-keys", { pr: 90, head: HEAD, proposal: true });
-  expect(prompt).toBe(`${DEFAULT_MERGE_PROMPT.replaceAll("{change}", "rotate-keys")} ${mergeTargetSentence(90, HEAD)} ${proposalHandoverSentence("docs/rotate-keys")}`);
-  expect(prompt).toEndWith("This pull request is the change's proposal from branch docs/rotate-keys, not the branch of this worktree.");
-  expect(prompt).not.toMatch(/[\r\n]/);
-  expect(mergePrompt(fakeProfile(), "rotate-keys", { pr: 90, head: HEAD })).not.toContain("proposal from branch");
 });
 
 test("Merge: a profile's own prompt with {change}, its additional instructions, and nothing after the sentence", () => {
@@ -733,22 +698,14 @@ test("Fast-forward: offered only while a change is unplanned and not blocked, an
   expect(startersFor(withPrompts({ implement: "i {change}" }), card)).toEqual([]);
 });
 
-test("Fast-forward: Draft, then Implement, then Ship, each with its additional instructions, and never an auto-merge instruction", () => {
+test("Fast-forward: Draft, then Implement, each with its additional instructions, without Ship tail", () => {
   const profile = fakeProfile({ promptSuffixes: { draft: "Keep it short.", implement: "Run the tests.", ship: "Mention the ticket." } });
-  const ship = shipPrompt(profile, "cache-api-calls");
-  const expected = `draft cache-api-calls Keep it short. ${FAST_FORWARD_CONTINUE_SENTENCE} implement cache-api-calls Run the tests. ${FAST_FORWARD_SHIP_SENTENCE} ${ship}`;
+  const expected = `draft cache-api-calls Keep it short. ${FAST_FORWARD_CONTINUE_SENTENCE} implement cache-api-calls Run the tests.`;
   expect(fastForwardPrompt(profile, "cache-api-calls")).toBe(expected);
   expect(openingPrompt(profile, "fastForward", "cache-api-calls")).toBe(expected);
-  // Asked for an auto-merge instruction, a starter other than Archive ignores it — Fast-forward included.
-  expect(openingPrompt(profile, "fastForward", "cache-api-calls", { autoMerge: true })).toBe(expected);
   expect(expected).not.toContain(AUTO_MERGE_DOCS_INSTRUCTION);
   expect(expected).not.toContain(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION);
   expect(expected).not.toContain("\n");
-  // The project's title convention reaches its Ship part exactly as Ship would send it.
-  const titled = fastForwardPrompt(profile, "cache-api-calls", { convention: "conventional-commits" }) as string;
-  expect(titled.endsWith(shipPrompt(profile, "cache-api-calls", { convention: "conventional-commits" }))).toBe(true);
-  expect(titled).toContain(CONVENTIONAL_COMMITS_SHIP_SENTENCE);
-  // Without both phases there is nothing to fast-forward.
   expect(fastForwardPrompt(fakeProfile({ prompts: { draft: "d {change}" } }), "cache-api-calls")).toBeUndefined();
   expect(openingPrompt(fakeProfile({ prompts: { implement: "i {change}" } }), "fastForward", "cache-api-calls")).toBeUndefined();
   expect(() => fastForwardPrompt(profile, "../etc")).toThrow("invalid change name");
@@ -759,7 +716,6 @@ test("Fast-forward with the preconfigured Claude Code profile starts with the ff
   expect(prompt.startsWith("/opsx:ff cache-api-calls ")).toBe(true);
   expect(prompt).toContain("/opsx:apply cache-api-calls — ");
   expect(prompt).toContain("`- [~]`");
-  expect(prompt.endsWith(DEFAULT_SHIP_PROMPT)).toBe(true);
   expect(prompt.indexOf(FAST_FORWARD_CONTINUE_SENTENCE)).toBeLessThan(prompt.indexOf("/opsx:apply"));
   expect(launchCommand(CLAUDE_PROFILE, prompt).argv).toEqual(["claude", prompt]);
 });
@@ -773,12 +729,12 @@ test("every preset says how to install it on each platform, with a command to co
   }
 });
 
-test("every preset's Archive prompt asks for the whole move to be committed; the previous text upgrades, an edited one stays", () => {
+test("every preset's Archive prompt drops the commit clause; the previous text with commit upgrades, an edited one stays", () => {
   for (const { profile, formerPrompts } of AGENT_PRESETS) {
     const archive = profile.prompts.archive ?? "";
-    expect([profile.id, archive.endsWith("and include in your commit every file the archive moved or removed.")]).toEqual([profile.id, true]);
-    // The text before this clause, verbatim, is one of the preset's former Archive prompts and is read as the current one.
-    const previous = archive.replace(", and include in your commit every file the archive moved or removed.", ".");
+    expect([profile.id, archive.includes("and include in your commit every file the archive moved or removed.")]).toEqual([profile.id, false]);
+    // The previous text with this clause, verbatim, is one of the preset's former Archive prompts and is read as the current one.
+    const previous = `${archive.slice(0, -1)}, and include in your commit every file the archive moved or removed.`;
     expect(formerPrompts.archive).toContain(previous);
     const agent = { ...profile, prompts: { archive: previous } };
     expect(validateConfig(withAgents([agent], profile.id)).agentSessions.agents[0].prompts.archive).toBe(archive);
@@ -803,47 +759,12 @@ test("every preset's Implement and Validate prompts cover tasks only the user ca
   }
 });
 
-// agent-sessions: "An agent asked to open a pull request is asked to record its branch". The server picks the text
-// (`SessionManager.recordInstruction`); these are the places it goes.
-const RECORD = openSpec.recordInstruction({ change: "rotate-keys", archive: false });
-const ARCHIVE_RECORD = openSpec.recordInstruction({ change: "rotate-keys", archive: true });
-
-test("Ship carries the record instruction right after the prompt, and is unchanged without one", () => {
-  expect(shipPrompt(fakeProfile(), "rotate-keys", { record: RECORD })).toBe(`${DEFAULT_SHIP_PROMPT} ${RECORD}`);
-  expect(shipPrompt(fakeProfile(), "rotate-keys", { record: undefined })).toBe(DEFAULT_SHIP_PROMPT);
-  expect(shipPrompt(fakeProfile(), "rotate-keys", { record: ARCHIVE_RECORD })).toContain("archive-branch:");
-  // A profile with its own Ship prompt gets it all the same.
-  const own = fakeProfile({ prompts: { ...fakeProfile().prompts, ship: "Ship {change}." } });
-  expect(shipPrompt(own, "rotate-keys", { record: RECORD })).toBe(`Ship rotate-keys. ${RECORD}`);
-});
-
-test("Ship with every addition: prompt, Conventional Commits, record, additional instructions, auto-merge", () => {
-  const extra = "Mention the ticket.";
-  const profile = fakeProfile({ promptSuffixes: { ship: extra } });
-  expect(shipPrompt(profile, "rotate-keys", { convention: "conventional-commits", record: RECORD, autoMerge: true })).toBe(
-    `${DEFAULT_SHIP_PROMPT} ${CONVENTIONAL_COMMITS_SHIP_SENTENCE} ${RECORD} ${extra} ${AUTO_MERGE_DOCS_INSTRUCTION}`,
-  );
-});
-
-test("Fast-forward carries the record instruction exactly once, within its Ship part", () => {
+test("prompts do not carry prose recordInstruction", () => {
   const profile = fakeProfile();
-  const prompt = openingPrompt(profile, "fastForward", "rotate-keys", { record: RECORD }) as string;
-  expect(prompt.split(RECORD).length - 1).toBe(1);
-  expect(prompt.endsWith(shipPrompt(profile, "rotate-keys", { record: RECORD }))).toBe(true);
   expect(openingPrompt(profile, "fastForward", "rotate-keys")).not.toContain("spec-control:");
-});
-
-test("Archive: the record instruction follows the archive auto-merge instruction, and only with it", () => {
-  const profile = fakeProfile();
-  expect(openingPrompt(profile, "archive", "rotate-keys", { autoMerge: true, record: ARCHIVE_RECORD })).toBe(`archive rotate-keys ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION} ${ARCHIVE_RECORD}`);
-  expect(openingPrompt(profile, "archive", "rotate-keys", { record: ARCHIVE_RECORD })).toBe("archive rotate-keys");
-  for (const action of ["draft", "implement", "validate"] as const) {
-    expect(openingPrompt(profile, action, "rotate-keys", { autoMerge: true, record: RECORD })).toBe(openingPrompt(profile, action, "rotate-keys"));
-  }
+  expect(openingPrompt(profile, "archive", "rotate-keys")).not.toContain("spec-control:");
   const stranded = { branch: "feat/rotate-keys", archive: "2026-10-20-rotate-keys", commit: "c0ffee0000000000000000000000000000000001" };
-  const plain = carryOverPrompt("rotate-keys", stranded, "main");
-  expect(carryOverPrompt("rotate-keys", stranded, "main", { record: ARCHIVE_RECORD })).toBe(plain);
-  expect(carryOverPrompt("rotate-keys", stranded, "main", { autoMerge: true, record: ARCHIVE_RECORD })).toBe(`${plain} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION} ${ARCHIVE_RECORD}`);
+  expect(carryOverPrompt("rotate-keys", stranded, "main")).not.toContain("spec-control:");
 });
 
 test("launch arguments go directly after the executable on every start; without them the argv is unchanged", () => {

@@ -631,15 +631,28 @@ export type PromptKey = StarterPromptKey | "ship" | "integrate" | "resolveConfli
  *  was submitted. `false` means the agent of a running session did not show the typed prompt (it may be showing a
  *  menu), so Enter was not pressed and nothing was confirmed. */
 export type PromptResult = Session & { submitted: boolean };
-/** What Ship and a starter's prompt sent into a running session answer: the same, plus whether the prompt carried an
- *  auto-merge instruction — `AUTO_MERGE_DOCS_INSTRUCTION` for Ship, `AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION` for Archive,
- *  `AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION` for Draft. */
+/** What Ship answers: the session, whether it was shipped deterministically, and whether docs auto-merge was asked. */
+export type ShipResult = Session & {
+  shipped: true;
+  submitted: boolean;
+  autoMerge: boolean;
+  autoMergeInstructionIncluded: boolean;
+  pullRequestUrl?: string;
+  pullRequestNumber?: number;
+};
 export type AutoMergePromptResult = PromptResult & { autoMerge: boolean };
-export type ShipResult = AutoMergePromptResult;
 /** What starting a session answers: the session, and whether its opening prompt carried
  *  `AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION` or `AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION`. Always `false` for a session that
  *  was already open and was returned. */
-export type StartResult = Session & { autoMerge: boolean };
+export type StartResult = Session & { autoMerge: boolean; shipped?: boolean };
+
+/** What Merge answers: the session and the merged pull request's number and head commit. */
+export type MergeResult = Session & {
+  merged: true;
+  number: number;
+  headOid: string;
+  submitted: boolean;
+};
 
 export const DEFAULT_SHIP_PROMPT =
   "Ship the work in this worktree: commit everything that belongs to it with a commit message that follows this repository's conventions, push the branch, and open a pull request against the default branch if there is none yet. Do not merge it. Tell me the pull request URL.";
@@ -866,6 +879,8 @@ export interface ChangeSession extends SessionBase {
    * re-created for it starts from `origin/<branch>` rather than from the base (resolve-pr-conflicts D2).
    */
   pullRequest?: number;
+  /** Set when a deterministic Ship (manual or automatic on session exit) failed; cleared when Ship succeeds. */
+  shipError?: string;
   /**
    * The worktree cleanup the user confirmed when ending this session, carried on in the background once the session
    * had ended (cleanup-background). Stored, so an outcome — or a cleanup a restart interrupted — outlives a reload.

@@ -101,7 +101,7 @@ test("the fake gh hangs on request, so the runner's timeout can be exercised", a
 
 test("the fake gh refuses any other subcommand", async () => {
   await gh.scenario({});
-  const other = await run("pr", "merge", "7");
+  const other = await run("pr", "close", "7");
   expect(other.code).toBe(64);
   expect(other.err).toContain("unexpected invocation");
 });

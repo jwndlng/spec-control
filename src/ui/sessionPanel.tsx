@@ -371,11 +371,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
               type="button"
               class="btn sm primary"
               disabled={acting}
-              title={
-                session.state === "running"
-                  ? `Sends ${session.agentName} a prompt asking it to commit, push and open a pull request`
-                  : `Starts ${session.agentName} in this worktree with a prompt to commit, push and open a pull request`
-              }
+              title="Commits, pushes and opens a pull request deterministically on the server without an agent"
               onClick={() =>
                 act(async () => {
                   reportShip(ui, session.id, await api.shipSession(session.id));

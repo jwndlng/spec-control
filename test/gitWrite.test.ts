@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { mkdir, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { emptyHooksDir, gitWrite } from "../src/server/gitWrite.ts";
+import { abortWorktreeCherryPick, cherryPickWorktreeCommit, commitWorktreeAll, emptyHooksDir, gitWrite, pushWorktreeBranch } from "../src/server/gitWrite.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
 import { clearHookLog, hookLog, installRepoHooks, writeHooks } from "./hookHelpers.ts";
 import { git } from "./pullHelpers.ts";
@@ -90,6 +90,86 @@ test("a failing command reports git's reason and never throws", async () => {
   expect(result.ok).toBe(false);
   expect(result.err).toContain("no-such-branch");
   expect((await gitWrite(join(repo, "missing"), ["add", "--", "x"])).ok).toBe(false);
+});
+
+test("commitWorktreeAll stages and commits all changes with hooks disabled", async () => {
+  const { base, repo } = await repository();
+  const log = await installRepoHooks(repo);
+  await clearHookLog(log);
+
+  await writeFile(join(repo, "staged.txt"), "staged\n");
+  await writeFile(join(repo, "untracked.txt"), "untracked\n");
+
+  const res = await commitWorktreeAll(repo, "feat: test commit");
+  expect(res.ok).toBe(true);
+  // No hooks ran during add or commit
+  expect(await hookLog(log)).toEqual([]);
+  expect(git(repo, "status", "--porcelain")).toBe("");
+  expect(git(repo, "log", "-1", "--format=%s")).toBe("feat: test commit");
+});
+
+test("commitWorktreeAll falls back to Spec Control committer when git has no author configured", async () => {
+  const { base, repo } = await repository();
+  const emptyConfig = join(base, "empty-gitconfig");
+  await writeFile(emptyConfig, "");
+
+  await writeFile(join(repo, "author-test.txt"), "hello\n");
+  const res = await commitWorktreeAll(repo, "chore: author fallback", {
+    env: {
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: emptyConfig,
+      EMAIL: "",
+      GIT_AUTHOR_NAME: "",
+      GIT_AUTHOR_EMAIL: "",
+      GIT_COMMITTER_NAME: "",
+      GIT_COMMITTER_EMAIL: "",
+    },
+  });
+  expect(res.ok).toBe(true);
+  const author = git(repo, "log", "-1", "--format=%an <%ae>");
+  expect(author).toBe("Spec Control <spec-control@localhost>");
+});
+
+test("pushWorktreeBranch pushes branch upstream with batch SSH", async () => {
+  const { base, repo } = await repository();
+  const remote = join(base, "remote.git");
+  git(base, "init", "--bare", "-q", "remote.git");
+  git(repo, "remote", "add", "origin", remote);
+
+  const res = await pushWorktreeBranch(repo, "main");
+  expect(res.ok).toBe(true);
+  expect(git(remote, "branch", "--list", "main")).toContain("main");
+});
+
+test("cherryPickWorktreeCommit and abortWorktreeCherryPick handle clean picks and abort conflicts", async () => {
+  const { base, repo } = await repository();
+  git(repo, "checkout", "-q", "-b", "feat/target");
+  await writeFile(join(repo, "feature.txt"), "feature\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", "feature commit");
+  const featureOid = git(repo, "rev-parse", "HEAD");
+
+  // Create clean branch to cherry pick onto
+  git(repo, "checkout", "-q", "main");
+  git(repo, "checkout", "-q", "-b", "feat/clean");
+  const cleanRes = await cherryPickWorktreeCommit(repo, featureOid);
+  expect(cleanRes.ok).toBe(true);
+  expect(git(repo, "log", "-1", "--format=%s")).toBe("feature commit");
+
+  // Create conflicting branch
+  git(repo, "checkout", "-q", "main");
+  git(repo, "checkout", "-q", "-b", "feat/conflict");
+  await writeFile(join(repo, "feature.txt"), "conflicting content\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", "conflict setup");
+
+  const conflictRes = await cherryPickWorktreeCommit(repo, featureOid);
+  expect(conflictRes.ok).toBe(false);
+
+  // Abort resets the conflict
+  const abortRes = await abortWorktreeCherryPick(repo);
+  expect(abortRes.ok).toBe(true);
+  expect(git(repo, "status", "--porcelain")).toBe("");
 });
 
 // ---- the source scan: no writing subcommand is spawned except through gitWrite ----
