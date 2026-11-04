@@ -15,6 +15,12 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-11-04-remove-ended-consoles",
+    date: "2026-11-04",
+    title: "Remove ended consoles from the session list",
+    summary: "Use the **×** beside an ended session in a change's **Console** tab to remove its record and stored output directly from the list. Its worktree and branch are kept.",
+  },
+  {
     id: "2026-11-02-agent-interoperability",
     date: "2026-11-02",
     title: "Deterministic Ship, Merge, and zero-token cleanup",

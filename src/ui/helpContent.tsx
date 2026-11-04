@@ -215,6 +215,10 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             <AppLink path="/settings" query="?section=agents">Settings → Agent sessions</AppLink> brings it back.
           </li>
           <li>
+            In a change's <strong>Console</strong> tab, use the <strong>×</strong> beside an ended session in the session list
+            to remove its record and stored output. Its worktree and branch are kept. Running sessions have no removal control.
+          </li>
+          <li>
             <strong>Open work</strong> in the top bar lists running agents and worktrees that still hold something.{" "}
             <strong>End session</strong> stops an agent and, by default, pulls the repository and — when nothing would be
             lost — removes its worktree; clear either box before confirming to skip it. Confirmed worktree cleanup continues
