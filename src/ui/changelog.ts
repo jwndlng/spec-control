@@ -15,6 +15,12 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-11-04-reduce-ship-it-text",
+    date: "2026-11-04",
+    title: "Shorter Ship instructions",
+    summary: "The built-in Ship prompt text is shorter and easier to review. Your custom prompts and additional instructions are unchanged.",
+  },
+  {
     id: "2026-11-02-agent-interoperability",
     date: "2026-11-02",
     title: "Deterministic Ship, Merge, and zero-token cleanup",
