@@ -195,7 +195,7 @@ test("mutating requests must come from the dashboard itself", async () => {
   expect((await send("/api/scan", "POST")).status).toBe(200);
   expect((await fetch(`${base}/api/state`, { headers: { origin: "https://example.com" } })).status).toBe(200); // reads stay open
   await state.scanner.trigger().done;
-});
+}, 30_000); // Includes full fixture scans and subprocesses on slower runners.
 
 test("a request addressed to a non-loopback host name is refused (DNS rebinding)", () => {
   const req = (url: string, headers: Record<string, string>) => new Request(url, { method: "POST", headers: { "content-type": "application/json", ...headers } });

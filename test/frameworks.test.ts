@@ -211,7 +211,7 @@ test("scanning, listing artifacts and reading files through the modules leaves e
     }
   }
   expect(await Promise.all(fixtures.map(treeFingerprint))).toEqual(before);
-});
+}, 30_000); // Includes full fixture scans and subprocesses on slower runners.
 
 // ---- Schema names and tracked tasks stay inside (contain-repository-reads design D5) ----
 
