@@ -482,8 +482,10 @@ export interface AgentProfile {
   /** Argument list, never a shell string. `{prompt}` is replaced by the opening prompt as one argument; without it
    *  the prompt is typed into the terminal once the agent has started. */
   command: string[];
+  model?: string;
+  phaseModels?: Partial<Record<StarterPromptKey, string>>;
   /** Options of the user's own, put directly after the executable on every start of this agent — with or without a
-   *  prompt, and with the resume command. Never a placeholder: no prompt text reaches them. */
+   *  prompt, and with the resume command. Supports {model}; no prompt text reaches them. */
   launchArgs?: string[];
   /** Opening prompt per session starter; `{change}` is the only placeholder. A starter without a prompt is not offered. */
   prompts: Partial<Record<PromptKey, string>>;
@@ -510,6 +512,7 @@ export interface Shortcut {
 }
 
 export interface AgentSessionsConfig {
+  defaultModel?: string;
   enabled: boolean;
   agents: AgentProfile[];
   defaultAgent: string;

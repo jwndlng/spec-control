@@ -174,6 +174,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             instead of the starters, and the console offers the next step — sent into that session, as a prompt.
           </li>
           <li>
+            Choose a <strong>Default model</strong> in Settings → Agent sessions, a profile's <strong>Model</strong>, or its expandable{" "}
+            <strong>Phase models</strong>. A phase inherits the profile model, then the global default; leaving all three empty uses the CLI default. Models
+            apply on session start; running sessions keep theirs. Fast-forward uses the profile or global model throughout. Custom command arguments can contain{" "}
+            <code>{"{model}"}</code>; otherwise the dashboard adds <code>--model</code> followed by the model name.
+          </li>
+          <li>
             <strong>Open in editor</strong>, beside <strong>Copy cd</strong> in the Console tab and in Open work, opens the
             folder the change's agent works in — its worktree, or the project folder for a session without one — in your
             editor. It runs VS Code's <code>code</code> unless you set another <strong>Editor command</strong> under{" "}

@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-11-04-models-per-phase",
+    date: "2026-11-04",
+    title: "Choose models for each phase",
+    summary:
+      "Set a **Default model** in Settings → Agent sessions, override it per agent, or expand **Phase models** to choose models for drafting, implementation, validation and archiving. New sessions use your choices; running sessions keep their model.",
+  },
+  {
     id: "2026-11-02-agent-interoperability",
     date: "2026-11-02",
     title: "Deterministic Ship, Merge, and zero-token cleanup",
