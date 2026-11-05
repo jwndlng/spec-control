@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -419,14 +419,18 @@ test("an agent showing a menu gets the text but never an Enter, and keeps runnin
 
 test("an opening prompt typed after start-up is not sent into a dialog", async () => {
   const h = await harness({ agent: { command: [FAKE_AGENT, "--menu"] } });
-  const manager = h.newManager(FAST_SUBMIT);
+  // Use the production startup delay: the harness's 150 ms shortcut can type before the fake agent enters raw mode.
+  const manager = h.newManager({ ...FAST_SUBMIT, typePromptDelayMs: undefined });
   managers.push(manager);
+  const submit = spyOn(manager, "submit");
   const s = await manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
   const view = await watch(manager, s.id);
   await waitFor(() => view.text().includes("Enter to confirm"), "the menu");
-  await new Promise((r) => setTimeout(r, 150 + 600 + 300)); // start-up delay + echo timeout + margin
+  await waitFor(() => submit.mock.calls.length > 0, "the opening prompt is typed");
+  expect(await submit.mock.results[0]!.value).toEqual({ submitted: false });
   expect(view.text()).not.toContain("menu confirmed by Enter");
   expect(manager.get(s.id).state).toBe("running");
+  submit.mockRestore();
 });
 
 test("submissions to one session run one after another", async () => {

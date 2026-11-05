@@ -22,6 +22,19 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
       "Set a **Default model** in Settings → Agent sessions, override it per agent, or expand **Phase models** to choose models for drafting, implementation, validation and archiving. New sessions use your choices; running sessions keep their model.",
   },
   {
+    id: "2026-11-04-reduce-ship-it-text",
+    date: "2026-11-04",
+    title: "Shorter Ship instructions",
+    summary: "The built-in Ship prompt text is shorter and easier to review. Your custom prompts and additional instructions are unchanged.",
+  },
+  {
+    id: "2026-11-04-update-openspec-settings",
+    date: "2026-11-04",
+    title: "Revisit OpenSpec tool setup",
+    summary:
+      "Open **Update OpenSpec setup** in a project's settings to add tools such as Codex or refresh instructions through its project console. Review and copy the suggested request, then send it when you are ready.",
+  },
+  {
     id: "2026-11-02-agent-interoperability",
     date: "2026-11-02",
     title: "Deterministic Ship, Merge, and zero-token cleanup",
@@ -478,8 +491,7 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
     id: "2026-10-01-pull-request-on-cards",
     date: "2026-10-01",
     title: "Pull requests on cards",
-    summary:
-      "A card shows its change's pull request — `PR #<n>` with its state — and the detail header shows its title, review and checks, linking to GitHub.",
+    summary: "A card shows its change's pull request — `PR #<n>` with its state — and the detail header shows its title, review and checks, linking to GitHub.",
   },
   {
     id: "2026-09-30-pull-requests-view",
