@@ -658,3 +658,38 @@ test("a config's revision depends on its content only: equal configs share one, 
   expect(configRevision({ ...config, labelColors: { bug: 3 } })).not.toBe(configRevision(config));
   expect(configRevision(config)).toMatch(/^"[0-9a-f]{16}"$/);
 });
+test("model settings trim and round-trip; invalid models are rejected at every level", async () => {
+  const base = defaultConfig();
+  const configWith = (value: string) => ({
+    ...base,
+    agentSessions: {
+      ...base.agentSessions,
+      defaultModel: value,
+      agents: [{ ...base.agentSessions.agents[0], model: value, phaseModels: { draft: value, implement: value, validate: value, archive: value } }],
+    },
+  });
+  const config = validateConfig(configWith(" custom-v1 "));
+  expect(config.agentSessions.defaultModel).toBe("custom-v1");
+  expect(config.agentSessions.agents[0].phaseModels?.draft).toBe("custom-v1");
+  await saveConfig(config);
+  expect((await loadConfig()).config.agentSessions).toEqual(config.agentSessions);
+  for (const bad of ["", "  ", "a".repeat(129), "model\n", "model\t", "model\u0085", "--yolo", "bypassPermissions", "model --dangerously-skip-permissions"]) {
+    for (const settings of [
+      { ...base.agentSessions, defaultModel: bad },
+      { ...base.agentSessions, agents: [{ ...base.agentSessions.agents[0], model: bad }] },
+      { ...base.agentSessions, agents: [{ ...base.agentSessions.agents[0], phaseModels: { implement: bad } }] },
+    ])
+      expect(() => validateConfig({ ...base, agentSessions: settings })).toThrow();
+    await expect(saveConfig(configWith(bad))).rejects.toThrow();
+    expect((await loadConfig()).config.agentSessions).toEqual(config.agentSessions);
+  }
+  expect(
+    validateConfig({
+      ...base,
+      agentSessions: {
+        ...base.agentSessions,
+        agents: [{ ...base.agentSessions.agents[0], command: ["custom", "--select={model}", "{prompt}"], launchArgs: ["{model}"] }],
+      },
+    }).agentSessions.agents[0].launchArgs,
+  ).toEqual(["{model}"]);
+});

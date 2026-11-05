@@ -15,10 +15,36 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
-    id: "2026-11-04-show-end-session-overview",
-    date: "2026-11-04",
+    id: "2026-11-05-show-end-session-overview",
+    date: "2026-11-05",
     title: "End archived sessions from the board",
     summary: "Archived changes whose pull request or session worktree is merged now offer **End session** beside the running session badge on their card. It opens the usual confirmation so you can review cleanup before ending the agent.",
+  },
+  {
+    id: "2026-11-04-models-per-phase",
+    date: "2026-11-04",
+    title: "Choose models for each phase",
+    summary:
+      "Set a **Default model** in Settings → Agent sessions, override it per agent, or expand **Phase models** to choose models for drafting, implementation, validation and archiving. New sessions use your choices; running sessions keep their model.",
+  },
+  {
+    id: "2026-11-04-reduce-ship-it-text",
+    date: "2026-11-04",
+    title: "Shorter Ship instructions",
+    summary: "The built-in Ship prompt text is shorter and easier to review. Your custom prompts and additional instructions are unchanged.",
+  },
+  {
+    id: "2026-11-04-update-openspec-settings",
+    date: "2026-11-04",
+    title: "Revisit OpenSpec tool setup",
+    summary:
+      "Open **Update OpenSpec setup** in a project's settings to add tools such as Codex or refresh instructions through its project console. Review and copy the suggested request, then send it when you are ready.",
+  },
+  {
+    id: "2026-11-04-remove-ended-consoles",
+    date: "2026-11-04",
+    title: "Remove ended consoles from the session list",
+    summary: "Use the **×** beside an ended session in a change's **Console** tab to remove its record and stored output directly from the list. Its worktree and branch are kept.",
   },
   {
     id: "2026-11-02-agent-interoperability",
@@ -477,8 +503,7 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
     id: "2026-10-01-pull-request-on-cards",
     date: "2026-10-01",
     title: "Pull requests on cards",
-    summary:
-      "A card shows its change's pull request — `PR #<n>` with its state — and the detail header shows its title, review and checks, linking to GitHub.",
+    summary: "A card shows its change's pull request — `PR #<n>` with its state — and the detail header shows its title, review and checks, linking to GitHub.",
   },
   {
     id: "2026-09-30-pull-requests-view",

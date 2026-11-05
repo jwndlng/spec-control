@@ -12,5 +12,5 @@
 
 ## 3. Verification and changelog
 
-- [ ] 3.1 Run `bun run check` and `bun run test` to verify all lint checks, type checks, and tests pass — Rechecked 2026-11-05: the opening-prompt/dialog assertion in `test/terminalSessions.test.ts:428` still fails in isolation under pinned Bun 1.4.2 (and previously on untouched HEAD). Latest fetched `origin/main` contains no blocker code fixes beyond this branch’s base; the fixes must be located/incorporated before completing verification. Stopped the broader rerun once the blocker reproduced. All 31 focused session/card/What’s new tests pass. Prior lint, typecheck, build, and compiled `--version` pass; prior full check had 2,231 passing and 11 failing tests. No user-only runtime action is required.
+- [x] 3.1 Run `bun run check` and `bun run test` to verify all lint checks, type checks, and tests pass — Verified 2026-11-05 with pinned Bun 1.4.2 after incorporating main’s blocker fixes: full `bun run check` passed (2,256 tests); focused `bun run test` passed (31 tests); binary and demo builds passed.
 - [x] 3.2 Add a What's new entry at the top of `src/ui/changelog.ts` (see "What's new" in CONTRIBUTING.md) describing that archived changes whose pull request merged offer **End session** directly on the card; verify it appears in the What's new list
