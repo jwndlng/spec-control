@@ -8,9 +8,11 @@ import { DEMO_MARKER } from "../src/ui/demo/sampleData.ts";
 import { FORMER_STORAGE_PREFIX, STORAGE_MIGRATED_KEY } from "../src/ui/storage.ts";
 import { THEME_STORAGE_KEY } from "../src/ui/theme.ts";
 import { faviconSvg } from "../src/ui/logoMark.ts";
+import { loadChangelog } from "./changelog.ts";
 
 const root = join(import.meta.dir, "..");
 const ui = join(root, "src", "ui");
+const changelog = await loadChangelog(join(ui, "changelog", "entries"));
 
 interface Target {
   entry: string;
@@ -61,7 +63,7 @@ const build = await Bun.build({
   target: "browser",
   minify: true,
   sourcemap: "none",
-  define: { "process.env.NODE_ENV": '"production"' },
+  define: { "process.env.NODE_ENV": '"production"', __CHANGELOG_ENTRIES__: JSON.stringify(changelog) },
 });
 if (!build.success) {
   for (const log of build.logs) console.error(log);

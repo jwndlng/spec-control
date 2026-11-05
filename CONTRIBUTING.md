@@ -120,13 +120,15 @@ Releases are drafted from pull request titles; publishing the draft is the only 
 - A local `bun run build` reports `dev`; set `SPEC_CONTROL_VERSION=v1.2.3` to build as a given version.
 
 **What's new.** The dashboard carries its own, shorter changelog for the people running it: the **What's new** dialog,
-read from `src/ui/changelog.ts` and compiled into the UI, so it needs no network. Every `feat` pull request whose change
-users can see adds one entry at the top of that list, in the same pull request; internal `feat`s, fixes and chores do
-not. An entry has an `id` of `<YYYY-MM-DD>-<kebab-case-slug>` (the merge date, never changed once released — browsers
-remember which ids they have seen), that `date`, a short `title` and a one- or two-sentence Markdown `summary` that
-says what users can now do and where to find it, in their words, not the pull request's. `test/whatsNew.test.ts` checks
-the list's shape and order. This is not the release notes: those stay generated from pull request titles and list
-every change for maintainers; the dialog links to them.
+compiled into the UI, so it needs no network. Every `feat` pull request whose change users can see adds one JSON entry
+file under `src/ui/changelog/entries/`, named `<YYYY-MM-DD>-<kebab-case-slug>.json`; internal `feat`s, fixes and chores
+do not. Keep the id and merge date immutable after release (browsers remember seen ids), and include a short `title`
+and a one- or two-sentence Markdown `summary` that says what users can now do and where to find it, in their words,
+not the pull request's. Do not edit a shared list: the build discovers and validates entry files, then orders them by
+date descending, preserving the existing same-day order and using id ascending for new entries on the same date.
+`test/whatsNew.test.ts` uses that same loader. This is
+not the release notes: those stay generated from pull request titles and list every change for maintainers; the dialog
+links to them.
 
 ## Toolchain
 

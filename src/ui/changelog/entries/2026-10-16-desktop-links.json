@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-16-desktop-links",
+  "date": "2026-10-16",
+  "title": "Links open in your browser from the macOS app",
+  "summary": "In the macOS app, links to pull requests, issues, release notes and other sites open in your default browser again, while the app window keeps showing the dashboard.",
+  "order": 28
+}

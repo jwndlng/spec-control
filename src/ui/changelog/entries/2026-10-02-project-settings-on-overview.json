@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-02-project-settings-on-overview",
+  "date": "2026-10-02",
+  "title": "Project settings on the overview",
+  "summary": "Each project on the **Projects** overview carries its own settings, saved at once: switch agent sessions on or off, pick its agent, rename it in place and edit its labels. Unmanaged projects offer **Forget**.",
+  "order": 61
+}

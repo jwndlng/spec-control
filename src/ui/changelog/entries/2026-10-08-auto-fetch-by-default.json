@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-08-auto-fetch-by-default",
+  "date": "2026-10-08",
+  "title": "Auto fetch is on, every minute",
+  "summary": "Every project now fetches its remote **every minute** unless you change it, so merged pull requests and conflicts show up quickly. A project's **Auto fetch** setting now also offers every 15 or 30 seconds and every 10 minutes, and **Off** for a project you do not want fetched. An interval you picked before is kept.",
+  "order": 38
+}

@@ -1,0 +1,7 @@
+{
+  "id": "2026-11-04-update-openspec-settings",
+  "date": "2026-11-04",
+  "title": "Revisit OpenSpec tool setup",
+  "summary": "Open **Update OpenSpec setup** in a project's settings to add tools such as Codex or refresh instructions through its project console. Review and copy the suggested request, then send it when you are ready.",
+  "order": 2
+}

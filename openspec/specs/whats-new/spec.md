@@ -8,9 +8,23 @@ new: a curated changelog compiled into the UI, a What's new dialog, and a per-br
 
 ### Requirement: The changelog is embedded in the UI
 The dashboard SHALL carry a curated list of user-visible features as part of its UI build, each entry with a unique id,
-a calendar date, a short title and a summary that MAY use Markdown. The list SHALL be available identically under
-`bun run dev`, in the compiled binary and on the demo site. Reading it MUST NOT make any request, neither to the
-dashboard's own server nor to any other host, and MUST NOT read or write any tracked repository.
+a calendar date, a short title and a summary that MAY use Markdown. Each entry SHALL be authored in an independent JSON
+file named by its id under `src/ui/changelog/entries/`; the build SHALL discover, validate and order these files into the
+stable `CHANGELOG` interface consumed by the UI. The list SHALL be identical under `bun run dev`, in the compiled binary
+and on the demo site. Reading it MUST NOT make any request, neither to the dashboard's own server nor to any other host,
+and MUST NOT read or write any tracked repository.
+
+#### Scenario: Independent entry additions
+- **WHEN** two feature branches add entries with different ids
+- **THEN** each branch adds only its own entry file and the merged build includes both
+
+#### Scenario: Deterministic same-day order
+- **WHEN** multiple entry files have the same date
+- **THEN** the assembled list preserves established same-day positions and orders new entries by id ascending, regardless of filesystem enumeration order
+
+#### Scenario: Invalid entry file
+- **WHEN** a file name disagrees with its entry id, ids are duplicated, or an entry has an invalid date or empty text
+- **THEN** the loader fails and identifies the offending entry
 
 #### Scenario: Offline binary
 - **WHEN** the compiled binary runs on a machine without network access and the user opens What's new
@@ -60,19 +74,20 @@ still show the control and the dialog, with no count.
 - **THEN** the control and the dialog work and no count is shown
 
 ### Requirement: The changelog stays well-formed and current
-The test suite SHALL fail when two entries share an id, an id is not of the form `<YYYY-MM-DD>-<kebab-case-slug>` with
-the entry's own date, a date is not a valid calendar date, the list is not ordered newest first, or a title or summary
-is empty. `CONTRIBUTING.md` SHALL tell contributors to add an entry with every `feat` pull request whose change users can
-see, and this repository's OpenSpec configuration SHALL tell agents planning such a change to include that task.
+The build and test suite SHALL use the same validation logic and fail when two entries share an id, an id is not of the
+form `<YYYY-MM-DD>-<kebab-case-slug>` with the entry's own date, a date is not a valid calendar date, or a title or
+summary is empty. `CONTRIBUTING.md` SHALL tell contributors to add an independent entry file for every `feat` pull
+request whose change users can see, and this repository's OpenSpec configuration SHALL tell agents planning such a
+change to include a task to add that file.
 
 #### Scenario: Duplicate id
 - **WHEN** a contributor adds an entry whose id is already in the list
 - **THEN** `bun run check` fails naming that id
 
-#### Scenario: Out of order
-- **WHEN** an entry dated 2026-09-01 is placed above one dated 2026-10-01
-- **THEN** `bun run check` fails
+#### Scenario: Same-day order is stable
+- **WHEN** filesystem enumeration returns same-day entries in a different order
+- **THEN** the loader still returns existing entries in their established order and new entries in id ascending order
 
 #### Scenario: Planning a feature
 - **WHEN** an agent creates `tasks.md` for a change in this repository that adds a user-visible feature
-- **THEN** the OpenSpec instructions it receives ask for a task to add a What's new entry
+- **THEN** the OpenSpec instructions it receives ask for a task to add an independent What's new entry file

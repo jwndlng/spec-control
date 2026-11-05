@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-01-activity-keeps-seven-days",
+  "date": "2026-10-01",
+  "title": "Activity keeps the last 7 days",
+  "summary": "The **Activity** feed keeps a week of history and says so at its end; older events are dropped from the log.",
+  "order": 67
+}
