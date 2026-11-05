@@ -83,3 +83,9 @@ test("cards show the overriding profile's name with its tooltip and cards withou
 });
 
 
+
+test("Custom session has a label and no-prompt tooltip and uses the shared starter rendering", () => {
+  expect(sessionsSource).toContain('custom: "Custom session"');
+  expect(sessionsSource).toContain("without an opening prompt");
+  expect(panel).toContain('custom: "Custom session"');
+});

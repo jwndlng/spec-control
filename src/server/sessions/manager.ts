@@ -339,8 +339,10 @@ export class SessionManager {
     // returns the one the user started last. In-place sessions need this as much as worktrees do: their working
     // directory is the repository folder itself, which no per-worktree rule would have kept a second agent out of.
     // A session drafting the proposal on its own branch takes only Draft: every other action is refused while it runs,
-    // unless the request asks to end it first (one-console-per-change D1, D2).
-    const existing = receivingSession(changeSessions(this.list()), repo.id, change, action);
+    // unless the request asks to end it first (one-console-per-change D1, D2). Custom simply opens the existing console.
+    const existing = action === "custom"
+      ? changeSessions(this.list()).find((s) => s.repoId === repo.id && s.change === change && s.state === "running")
+      : receivingSession(changeSessions(this.list()), repo.id, change, action);
     // Removing a duplicate starts fresh from the default branch: any open session for the change is refused instead.
     if (duplicate && this.list().some((s) => s.repoId === repo.id && s.change === change && OPEN_SESSION_STATES.includes(s.state))) {
       throw new SessionError(409, "a session for this change is running; end it first");
@@ -390,7 +392,7 @@ export class SessionManager {
 
     const requireAgent = () => {
       if (!agent) throw new SessionError(503, "no agent is configured");
-      if (!prompt) throw new SessionError(400, `${agent.name} has no "${action}" prompt configured`);
+      if (action !== "custom" && !prompt) throw new SessionError(400, `${agent.name} has no "${action}" prompt configured`);
       if (!Bun.which(agent.command[0])) throw new SessionError(503, `${agent.name} was not found (${agent.command[0]}); install it or change its command in Settings`);
     };
 
@@ -537,7 +539,7 @@ export class SessionManager {
       session.autoMergeAskedAt = new Date().toISOString();
     }
     // Final only now: refused before the session is registered; a worktree just made stays, as any without a record.
-    const launch = checkedLaunch(agent!, prompt!);
+    const launch: Launch = action === "custom" ? { argv: launchWithoutPrompt(agent!) } : checkedLaunch(agent!, prompt!);
     this.sessions.set(session.id, session);
     await this.store.saveMeta(session);
     this.start(session, launch.argv, agentEnv(agent!, process.env), launch.typed);

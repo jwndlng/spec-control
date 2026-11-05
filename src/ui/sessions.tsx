@@ -457,8 +457,9 @@ export function OpenWork() {
   );
 }
 
-const STARTER_LABEL: Record<SessionAction, string> = { draft: "Draft artifacts", fastForward: "Fast-forward", implement: "Implement", validate: "Validate", archive: "Archive" };
+const STARTER_LABEL: Record<SessionAction, string> = { draft: "Draft artifacts", fastForward: "Fast-forward", implement: "Implement", validate: "Validate", archive: "Archive", custom: "Custom session" };
 const STARTER_HINT: Record<SessionAction, string> = {
+  custom: "Start an agent in this change’s worktree without an opening prompt; write the first instruction yourself",
   draft: "Start an agent in a terminal to write this change's missing artifacts",
   fastForward: "Fast-forward: write the artifacts, implement and open a pull request, without stopping for review",
   implement: "Start an agent in a terminal to implement this change's tasks",

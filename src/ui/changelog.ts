@@ -15,6 +15,12 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-11-04-custom-session-per-change",
+    date: "2026-11-04",
+    title: "Start a custom session for any change",
+    summary: "Choose **Custom session** from a change’s action menu to talk to its agent in its worktree without an opening prompt. It is available at every active stage, including changes waiting on dependencies.",
+  },
+  {
     id: "2026-11-02-agent-interoperability",
     date: "2026-11-02",
     title: "Deterministic Ship, Merge, and zero-token cleanup",

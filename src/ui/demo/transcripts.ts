@@ -15,7 +15,7 @@ export type Step =
   /** The agent's process ends. */
   | { exit: number; after?: number };
 
-export type TranscriptName = "draft" | "implement" | "implementAsking" | "validate" | "archive" | "resume" | "ship" | "resolveConflicts" | "console" | "integrate";
+export type TranscriptName = "custom" | "draft" | "implement" | "implementAsking" | "validate" | "archive" | "resume" | "ship" | "resolveConflicts" | "console" | "integrate";
 
 const DIM = "\x1b[2m";
 const BOLD = "\x1b[1m";
@@ -153,6 +153,13 @@ export const TRANSCRIPTS: Record<TranscriptName, Step[]> = {
     { exit: 0, after: 1500 },
   ],
   // The main console: no change, no branch, no prompt — the agent waits for the visitor to say something.
+  custom: [
+    { out: line(`${BOLD}demo-agent${OFF} ${DIM}· {path}${OFF}`) },
+    { ask: `${GREEN}>${OFF} ` },
+    { out: say("Your agent can discuss this change with you here.") },
+    { ask: `${GREEN}>${OFF} ` },
+    { exit: 0 },
+  ],
   console: [
     { out: line(`${BOLD}demo-agent${OFF} ${DIM}· {path}${OFF}`) },
     { out: line(), after: 300 },

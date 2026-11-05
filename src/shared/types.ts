@@ -612,10 +612,10 @@ export interface UpdateStatus {
  * The session starters. `fastForward` drafts, implements and ships in one session; it has no prompt of its own — it is
  * composed from the Draft, Implement and Ship prompts (`fastForwardPrompt` in `src/server/sessions/agents.ts`).
  */
-export type SessionAction = "draft" | "fastForward" | "implement" | "validate" | "archive";
-export const SESSION_ACTIONS: readonly SessionAction[] = ["draft", "fastForward", "implement", "validate", "archive"];
-/** The starters a profile carries a prompt for: every one but Fast-forward. */
-export type StarterPromptKey = Exclude<SessionAction, "fastForward">;
+export type SessionAction = "draft" | "fastForward" | "implement" | "validate" | "archive" | "custom";
+export const SESSION_ACTIONS: readonly SessionAction[] = ["draft", "fastForward", "implement", "validate", "archive", "custom"];
+/** The starters a profile carries a prompt for: Fast-forward is composite and Custom session has none. */
+export type StarterPromptKey = Exclude<SessionAction, "fastForward" | "custom">;
 export const STARTER_PROMPT_KEYS: readonly StarterPromptKey[] = ["draft", "implement", "validate", "archive"];
 /**
  * `ship` is a prompt, not a starter: it asks the agent of an existing session to commit, push and open a pull request.
@@ -1112,6 +1112,7 @@ export function availableActions(change: Pick<ChangeSnapshot, "archived" | "arti
   // In `Done` there is nothing left to implement; offering it is what sends an agent back into finished code.
   if (change.stage === "done" && change.subState === "validate") actions.push("validate");
   if (change.stage === "done") actions.push("archive"); // every task settled, not archived yet
+  actions.push("custom");
   return actions;
 }
 

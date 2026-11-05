@@ -126,7 +126,7 @@ test("additional instructions for an action with no prompt leave it unavailable,
   // Implement is available for the fixture's change, but the agent has no Implement prompt: the suffix does not stand in for one.
   expect(h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" })).rejects.toThrow(/no "implement" prompt configured/);
   expect(h.manager.list()).toHaveLength(0);
-  expect(startersFor(h.config, changeOf(h, "upgrade-runtime"))).toEqual([]);
+  expect(startersFor(h.config, changeOf(h, "upgrade-runtime"))).toEqual(["custom"]);
 });
 
 test("a draft session takes the implement prompt once the change is ready, and records it", async () => {
@@ -220,10 +220,10 @@ test("Validate is the next step of a validating change: typed into its running s
   expect([card.column, card.subState]).toEqual(["Done", "validate"]);
 
   const cfg = { ...h.config, agentSessions: { ...h.config.agentSessions, agents: [fakeProfile({ prompts: { implement: "i {change}", validate: "v {change}", archive: "a {change}" } })] } };
-  expect(startersFor(cfg, card)).toEqual(["validate", "archive"]);
+  expect(startersFor(cfg, card)).toEqual(["validate", "archive", "custom"]);
   // Without a Validate prompt the card is left with Archive alone.
   const noValidate = { ...cfg, agentSessions: { ...cfg.agentSessions, agents: [fakeProfile({ prompts: { implement: "i {change}", archive: "a {change}" } })] } };
-  expect(startersFor(noValidate, card)).toEqual(["archive"]);
+  expect(startersFor(noValidate, card)).toEqual(["archive", "custom"]);
 
   // Whatever the starter, it goes into the change's running session.
   const s = await h.manager.open({ repoId: h.repoId, change: "confirm-retention", action: "validate" });
