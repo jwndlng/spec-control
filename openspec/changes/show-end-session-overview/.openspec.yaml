@@ -1,2 +1,4 @@
 schema: spec-driven
 created: 2026-10-30
+spec-control:
+  branch: feat/show-end-session-overview

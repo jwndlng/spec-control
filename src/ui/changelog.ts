@@ -15,6 +15,12 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-11-04-show-end-session-overview",
+    date: "2026-11-04",
+    title: "End archived sessions from the board",
+    summary: "Archived changes whose pull request or session worktree is merged now offer **End session** beside the running session badge on their card. It opens the usual confirmation so you can review cleanup before ending the agent.",
+  },
+  {
     id: "2026-11-02-agent-interoperability",
     date: "2026-11-02",
     title: "Deterministic Ship, Merge, and zero-token cleanup",

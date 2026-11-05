@@ -216,7 +216,8 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           </li>
           <li>
             <strong>Open work</strong> in the top bar lists running agents and worktrees that still hold something.{" "}
-            <strong>End session</strong> stops an agent and, by default, pulls the repository and — when nothing would be
+            Archived changes whose pull request or session worktree is merged offer <strong>End session</strong> beside
+            their running session badge on the board; it opens the same confirmation as the Console tab. <strong>End session</strong> stops an agent and, by default, pulls the repository and — when nothing would be
             lost — removes its worktree; clear either box before confirming to skip it. Confirmed worktree cleanup continues
             in the background so you can keep working immediately; while running, the session shows <em>cleaning up…</em>,
             and its completion, kept worktree, or failure is reported on the card and console. Once the change is archived and
