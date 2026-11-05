@@ -15,6 +15,12 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-11-05-complete-tasks-before-shipping",
+    date: "2026-11-05",
+    title: "Review unfinished tasks before shipping",
+    summary: "Ship now shows unfinished checks and lets you ask the agent to finish them or explicitly ship anyway. After an implementation PR merges, use **Finish checks** on its card or Console tab to verify remaining work and prepare a follow-up.",
+  },
+  {
     id: "2026-10-28-link-only-own-branch",
     date: "2026-10-28",
     title: "Cards no longer show another change's pull request",

@@ -1,4 +1,4 @@
-import type { TaskProgress } from "../shared/types.ts";
+import type { ShipTaskSummary, TaskProgress } from "../shared/types.ts";
 
 // A task line is exactly what the `openspec` CLI counts (`TASK_LINE_PATTERN`, `dist/utils/task-progress.js`): a list
 // item (`-`, `*`, `+`, or one to nine digits and `.` or `)`), no whitespace required before the bracket, then a box
@@ -39,4 +39,27 @@ export function parseTaskProgress(markdown: string): TaskProgress {
     }
   }
   return awaitingTasks.length > 0 ? { done, awaiting, awaitingTasks, total } : { done, awaiting, total };
+}
+
+/** Bounded task explanations for Ship; an empty or malformed task document never proves completion. */
+export function parseShipTaskSummary(markdown: string): ShipTaskSummary {
+  const progress = parseTaskProgress(markdown);
+  const open: string[] = [];
+  const awaiting: string[] = [];
+  let truncated = false;
+  let malformed = false;
+  for (const line of markdown.split(/\r?\n/)) {
+    const match = TASK_LINE.exec(line);
+    if (!match) {
+      if (/^\s*(?:[-*+]|\d{1,9}[.)])\s*\[/.test(line) && !/\]\(/.test(line)) malformed = true;
+      continue;
+    }
+    if (/^[xX]$/.test(match[1] ?? "")) continue;
+    const list = match[1] === "~" ? awaiting : open;
+    const text = line.slice(match[0].length).trim();
+    if (list.length >= AWAITING_TASKS_LIMIT) { truncated = true; continue; }
+    if (Array.from(text).length > AWAITING_TASK_LENGTH) truncated = true;
+    list.push(awaitingText(text) || "Task without a description");
+  }
+  return { verified: progress.total > 0 && !malformed, ...(malformed ? { reason: "The tasks file contains malformed checkboxes." } : progress.total === 0 ? { reason: "The tasks file has no recognizable task checkboxes." } : {}), total: progress.total, done: progress.done, open, awaiting, truncated };
 }

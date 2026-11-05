@@ -184,6 +184,11 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             PATH</strong> from VS Code's command palette. The editor is yours: the dashboard only starts it.
           </li>
           <li>
+            Ship first reads tasks from the session checkout. Unfinished or unreadable tasks offer <strong>Finish tasks</strong>, <strong>Ship anyway</strong> and Cancel.
+            Finish tasks does not ship. Ship anyway keeps unresolved markers for PR-dependent checks and withholds docs auto-merge. Automatic merging of implementation and archive PRs waits until every task is marked complete; proposal PRs can still merge before implementation.
+            After a linked implementation PR merges, <strong>Finish checks</strong> on the card and Console tab asks the agent to verify actual evidence and prepare a follow-up PR; cached merge status never completes a task.
+            Fast-forward includes the same completion instructions, but its combined prompt cannot enforce this interactive Ship gate.
+            The fixed Ship completion instruction follows your custom Ship text, before title, branch-recording and additional instructions; docs auto-merge instructions remain last.
             <strong>Ship</strong> asks the agent to commit, push and open a pull request, and to record the branch it pushes
             in the change's <code>.openspec.yaml</code>, under <code>spec-control:</code>, in the same commit;{" "}
             <strong>Resolve conflicts</strong> asks it to bring a branch that no longer merges up to date. The dashboard

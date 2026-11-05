@@ -58,7 +58,7 @@ test("the panel's header actions go through the guard and are disabled while one
   // The same steps offered through the split button in the console.
   expect(header).toContain("disabled: !merge.enabled || acting,");
   expect(header).toContain("disabled: acting,");
-  for (const call of ["api.shipSession(session.id)", "api.resolveConflicts(session.id)", "api.mergeSession(session.id)", "api.resumeSession(session.id)", "api.deleteSession(session.id)"]) {
+  for (const call of ["ui.ship(session.id)", "api.resolveConflicts(session.id)", "api.mergeSession(session.id)", "api.resumeSession(session.id)", "api.deleteSession(session.id)"]) {
     const at = header.indexOf(call);
     expect(at).toBeGreaterThan(0);
     expect(header.slice(Math.max(0, at - 120), at)).toContain("act(");

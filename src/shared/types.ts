@@ -633,7 +633,26 @@ export type PromptResult = Session & { submitted: boolean };
  *  auto-merge instruction — `AUTO_MERGE_DOCS_INSTRUCTION` for Ship, `AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION` for Archive,
  *  `AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION` for Draft. */
 export type AutoMergePromptResult = PromptResult & { autoMerge: boolean };
-export type ShipResult = AutoMergePromptResult;
+export interface ShipPreflight {
+  token: string;
+  summary: ShipTaskSummary;
+}
+export interface ShipTaskSummary {
+  verified: boolean;
+  reason?: string;
+  total: number;
+  done: number;
+  open: string[];
+  awaiting: string[];
+  truncated: boolean;
+}
+export interface ShipRequest { confirmation?: string; finishTasks?: boolean }
+export type ShipResult = AutoMergePromptResult & { preflight?: ShipPreflight };
+
+export const TASK_COMPLETION_INSTRUCTION = "Complete and verify every task you can, including automated checks, before shipping. Tick only tasks supported by evidence; report the precise blocker for anything unresolved. Reserve - [~] for work that truly requires the user, complete all automatable parts first, and state exactly what the user must check or do on that task's line.";
+export const SHIP_COMPLETION_INSTRUCTION = `${TASK_COMPLETION_INSTRUCTION} Identify checks that require a PR or its CI, preserve their unresolved markers, and revisit them when evidence is available.`;
+export const FINISH_TASKS_PROMPT = `${TASK_COMPLETION_INSTRUCTION} Finish the remaining tasks in this checkout and report blockers. Do not ship as part of this request.`;
+export const FINISH_CHECKS_PROMPT = `${TASK_COMPLETION_INSTRUCTION} Verify the remaining checks against actual command results and PR check evidence; a merged PR alone proves no task complete. Prepare the verified task update for review in a follow-up PR when needed. Before committing or pushing, create a fresh follow-up branch in this worktree; never push to the merged branch or alter the main checkout. Leave tasks unresolved when evidence is missing.`;
 /** What starting a session answers: the session, and whether its opening prompt carried
  *  `AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION` or `AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION`. Always `false` for a session that
  *  was already open and was returned. */

@@ -3,7 +3,9 @@ import { defaultAgentSessions, defaultConfig, newRepoConfig, validateConfig } fr
 import { agentEnv, agentFor, carryOverPrompt, fastForwardPrompt, integratePrompt, proposalInstruction, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, resumeLaunch, shipPrompt, typedForm } from "../src/server/sessions/agents.ts";
 import { Scrollback, sessionBranch, worktreeName } from "../src/server/sessions/manager.ts";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE, CODEX_PROFILE, DEFAULT_SHORTCUTS, FORMER_PROMPTS } from "../src/shared/agentDefaults.ts";
-import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, availableActions, pastDraftingReason, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, mergeTargetSentence, proposalHandoverSentence, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
+import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, availableActions, pastDraftingReason, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT as BASE_SHIP_PROMPT, SHIP_COMPLETION_INSTRUCTION, TASK_COMPLETION_INSTRUCTION, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, mergeTargetSentence, proposalHandoverSentence, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
+
+const DEFAULT_SHIP_PROMPT = `${BASE_SHIP_PROMPT} ${SHIP_COMPLETION_INSTRUCTION}`;
 import { agentForRepo, cardIsLive, cardSessionControls, NEEDS_YOU_AFTER_MS, parseArgLines, sessionBadge, sessionForChange, sessionsEnabledFor, silenceDuration, slugId, startersFor } from "../src/ui/sessionState.ts";
 import { openSpec } from "../src/server/frameworks/openspec/index.ts";
 import { fakeProfile } from "./sessionHelpers.ts";
@@ -207,7 +209,7 @@ test("Ship: additional instructions extend the profile's prompt, or the agent-ne
   expect(shipPrompt(fakeProfile({ promptSuffixes: { ship: extra } }), "cache-api-calls")).toBe(`${DEFAULT_SHIP_PROMPT} ${extra}`);
   // On top of the profile's own Ship prompt it behaves the same, `{change}` included.
   const own = fakeProfile({ prompts: { ...fakeProfile().prompts, ship: "Ship {change}." }, promptSuffixes: { ship: "Title the PR after {change}." } });
-  expect(shipPrompt(own, "cache-api-calls")).toBe("Ship cache-api-calls. Title the PR after cache-api-calls.");
+  expect(shipPrompt(own, "cache-api-calls")).toBe(`Ship cache-api-calls. ${SHIP_COMPLETION_INSTRUCTION} Title the PR after cache-api-calls.`);
 });
 
 test("Ship for a project with Conventional Commits titles: the sentence goes between the prompt and the additional instructions", () => {
@@ -219,7 +221,7 @@ test("Ship for a project with Conventional Commits titles: the sentence goes bet
   const extra = "Add the checklist from CONTRIBUTING.md.";
   const own = fakeProfile({ prompts: { ...fakeProfile().prompts, ship: "Ship {change}." }, promptSuffixes: { ship: extra } });
   const prompt = shipPrompt(own, "cache-api-calls", { convention: "conventional-commits" });
-  expect(prompt).toBe(`Ship cache-api-calls. ${CONVENTIONAL_COMMITS_SHIP_SENTENCE} ${extra}`);
+  expect(prompt).toBe(`Ship cache-api-calls. ${SHIP_COMPLETION_INSTRUCTION} ${CONVENTIONAL_COMMITS_SHIP_SENTENCE} ${extra}`);
   expect(prompt).not.toMatch(/[\r\n]/);
   // It passes through placeholder substitution, so it carries none of its own.
   expect(CONVENTIONAL_COMMITS_SHIP_SENTENCE).not.toMatch(/\{[a-z]+\}/);
@@ -713,7 +715,7 @@ test("Fast-forward: offered only while a change is unplanned and not blocked, an
 test("Fast-forward: Draft, then Implement, then Ship, each with its additional instructions, and never an auto-merge instruction", () => {
   const profile = fakeProfile({ promptSuffixes: { draft: "Keep it short.", implement: "Run the tests.", ship: "Mention the ticket." } });
   const ship = shipPrompt(profile, "cache-api-calls");
-  const expected = `draft cache-api-calls Keep it short. ${FAST_FORWARD_CONTINUE_SENTENCE} implement cache-api-calls Run the tests. ${FAST_FORWARD_SHIP_SENTENCE} ${ship}`;
+  const expected = `draft cache-api-calls Keep it short. ${FAST_FORWARD_CONTINUE_SENTENCE} implement cache-api-calls Run the tests. ${TASK_COMPLETION_INSTRUCTION} ${FAST_FORWARD_SHIP_SENTENCE} ${ship}`;
   expect(fastForwardPrompt(profile, "cache-api-calls")).toBe(expected);
   expect(openingPrompt(profile, "fastForward", "cache-api-calls")).toBe(expected);
   // Asked for an auto-merge instruction, a starter other than Archive ignores it — Fast-forward included.
@@ -791,7 +793,7 @@ test("Ship carries the record instruction right after the prompt, and is unchang
   expect(shipPrompt(fakeProfile(), "rotate-keys", { record: ARCHIVE_RECORD })).toContain("archive-branch:");
   // A profile with its own Ship prompt gets it all the same.
   const own = fakeProfile({ prompts: { ...fakeProfile().prompts, ship: "Ship {change}." } });
-  expect(shipPrompt(own, "rotate-keys", { record: RECORD })).toBe(`Ship rotate-keys. ${RECORD}`);
+  expect(shipPrompt(own, "rotate-keys", { record: RECORD })).toBe(`Ship rotate-keys. ${SHIP_COMPLETION_INSTRUCTION} ${RECORD}`);
 });
 
 test("Ship with every addition: prompt, Conventional Commits, record, additional instructions, auto-merge", () => {

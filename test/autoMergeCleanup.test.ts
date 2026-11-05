@@ -215,10 +215,11 @@ test("Archive, then a ready docs-only #88 is handed to the agent, then #88 merge
   // The agent archives and commits under openspec/, then pushes and opens #88 (all of which is the agent's doing).
   await mkdir(join(s.worktreePath, "openspec", "changes", CHANGE), { recursive: true });
   await writeFile(join(s.worktreePath, "openspec", "changes", CHANGE, "notes.md"), "archived\n");
+  await writeFile(join(s.worktreePath, "openspec", "changes", CHANGE, "tasks.md"), "- [x] Checks verified before archive\n");
   git(s.worktreePath, "add", "-A");
   git(s.worktreePath, "commit", "-q", "-m", "archive");
   const head = git(s.worktreePath, "rev-parse", "HEAD");
-  const files = { files: [{ path: `openspec/changes/${CHANGE}/notes.md` }], changedFiles: 1 };
+  const files = { files: [{ path: `openspec/changes/${CHANGE}/notes.md` }, { path: `openspec/changes/${CHANGE}/tasks.md` }], changedFiles: 2 };
   const open88 = ghPr({ number: 88, headRefName: BRANCH, isCrossRepository: false, headRefOid: head, statusCheckRollup: [{ __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }], ...files });
   const gh = await installFakeGh({ login: "demo-user", repos: { "acme/demo-ops": { open: [open88], closed: [] } } });
   const state: AppState = { config: h.config, scanner: undefined as unknown as Scanner, sessions: manager };

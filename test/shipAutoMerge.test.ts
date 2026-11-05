@@ -129,6 +129,7 @@ async function shipping(autoMergeDocs: boolean | undefined, files: string[], opt
   const seen = await watch(h.manager, s.id);
   await waitFor(() => seen.text().includes("fake-agent ready"), "the agent");
   for (const file of files) await put(s.worktreePath, file);
+  await put(s.worktreePath, "openspec/changes/upgrade-runtime/tasks.md", "- [x] Verified check\n");
   if (opts.resume) {
     h.manager.write(s.id, "exit\r");
     await waitFor(() => h.manager.get(s.id).state === "exited", "exit");

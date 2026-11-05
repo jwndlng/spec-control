@@ -1,7 +1,7 @@
 import type { ActivityQuery } from "../shared/activity.ts";
 import type { RepoAgentPatch } from "../shared/repoSettings.ts";
 import type { EditorAvailability, EditorStarted, GithubClone, GithubClonesResponse, GithubRepoList, KeepAwakeStatus } from "../shared/types.ts";
-import type { ActivityPage, AutoMergePromptResult, BranchDeletePreview, BranchDeleteRequest, BranchDeleteResult, ConsoleSession, ProjectConsoleLike, CleanupPreview, CleanupResult, CleanupSelection, ChangeIssueRef, CreateChangeResponse, DismissPreview, DismissResult, EnvironmentReport, EnvironmentView, FolderPickResult, PromptResult, PullRequestsResponse, PullResolve, PullResult, RepoIssues, SetupState, ShipResult, StaleCleanupPreview, StaleCleanupRequest, StaleCleanupResult, StartResult, UpdateStatus, WorkStatus } from "../shared/types.ts";
+import type { ActivityPage, AutoMergePromptResult, BranchDeletePreview, BranchDeleteRequest, BranchDeleteResult, ConsoleSession, ProjectConsoleLike, CleanupPreview, CleanupResult, CleanupSelection, ChangeIssueRef, CreateChangeResponse, DismissPreview, DismissResult, EnvironmentReport, EnvironmentView, FolderPickResult, PromptResult, PullRequestsResponse, PullResolve, PullResult, RepoIssues, SetupState, ShipRequest, ShipResult, StaleCleanupPreview, StaleCleanupRequest, StaleCleanupResult, StartResult, UpdateStatus, WorkStatus } from "../shared/types.ts";
 import type { AgentAvailability, AutoFetchSeconds, ArtifactFileContent, ChangeArtifacts, Config, CreateProjectResponse, DiscoverResult, IntegrationSession, PrTitleConvention, RepoConfig, ScanTriggerResult, Session, SessionAction, SessionWorktree, SharedConfig, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Snapshot } from "../shared/types.ts";
 import { socketOrigin } from "./url.ts";
 
@@ -245,7 +245,8 @@ export interface Api {
   /** Continues the agent's latest conversation in the session's worktree. */
   resumeSession(id: string): Promise<Session>;
   /** Asks the session's agent to commit, push and open a pull request. */
-  shipSession(id: string): Promise<ShipResult>;
+  shipSession(id: string, request?: ShipRequest): Promise<ShipResult>;
+  finishChecks(repoId: string, change: string): Promise<PromptResult>;
   resolveConflicts(id: string): Promise<PromptResult>;
   /** Asks the session's agent to merge its ready pull request; the server takes the number and head commit from its own list. */
   mergeSession(id: string): Promise<PromptResult>;
@@ -386,7 +387,8 @@ export const httpApi: Api = {
   startIntegration: (path) => call<IntegrationSession>("/api/integrations", { method: "POST", body: JSON.stringify({ path }) }),
   createProject: (root, name) => call<CreateProjectResponse>("/api/projects", { method: "POST", body: JSON.stringify({ root, name }) }),
   resumeSession: (id) => call<Session>(`/api/sessions/${id}/resume`, { method: "POST" }),
-  shipSession: (id) => call<ShipResult>(`/api/sessions/${id}/ship`, { method: "POST" }),
+  shipSession: (id, request = {}) => call<ShipResult>(`/api/sessions/${id}/ship`, { method: "POST", body: JSON.stringify(request) }),
+  finishChecks: (repoId, change) => call<PromptResult>("/api/sessions", { method: "POST", body: JSON.stringify({ repoId, change, finishChecks: true }) }),
   resolveConflicts: (id) => call<PromptResult>(`/api/sessions/${id}/resolve-conflicts`, { method: "POST" }),
   mergeSession: (id) => call<PromptResult>(`/api/sessions/${id}/merge`, { method: "POST" }),
   openEditor: (id) => call<EditorStarted>(`/api/sessions/${id}/editor`, { method: "POST" }),
@@ -489,6 +491,7 @@ export const api: Api = {
   createProject: (...args) => current.createProject(...args),
   resumeSession: (...args) => current.resumeSession(...args),
   shipSession: (...args) => current.shipSession(...args),
+  finishChecks: (...args) => current.finishChecks(...args),
   resolveConflicts: (...args) => current.resolveConflicts(...args),
   mergeSession: (...args) => current.mergeSession(...args),
   openEditor: (...args) => current.openEditor(...args),

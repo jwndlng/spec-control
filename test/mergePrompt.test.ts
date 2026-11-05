@@ -71,7 +71,7 @@ async function archiveSession(manager: SessionManager, h: Harness, opts: { menu?
   expect(started.autoMerge).toBe(true);
   const seen = await watch(manager, started.id);
   await waitFor(() => seen.text().includes(opts.menu ? "Enter to confirm" : "fake-agent ready"), "the agent");
-  const head = await commit(started.worktreePath, { [`openspec/changes/${ARCHIVE}/notes.md`]: "archived\n" });
+  const head = await commit(started.worktreePath, { [`openspec/changes/${ARCHIVE}/notes.md`]: "archived\n", [`openspec/changes/${ARCHIVE}/tasks.md`]: "- [x] Checks verified\n" });
   return { s: manager.get(started.id) as ChangeSession, seen, head, ready: (patch: Partial<PullRequest> = {}) => [pr({ head: sessionBranch("archive", ARCHIVE), headOid: head, ...patch })] };
 }
 
@@ -333,3 +333,24 @@ async function recordGit(): Promise<{ calls(): Promise<string[]>; restore(): voi
     },
   };
 }
+
+test("docs auto-merge never uses a past Ship instruction to bypass currently unresolved tasks", async () => {
+  const { h, manager } = await project();
+  const s = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const seen = await watch(manager, s.id);
+  await waitFor(() => seen.text().includes("fake-agent ready"), "agent");
+  const head = await commit(s.worktreePath, { [`openspec/changes/${IMPLEMENT}/tasks.md`]: "- [ ] Verify CI\n" });
+  (manager.get(s.id) as ChangeSession).autoMergeAskedAt = new Date().toISOString();
+  await manager.requestReadyMerges(h.repoId, [pr({ head: s.branch as string, headOid: head })]);
+  expect((manager.get(s.id) as ChangeSession).mergeAsked).toBeUndefined();
+  expect(merges(seen.text())).toEqual([]);
+});
+
+test("an archive's auto-merge record cannot bypass a task still awaiting a person", async () => {
+  const { h, manager } = await project();
+  const { s, seen, ready } = await archiveSession(manager, h);
+  const head = await commit(s.worktreePath, { [`openspec/changes/${ARCHIVE}/tasks.md`]: "- [~] Check the real device\n" });
+  await manager.requestReadyMerges(h.repoId, ready({ headOid: head }));
+  expect((manager.get(s.id) as ChangeSession).mergeAsked).toBeUndefined();
+  expect(merges(seen.text())).toEqual([]);
+});

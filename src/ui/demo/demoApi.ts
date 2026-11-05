@@ -1,3 +1,4 @@
+import { mergedImplementation } from "../../shared/pullRequestLink.ts";
 // In-memory stand-in for the dashboard server. Nothing is read from or written to anywhere: a reload starts over.
 import { isTimeZone, pageEvents, retained } from "../../shared/activity.ts";
 import { labelKey, labelProblem, MAX_LABEL_COLORS } from "../../shared/labels.ts";
@@ -742,7 +743,19 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
     startIntegration: (path) => attempt(() => demoSessions.openIntegration(path)),
     createProject: () => new Promise((_, reject) => setTimeout(() => reject(new ApiError(503, "the demo does not create folders")), latencyMs)),
     resumeSession: (id) => attempt(() => demoSessions.resume(id)),
-    shipSession: (id) => attempt(() => demoSessions.ship(id)),
+    shipSession: (id, request) => attempt(() => demoSessions.ship(id, request)),
+    finishChecks: (repoId, change) => failing(() => {
+      const current = snapshot().repos.find((r) => r.id === repoId)?.changes.find((c) => c.name === change && !c.archived);
+      if (!current || !mergedImplementation(current, buildPullRequests(sample.snapshot, now(), pullRequestsFetchedAt).repos)) throw new ApiError(409, "No linked merged implementation with unresolved tasks is known.");
+      const action = current.stage === "done" ? "validate" : "implement";
+      const existing = demoSessions.list().sessions.find((s) => s.repoId === repoId && s.change === change);
+      if (existing) {
+        if (existing.state !== "running") demoSessions.resume(existing.id);
+        return demoSessions.prompt(existing.id, action);
+      }
+      const session = demoSessions.open(repoId, change, action);
+      return { ...session, submitted: true };
+    }),
     resolveConflicts: (id) => attempt(() => demoSessions.resolveConflicts(id)),
     // Its pull requests are synthetic: nothing could merge, so no Merge prompt is ever sent or recorded.
     mergeSession: () => new Promise((_, reject) => setTimeout(() => reject(new ApiError(503, "the demo does not merge pull requests")), latencyMs)),

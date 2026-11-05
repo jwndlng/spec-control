@@ -10,7 +10,7 @@ import { api } from "./api.ts";
 import { PullBlockedList, usePull } from "./pull.tsx";
 import { pullNeedsReport, pullOutcome } from "./pullState.ts";
 import { inPlaceLeftover } from "./inPlaceText.ts";
-import { endConfirmable, endDialogEscape, endSeverity, endWarning, ownReports, pullOffer, removalPreselected, reportShip, worktreeRemovalPossible } from "./sessionState.ts";
+import { endConfirmable, endDialogEscape, endSeverity, endWarning, ownReports, pullOffer, removalPreselected, worktreeRemovalPossible } from "./sessionState.ts";
 import { useSessionUi } from "./sessions.tsx";
 import { outsideNote, StaleCleanupOutcome, StaleLeftoverList } from "./staleCleanup.tsx";
 import { cleanupNeedsReport, endCleanupOffer, keptUntilStale, outsidePaths, staleRequest } from "./staleState.ts";
@@ -362,9 +362,8 @@ export function EndSessionDialog() {
                   title: `Asks ${session.agentName} to commit, push and open a pull request instead of ending`,
                   onClick: () =>
                     run(async () => {
-                      const result = await api.shipSession(session.id);
+                      await ui.ship(session.id);
                       ui.openPanel(session.id);
-                      reportShip(ui, session.id, result);
                     }),
                 }
               : undefined

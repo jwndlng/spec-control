@@ -4,7 +4,7 @@
 // All of it is invented, like the rest of the sample (see sampleData.ts): every repository, change, branch and path
 // comes from the sample, and terminal output comes from the hand-written transcripts.
 import { blockedReason } from "../../shared/dependencies.ts";
-import { availableActions, DEFAULT_EDITOR, isChangeless, isConsole, isIntegration, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type Session, type SessionAction, type AutoMergePromptResult, type PromptResult, type SessionWorktree, type ShipResult, SHIPPABLE_WORK, type StartResult, type Snapshot, type WorkStatus, type Worktree } from "../../shared/types.ts";
+import { availableActions, DEFAULT_EDITOR, isChangeless, isConsole, isIntegration, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type Session, type SessionAction, type AutoMergePromptResult, type PromptResult, type SessionWorktree, type ShipRequest, type ShipResult, SHIPPABLE_WORK, type StartResult, type Snapshot, type WorkStatus, type Worktree } from "../../shared/types.ts";
 import { sessionBranch } from "../../shared/sessionBranch.ts";
 import { ApiError, type TerminalConnection, type TerminalHandlers } from "../api.ts";
 import { DEMO_AGENT, DEMO_ROOT } from "./sampleData.ts";
@@ -449,12 +449,16 @@ export function createDemoSessions({ now, getConfig, getSnapshot, integratable, 
       return s.session;
     },
 
-    ship(id: string): ShipResult {
+    ship(id: string, request: ShipRequest = {}): ShipResult {
       const s = find(id);
       if (isChangeless(s.session)) throw new ApiError(409, notAChange(s.session));
       const work = workOf(s);
       if (!SHIPPABLE_WORK.includes(work.state)) throw new ApiError(409, `there is nothing to ship (${work.state})`);
-      run(s, "ship");
+      const change = getSnapshot().repos.find((r) => r.id === s.session.repoId)?.changes.find((c) => c.name === s.session.change);
+      if ((!change?.tasks || change.tasks.total === 0 || change.tasks.done < change.tasks.total) && request.confirmation !== `demo:${id}` && !request.finishTasks) {
+        return { ...s.session, submitted: false, autoMerge: false, preflight: { token: `demo:${id}`, summary: { verified: !!change?.tasks?.total, reason: "Demo task state; no real checks run.", total: change?.tasks?.total ?? 0, done: change?.tasks?.done ?? 0, open: ["Verify the implementation checks"], awaiting: change?.tasks?.awaitingTasks ?? [], truncated: false } } };
+      }
+      run(s, request.finishTasks ? "implement" : "ship");
       // The recording's agent ships nothing real, so its prompt never carries the docs auto-merge instruction.
       return { ...s.session, submitted: true, autoMerge: false };
     },

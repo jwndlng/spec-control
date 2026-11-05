@@ -1,5 +1,5 @@
 // Agent profiles (design.md D16): an agent is a command line plus opening prompts. Nothing here knows any vendor.
-import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, PROPOSAL_TITLE_CONVENTIONAL, PROPOSAL_TITLE_PLAIN, CARRY_OVER_ARCHIVE_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, proposalHandoverSentence, REMOVE_DUPLICATE_DIFFERING_SENTENCE, REMOVE_DUPLICATE_IDENTICAL_SENTENCE, REMOVE_DUPLICATE_PROMPT, resolveConflictsTargetSentence, type AgentAvailability, type DuplicateAfterArchive, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type PullRequest, type RepoConfig, type SessionAction, type StrandedArchive } from "../../shared/types.ts";
+import { SHIP_COMPLETION_INSTRUCTION, TASK_COMPLETION_INSTRUCTION, AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, PROPOSAL_TITLE_CONVENTIONAL, PROPOSAL_TITLE_PLAIN, CARRY_OVER_ARCHIVE_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, proposalHandoverSentence, REMOVE_DUPLICATE_DIFFERING_SENTENCE, REMOVE_DUPLICATE_IDENTICAL_SENTENCE, REMOVE_DUPLICATE_PROMPT, resolveConflictsTargetSentence, type AgentAvailability, type DuplicateAfterArchive, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type PullRequest, type RepoConfig, type SessionAction, type StrandedArchive } from "../../shared/types.ts";
 import { AGENT_PRESETS } from "../../shared/agentDefaults.ts";
 import { proposalBranch } from "../../shared/sessionBranch.ts";
 import { whichOnPath } from "../paths.ts";
@@ -149,18 +149,18 @@ export function fastForwardPrompt(agent: AgentProfile, change: string, { convent
   if (!fastForwardAvailable(agent)) return undefined;
   const draft = openingPrompt(agent, "draft", change) as string;
   const implement = openingPrompt(agent, "implement", change) as string;
-  return `${draft} ${FAST_FORWARD_CONTINUE_SENTENCE} ${implement} ${FAST_FORWARD_SHIP_SENTENCE} ${shipPrompt(agent, change, { convention, record })}`;
+  return `${draft} ${FAST_FORWARD_CONTINUE_SENTENCE} ${implement} ${TASK_COMPLETION_INSTRUCTION} ${FAST_FORWARD_SHIP_SENTENCE} ${shipPrompt(agent, change, { convention, record })}`;
 }
 
 /**
  * Every agent can ship: a profile without its own Ship prompt gets the agent-neutral default — suffix and all. The
- * project's pull request title `convention` and then the `record` instruction go between the prompt and the suffix, so
+ * fixed completion instruction, project's pull request title `convention` and then the `record` instruction go between the prompt and the suffix, so
  * the user's own text follows them and the record is asked for whatever the profile's own Ship prompt says. With `autoMerge` (the project opted in and the session ships only OpenSpec documents) the fixed auto-merge instruction
  * comes last, after the suffix, so nothing in the profile can follow and undo it.
  */
 export function shipPrompt(agent: AgentProfile, change: string, { autoMerge = false, convention, record }: PullRequestPromptOptions = {}): string {
   if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
-  const base = agent.prompts.ship ?? DEFAULT_SHIP_PROMPT;
+  const base = `${agent.prompts.ship ?? DEFAULT_SHIP_PROMPT} ${SHIP_COMPLETION_INSTRUCTION}`;
   const titled = convention === "conventional-commits" ? `${base} ${CONVENTIONAL_COMMITS_SHIP_SENTENCE}` : base;
   const prompt = compose(agent, "ship", withRecord(titled, record)).replaceAll("{change}", change);
   return autoMerge ? `${prompt} ${AUTO_MERGE_DOCS_INSTRUCTION}` : prompt;

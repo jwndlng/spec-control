@@ -1,3 +1,4 @@
+import { FinishChecks } from "./finishChecks.tsx";
 // The console: the agent's own terminal, streamed from the dashboard server, shown in the Console tab of its change's
 // detail view. The dashboard adds nothing to what the agent shows and interprets none of it; keystrokes go straight to
 // the agent, exactly as in a terminal window.
@@ -12,7 +13,7 @@ import { cdCommand } from "./format.ts";
 import { inPlaceReason } from "./inPlaceText.ts";
 import { NOT_SUBMITTED_NOTICE, shortcutHint, shortcutMessage, visibleShortcuts } from "./quickReplies.ts";
 import { usePullRequests } from "./pullRequests.tsx";
-import { autoEndedText, autoMergeNotice, conflictAction, consoleSteps, handedOverProposal, mergeControl, mergeNotice, oneAtATime, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, sessionsEnabledFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
+import { autoEndedText, autoMergeNotice, conflictAction, consoleSteps, handedOverProposal, mergeControl, mergeNotice, oneAtATime, RESUME_TO_MERGE, resolvable, sessionBadge, sessionsEnabledFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
 import { ConflictBadge, OpenInEditor, SessionBadgeView, SessionControls, useSessionUi } from "./sessions.tsx";
 
 export function Copy({ text, label }: { text: string; label: string }) {
@@ -339,6 +340,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
           )}
         </div>
         <div class="row">
+          {card && <FinishChecks card={card} />}
           {shippable && session && (
             <button
               type="button"
@@ -351,7 +353,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
               }
               onClick={() =>
                 act(async () => {
-                  reportShip(ui, session.id, await api.shipSession(session.id));
+                  await ui.ship(session.id);
                 })
               }
             >

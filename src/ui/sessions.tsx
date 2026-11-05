@@ -1,7 +1,10 @@
+import { FinishChecks } from "./finishChecks.tsx";
+import { ShipPreflightDialog, type ShipChoice } from "./shipPreflightDialog.tsx";
+import type { ShipPreflight } from "../shared/types.ts";
 // Agent sessions in the UI: a provider that polls the session list while the feature is on, and the controls a
 // card shows (starter buttons, or a badge that opens the session panel).
 import { createContext, type ComponentChildren } from "preact";
-import { useCallback, useContext, useEffect, useMemo, useState } from "preact/hooks";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { changeSessions, isConsole, isIntegration, isProjectConsole, type AgentAvailability, type ChangeSession, type ChangeSnapshot, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleSession, type PullRequest, type SessionAction, type SessionWorktree, type Snapshot, type EditorAvailability } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { EndProposalDialog } from "./endProposalDialog.tsx";
@@ -12,7 +15,7 @@ import { type NextStep, type PullRequestStep, waitingLabel } from "../shared/nex
 import { isProposalPullRequest } from "../shared/pullRequestLink.ts";
 import { runningProposalSession } from "../shared/sessionBranch.ts";
 import { ActionMenu, type ActionItem, type ActionStatus } from "./actionMenu.tsx";
-import { afterStart, agentForRepo, type AutoMergeReport, cardSessionControls, conflictBadge, consoleSteps, editorControl, type EditorControl, endProposalConfirmation, openWork, pullRequestSession, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, starterSplit, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
+import { afterStart, agentForRepo, type AutoMergeReport, reportShip, cardSessionControls, conflictBadge, consoleSteps, editorControl, type EditorControl, endProposalConfirmation, openWork, pullRequestSession, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, starterSplit, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
 import { boardFrom, changePath, CONSOLE_TAB, parseDetailQuery, routeFromPath, serializeDetailQuery } from "./routes.ts";
 import { currentPath, currentQuery, followInApp, hrefWithQuery, navigate } from "./url.ts";
 
@@ -77,11 +80,12 @@ interface SessionUi {
    * confirmation while the proposal is not pushed, and a cancelled one starts and ends nothing.
    */
   start(repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; removeDuplicate?: boolean; resolveConflicts?: boolean; endProposal?: boolean }): Promise<string | undefined>;
+  ship(id: string): Promise<void>;
   refresh(): Promise<void>;
 }
 
 const noop = async () => undefined;
-const Context = createContext<SessionUi>({ config: null, snapshot: null, sessions: [], consoles: [], consoleOpen: false, showConsole: () => {}, integrations: [], showIntegration: () => {}, projectConsoles: [], showProjectConsole: () => {}, agents: [], worktrees: [], focusTick: { tick: 0 }, reportUnsent: () => {}, reportAutoMerge: () => {}, requestEnd: () => {}, openPanel: () => {}, openChangeConsole: () => {}, start: noop, refresh: noop });
+const Context = createContext<SessionUi>({ config: null, snapshot: null, sessions: [], consoles: [], consoleOpen: false, showConsole: () => {}, integrations: [], showIntegration: () => {}, projectConsoles: [], showProjectConsole: () => {}, agents: [], worktrees: [], focusTick: { tick: 0 }, reportUnsent: () => {}, reportAutoMerge: () => {}, requestEnd: () => {}, openPanel: () => {}, openChangeConsole: () => {}, start: noop, ship: noop, refresh: noop });
 
 export const useSessionUi = () => useContext(Context);
 
@@ -226,10 +230,28 @@ export function SessionProvider({
     [refresh, openConsole, sessions, worktrees, reportUnsent, config, askFastForward, onConfig],
   );
 
+  const [shipAsk, setShipAsk] = useState<{ preview: ShipPreflight; answer: (choice: ShipChoice) => void }>();
+  const shipping = useRef(new Set<string>());
+  const ship = useCallback(async (id: string) => {
+    if (shipping.current.size > 0) return;
+    shipping.current.add(id);
+    try {
+      let result = await api.shipSession(id);
+      while (result.preflight) {
+        const preview = result.preflight;
+        const choice = await new Promise<ShipChoice>((answer) => setShipAsk({ preview, answer }));
+        setShipAsk(undefined);
+        if (choice === "cancel") return;
+        result = await api.shipSession(id, choice === "finish" ? { finishTasks: true } : { confirmation: preview.token });
+      }
+      reportShip({ reportUnsent, reportAutoMerge }, id, result);
+    } finally { shipping.current.delete(id); }
+  }, []);
+
   const shown = consoleOpen && enabled;
   const value = useMemo(
-    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, refresh }),
-    [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, autoMerge, error, openPanel, openConsole, start, refresh],
+    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, ship, refresh }),
+    [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, autoMerge, error, openPanel, openConsole, start, ship, refresh],
   );
   const answerFastForward = useCallback(
     (choice: FastForwardChoice | undefined) => {
@@ -241,6 +263,7 @@ export function SessionProvider({
   return (
     <Context.Provider value={value}>
       {children}
+      {shipAsk && <ShipPreflightDialog preview={shipAsk.preview} answer={shipAsk.answer} />}
       {fastForwardAsk && (
         <FastForwardDialog
           change={fastForwardAsk.change}
@@ -572,6 +595,7 @@ export function SessionControls({
       {shown.map((session) => (
         <SessionBadgeView key={session.id} badge={sessionBadge(session)} onClick={() => ui.openPanel(session.id)} />
       ))}
+      {place !== "console" && <FinishChecks card={card} />}
       <ActionMenu main={mainPart} items={items} name={card.name} disabled={starting !== undefined} />
       {failure && (
         <span class="notice danger session-failure" role="status">

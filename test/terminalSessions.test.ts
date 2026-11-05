@@ -1,3 +1,4 @@
+import { TASK_COMPLETION_INSTRUCTION } from "../src/shared/types.ts";
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -252,7 +253,7 @@ test("Fast-forward: one session on the change's branch whose prompt drafts, impl
   await waitFor(() => view.text().includes("fake-agent ready"), "agent banner");
   const args = view.text().replace(/\r?\n/g, "");
   expect(args).toContain(`args=["draft ${drafting.name} This change is fast-forwarded`);
-  expect(args).toContain(`implement ${drafting.name} When every task is settled, ship the work without asking me: Ship the work`);
+  expect(args).toContain(`implement ${drafting.name} ${TASK_COMPLETION_INSTRUCTION} When every task is settled, ship the work without asking me: Ship the work`);
   expect(args).toContain("Title the pull request as a Conventional Commit");
   expect(args).not.toContain("auto-merge");
 });
@@ -420,12 +421,12 @@ test("an agent showing a menu gets the text but never an Enter, and keeps runnin
 
 test("an opening prompt typed after start-up is not sent into a dialog", async () => {
   const h = await harness({ agent: { command: [FAKE_AGENT, "--menu"] } });
-  const manager = h.newManager(FAST_SUBMIT);
+  const manager = h.newManager({ ...FAST_SUBMIT, typePromptDelayMs: 1500 });
   managers.push(manager);
   const s = await manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
   const view = await watch(manager, s.id);
   await waitFor(() => view.text().includes("Enter to confirm"), "the menu");
-  await new Promise((r) => setTimeout(r, 150 + 600 + 300)); // start-up delay + echo timeout + margin
+  await new Promise((r) => setTimeout(r, 1500 + 600 + 300)); // start-up delay + echo timeout + margin
   expect(view.text()).not.toContain("menu confirmed by Enter");
   expect(manager.get(s.id).state).toBe("running");
 });
