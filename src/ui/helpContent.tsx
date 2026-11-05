@@ -165,7 +165,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             action the change allows, such as <strong>Draft artifacts</strong> for a design on a ready change. A starter
             runs your agent in a git worktree of its own, on its own branch, under <code>~/.spec-control/worktrees/</code>;
             your main checkout is not touched. Once implementation started, <strong>Draft artifacts</strong> is no longer
-            offered.
+            offered. Choose <strong>Custom session</strong> from the menu at any active stage, including while waiting on dependencies, to start without an opening prompt and write your own first instruction.
           </li>
           <li>
             While the change has an open pull request, that pull request decides what is recommended:{" "}

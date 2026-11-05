@@ -14,6 +14,10 @@ The API SHALL provide: `POST /api/sessions` with `{ repoId, change, action }` to
 - **WHEN** a session for repository `r` and change `c` is running and `POST /api/sessions` is sent for `r` and `c` with `action: "archive"`
 - **THEN** the response contains that running session, no worktree is created, no process is started and nothing is written to its terminal
 
+#### Scenario: Deterministic archive of a synced Done change
+- **WHEN** `POST /api/sessions` is sent with `{ repoId, change: "rotate-keys", action: "archive" }` for a `Done` change with `subState: "complete"` and `specsSynced: true`
+- **THEN** the server moves `openspec/changes/rotate-keys/` to `openspec/changes/archive/<YYYY-MM-DD>-rotate-keys/` in the archive worktree, records `archive-branch`, commits, pushes, opens the pull request, starts no agent process, and returns `201` with the completed session record
+
 #### Scenario: Feature disabled
 - **WHEN** agent sessions are disabled and `POST /api/sessions` is called
 - **THEN** the response is `403`, no worktree is created and no process is started

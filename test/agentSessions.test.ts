@@ -500,6 +500,35 @@ test("Archive falls back to starting agent process when change is not complete (
   await waitFor(() => seen.text().includes("fake-agent ready"), "agent ready");
 });
 
+
+test("custom starts without prompt arguments or typed input and duplicate opens leave it untouched", async () => {
+  const h = await harness({ agent: { prompts: {} } });
+  managers.push(h.manager);
+  const change = h.snapshot.repos[0].changes.find((c) => c.name === IMPLEMENT)!;
+  change.blocked = true;
+  const opened = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "custom" });
+  const output = await watch(h.manager, opened.id);
+  await waitFor(() => output.text().includes("fake-agent ready"), "custom agent ready");
+  expect(output.text()).toContain("args=[]");
+  expect(opened.branch).toBe(`feat/${IMPLEMENT}`);
+  expect(opened.worktreePath).not.toBe(h.repoPath);
+  const before = output.text();
+  const again = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "custom" });
+  expect(again.id).toBe(opened.id);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(output.text()).toBe(before);
+  output.detach();
+});
+
+test("custom returns a running proposal session without changing its terminal", async () => {
+  const h = await harness();
+  managers.push(h.manager);
+  h.config.repos[0].agent = { enabled: true, autoMergeDocs: true };
+  const draft = await h.manager.open({ repoId: h.repoId, change: DRAFT, action: "draft" });
+  expect(draft.branch).toBe(`docs/${DRAFT}`);
+  expect((await h.manager.open({ repoId: h.repoId, change: DRAFT, action: "custom" })).id).toBe(draft.id);
+});
+
 test("models cascade by starter; fast-forward and consoles use profile/global defaults", () => {
   const config = defaultConfig();
   const agent = fakeProfile({ model: "profile", phaseModels: { draft: "draft-model", implement: "code", validate: "quick", archive: "small" } });

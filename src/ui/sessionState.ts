@@ -34,7 +34,7 @@ export function startersFor(config: Config | null, card: Pick<ChangeSnapshot, "r
 
 function startersForAgent(agent: AgentProfile | undefined, card: Pick<ChangeSnapshot, "archived" | "artifacts" | "stage" | "subState" | "blocked">): SessionAction[] {
   if (!agent) return [];
-  return availableActions(card).filter((action) => (action === "fastForward" ? fastForwardAvailable(agent) : Boolean(agent.prompts[action])));
+  return availableActions(card).filter((action) => (action === "custom" || (action === "fastForward" ? fastForwardAvailable(agent) : Boolean(agent.prompts[action]))));
 }
 
 /**
@@ -192,7 +192,7 @@ export function consoleSteps(config: Config | null, sessions: ChangeSession[], c
   // A running process keeps its own profile even after the next-session override changes. Its next-step availability
   // and prompt therefore follow the recorded agent, while an untouched change follows its configured override.
   const sessionAgent = config?.agentSessions.agents.find((agent) => agent.id === session.agentId);
-  const starters = startersForAgent(sessionAgent, card);
+  const starters = startersForAgent(sessionAgent, card).filter((action) => action !== "custom");
   if (isProposalSession(session)) {
     if (!receives("draft")) return undefined;
     return { into: starters.filter((a) => a === "draft"), endFirst: starters.filter((a) => a !== "draft" && a !== "fastForward") };
