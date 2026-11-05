@@ -9,6 +9,7 @@ import { AUTO_FETCH_SECONDS, type AutoFetchSeconds, autoFetchInterval, CONVENTIO
 import { settingApplies } from "../shared/repoSettings.ts";
 import { IconPencil, IconSettings, IconTag } from "./icons.tsx";
 import { labelSuggestions, RepoLabelsEditor } from "./labels.tsx";
+import { OpenSpecSetupAction } from "./openSpecSetup.tsx";
 import { Modal } from "./modal.tsx";
 import { autoFetchEvery } from "./pullState.ts";
 import { DisableButton, type Tracking } from "./untracked.tsx";
@@ -359,6 +360,7 @@ export function ProjectSettingsDialog({ repo, config, isGit, tracking }: { repo:
         <SettingLine label="PR titles">{PrTitlesPicker({ repo, isGit, tracking })}</SettingLine>
         <SettingLine label="Docs auto-merge">{AutoMergeToggle({ repo, config, isGit, tracking, short: true })}</SettingLine>
         <SettingLine label="Auto fetch">{AutoFetchPicker({ repo, isGit, tracking })}</SettingLine>
+        <OpenSpecSetupAction repo={repo} config={config} onClose={tracking.closeSettings} />
         <SettingLine label="Labels">{LabelsButton({ id: repo.id, name: repo.name, tracking })}</SettingLine>
         <div class="setting-line setting-disable">
           <span class="setting-label">Stop tracking</span>

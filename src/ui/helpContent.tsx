@@ -82,6 +82,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             needs agent sessions to be on.
           </li>
           <li>
+            <strong>Update OpenSpec setup</strong> in an OpenSpec project's settings opens its existing project console with a
+            request you can review, copy and send to add tools such as Codex or refresh instructions. It asks the agent to
+            preserve existing tools and content and ask what you want to add. Nothing is sent automatically; the agent
+            edits the project folder directly, with its normal permissions. In the demo, the console is simulated.
+          </li>
+          <li>
             <strong>New change</strong> on a board creates <code>openspec/changes/&lt;name&gt;/</code>, optionally with a
             prompt, and stages it. Nothing is committed. A name uses letters, digits, <code>.</code>, <code>-</code> and{" "}
             <code>_</code>, at most 128 of them; it must not start with <code>.</code> or <code>-</code>, contain{" "}

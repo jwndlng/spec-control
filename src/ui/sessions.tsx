@@ -37,7 +37,8 @@ interface SessionUi {
   projectConsoles: ProjectConsoleSession[];
   /** The project whose console overlay is open, if any. Like the main console, not part of the route. */
   projectConsoleRepoId?: string;
-  showProjectConsole(repoId: string | undefined): void;
+  projectConsoleSetup?: boolean;
+  showProjectConsole(repoId: string | undefined, setup?: boolean): void;
   agents: AgentAvailability[];
   /** Every session worktree with what became of its work; outlives session records. */
   worktrees: SessionWorktree[];
@@ -98,6 +99,7 @@ export function SessionProvider({
   integrationId,
   showIntegration = () => {},
   projectConsoleRepoId,
+  projectConsoleSetup = false,
   showProjectConsole = () => {},
   onConfig = () => {},
   children,
@@ -109,7 +111,8 @@ export function SessionProvider({
   integrationId?: string;
   showIntegration?: (id: string | undefined) => void;
   projectConsoleRepoId?: string;
-  showProjectConsole?: (repoId: string | undefined) => void;
+  projectConsoleSetup?: boolean;
+  showProjectConsole?: (repoId: string | undefined, setup?: boolean) => void;
   /** Takes a configuration the server saved on the way, so the app's copy follows (the Fast-forward warning). */
   onConfig?: (config: Config) => void;
   children: ComponentChildren;
@@ -229,8 +232,8 @@ export function SessionProvider({
 
   const shown = consoleOpen && enabled;
   const value = useMemo(
-    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, refresh, saveConfig: onConfig }),
-    [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, autoMerge, error, openPanel, openConsole, start, refresh],
+    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, projectConsoleSetup, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, refresh, saveConfig: onConfig }),
+    [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, projectConsoleSetup, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, autoMerge, error, openPanel, openConsole, start, refresh],
   );
   const answerFastForward = useCallback(
     (choice: FastForwardChoice | undefined) => {
