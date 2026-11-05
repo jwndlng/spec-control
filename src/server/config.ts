@@ -28,11 +28,11 @@ const BYPASS_MESSAGE = "must not contain a permission-bypass mode or flag";
 const placeholdersOnly = (allowed: string[]) => (v: string) => (v.match(/\{[^}]*\}/g) ?? []).every((ph) => allowed.includes(ph));
 
 const commandSchema = z
-  .array(z.string().min(1).refine(noBypass, { message: BYPASS_MESSAGE }).refine(placeholdersOnly(["{prompt}"]), { message: "unknown placeholder; only {prompt} is supported" }))
+  .array(z.string().min(1).refine(noBypass, { message: BYPASS_MESSAGE }).refine(placeholdersOnly(["{prompt}", "{model}"]), { message: "unknown placeholder; only {prompt} and {model} are supported" }))
   .min(1, { message: "command must name an executable" })
   .refine((args) => args.length === 0 || !args[0].includes("{"), { message: "the executable cannot be a placeholder" });
 
-// Added to every start, the prompt-less console and the resume command included, so no placeholder of any kind: nothing
+// Added to every start, the prompt-less console and the resume command included; only {model} is expanded: nothing
 // from a prompt reaches them. One argument per entry, never shell text, and no control character.
 const launchArgsSchema = z
   .array(
@@ -40,7 +40,7 @@ const launchArgsSchema = z
       .string()
       .min(1)
       .refine(noBypass, { message: BYPASS_MESSAGE })
-      .refine(placeholdersOnly([]), { message: "no placeholder is supported in launch arguments" })
+      .refine(placeholdersOnly(["{model}"]), { message: "only {model} is supported in launch arguments" })
       .refine((v) => ![...v].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127), { message: "must not contain a control character" }),
   )
   .optional()
@@ -105,10 +105,22 @@ const integrateSuffixSchema = z
   .refine(placeholdersOnly([]), { message: "no placeholder is supported in additional Integrate instructions" })
   .refine(noBypass, { message: BYPASS_MESSAGE });
 
+const modelSchema = z
+  .string()
+  .refine((v) => ![...v].some((c) => c.charCodeAt(0) < 32 || (c.charCodeAt(0) >= 127 && c.charCodeAt(0) <= 159)), {
+    message: "must not contain a control character",
+  })
+  .pipe(z.string().trim().min(1).max(128).refine(noBypass, { message: BYPASS_MESSAGE }));
+
 const agentProfileSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/, { message: "lower-case letters, digits and dashes" }),
   name: z.string().trim().min(1),
   command: commandSchema,
+  model: modelSchema.optional(),
+  phaseModels: z
+    .object({ draft: modelSchema.optional(), implement: modelSchema.optional(), validate: modelSchema.optional(), archive: modelSchema.optional() })
+    .strict()
+    .optional(),
   launchArgs: launchArgsSchema,
   prompts: z
     .object({
@@ -164,6 +176,7 @@ export { defaultAgentSessions };
 const agentSessionsSchema = z
   .object({
     enabled: z.boolean().default(false),
+    defaultModel: modelSchema.optional(),
     agents: z.array(agentProfileSchema).min(1).default(() => defaultAgentSessions().agents),
     defaultAgent: z.string().default(() => defaultAgentSessions().defaultAgent),
     // Shape only: a config whose console folder was deleted since must still load. Saving checks the folder itself.

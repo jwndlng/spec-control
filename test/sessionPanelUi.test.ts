@@ -83,3 +83,119 @@ test("cards show the overriding profile's name with its tooltip and cards withou
 });
 
 
+
+// Exercise the real buttons and refresh through the session provider without starting an agent or terminal.
+import { afterEach } from "bun:test";
+import { Window } from "happy-dom";
+import { h, render } from "preact";
+import { useState } from "preact/hooks";
+import { act as domAct } from "preact/test-utils";
+import { defaultConfig } from "../src/server/config.ts";
+import type { ChangeSession } from "../src/shared/types.ts";
+import { api } from "../src/ui/api.ts";
+import { ConsoleSessionList } from "../src/ui/sessionPanel.tsx";
+import { consoleSession, consoleSessions } from "../src/ui/sessionState.ts";
+import { SessionProvider, useSessionUi } from "../src/ui/sessions.tsx";
+
+const originalApi = { sessions: api.sessions, deleteSession: api.deleteSession };
+const originalDom = { window: globalThis.window, document: globalThis.document, raf: globalThis.requestAnimationFrame };
+let browser: Window | undefined;
+let root: HTMLElement | undefined;
+afterEach(() => {
+  if (root) render(null, root);
+  browser?.happyDOM.abort();
+  Object.assign(api, originalApi);
+  globalThis.window = originalDom.window;
+  globalThis.document = originalDom.document;
+  globalThis.requestAnimationFrame = originalDom.raf;
+  root = undefined;
+  browser = undefined;
+});
+const record = (id: string, state: ChangeSession["state"] = "exited"): ChangeSession => ({
+  id, state, agentId: "fake", agentName: "Fake", repoId: "demo", change: "rotate-keys", action: "implement",
+  worktreePath: "/w/acme/demo-ops", branch: "feat/rotate-keys", createdAt: id, updatedAt: id, resumable: false,
+});
+async function consoleList(selected = "2", initial = [record("3", "running"), record("2"), record("1", "failed")]) {
+  browser = new Window({ url: "http://localhost/" });
+  globalThis.window = browser as unknown as typeof window;
+  globalThis.document = browser.document as unknown as Document;
+  globalThis.requestAnimationFrame = () => 0;
+  root = document.createElement("div");
+  let records = initial;
+  const deleted: string[] = [];
+  const selections: string[] = [];
+  let refreshes = 0;
+  api.sessions = async () => { refreshes++; return { sessions: records, agents: [], presets: [], worktrees: [] }; };
+  api.deleteSession = async (id) => { deleted.push(id); records = records.filter((s) => s.id !== id); return { deleted: true }; };
+  function List() {
+    const ui = useSessionUi();
+    const [chosen, choose] = useState(selected);
+    const sessions = consoleSessions(ui.sessions, "demo", "rotate-keys");
+    const current = consoleSession(sessions, chosen);
+    return h("div", null,
+      h("output", null, current?.id),
+      h(ConsoleSessionList, { sessions, selected: current?.id, onSelect: (id) => { selections.push(id); choose(id); } }),
+    );
+  }
+  const config = defaultConfig();
+  config.agentSessions.enabled = true;
+  await domAct(() => render(h(SessionProvider, { config, children: h(List, {}) }), root!));
+  const remove = (id: string) => root!.querySelectorAll<HTMLButtonElement>(".console-session-remove")[id === "2" ? 0 : 1]!;
+  return { root: root!, remove, deleted, selections, refreshes: () => refreshes };
+}
+
+test("console rows offer sibling removal buttons only for ended sessions and omit a single session's list", async () => {
+  const view = await consoleList();
+  const rows = view.root.querySelectorAll(".console-session");
+  expect(rows).toHaveLength(3);
+  expect(rows[0]!.querySelector('[aria-label="Remove console"]')).toBeNull();
+  for (const row of [rows[1]!, rows[2]!]) {
+    const button = row.querySelector('[aria-label="Remove console"]')!;
+    expect(button.parentElement === row).toBe(true);
+    expect(row.querySelector(".console-session-select")!.contains(button)).toBe(false);
+  }
+  await domAct(async () => { view.remove("1").click(); await Bun.sleep(0); });
+  await domAct(async () => { view.remove("2").click(); await Bun.sleep(0); });
+  expect(view.root.querySelector("nav") === null).toBe(true);
+  expect(view.root.querySelector("output")!.textContent).toBe("3");
+});
+
+test("removing the selected console refreshes records and selects the most recent remaining console", async () => {
+  const view = await consoleList();
+  const before = view.refreshes();
+  await domAct(async () => { view.remove("2").click(); await Bun.sleep(0); });
+  expect(view.deleted).toEqual(["2"]);
+  expect(view.selections).toEqual(["3"]);
+  expect(view.refreshes()).toBe(before + 1);
+  expect(view.root.querySelector("output")!.textContent).toBe("3");
+  expect(view.root.querySelectorAll(".console-session")).toHaveLength(2);
+});
+
+test("removing another console preserves selection and stops the removal click from bubbling", async () => {
+  const view = await consoleList();
+  let bubbled = false;
+  view.root.addEventListener("click", () => { bubbled = true; });
+  await domAct(async () => { view.remove("1").click(); await Bun.sleep(0); });
+  expect(bubbled).toBe(false);
+  expect(view.deleted).toEqual(["1"]);
+  expect(view.selections).toEqual([]);
+  expect(view.root.querySelector("output")!.textContent).toBe("2");
+});
+
+test("pending deletion ignores repeated clicks and failure keeps the selection and reports the error", async () => {
+  const view = await consoleList();
+  const request = pending();
+  let requests = 0;
+  api.deleteSession = async () => { requests++; await request.done; return { deleted: true }; };
+  const button = view.remove("2");
+  await domAct(() => { button.click(); button.click(); });
+  expect(requests).toBe(1);
+  expect(button.disabled).toBe(true);
+  const before = view.refreshes();
+  await domAct(async () => { request.finish(false); await request.done.catch(() => {}); });
+  expect(view.root.querySelector('[role="alert"]')!.textContent).toBe("refused");
+  expect(button.disabled).toBe(false);
+  expect(view.selections).toEqual([]);
+  expect(view.root.querySelector("output")!.textContent).toBe("2");
+  expect(view.refreshes()).toBe(before);
+});
