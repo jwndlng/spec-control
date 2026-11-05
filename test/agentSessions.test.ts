@@ -583,3 +583,30 @@ test("a previous docs auto-merge record does not bypass unresolved implementatio
     expect((await gh.calls()).some((call) => call.argv.includes("merge"))).toBe(false);
   }
 });
+
+test("Finish tasks persists a task-only request: completing its Fast-forward tasks does not auto-ship, but explicit Ship still works", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  const manager = h.newManager();
+  managers.push(manager);
+  const change = "add-health-endpoint";
+  const session = await manager.open({ repoId: h.repoId, change, action: "fastForward" });
+  await putFile(session.worktreePath, `openspec/changes/${change}/tasks.md`, "- [ ] Finish check\n");
+  const seen = await watch(manager, session.id);
+  await waitFor(() => seen.text().includes("fake-agent ready"), "agent ready");
+  const request = await manager.ship(session.id, { finishTasks: true });
+  expect(request).toMatchObject({ shipped: false, submitted: true, autoShipSuppressed: true });
+  await putFile(session.worktreePath, `openspec/changes/${change}/tasks.md`, "- [x] Verified check\n");
+  const before = git(session.worktreePath, "rev-parse", "HEAD");
+  manager.write(session.id, "exit\r");
+  await waitFor(() => manager.get(session.id).state === "exited", "exit");
+  await manager.shutdown();
+  expect(git(session.worktreePath, "rev-parse", "HEAD")).toBe(before);
+  expect((await gh.calls()).some((call) => call.argv.includes("create"))).toBe(false);
+  const { SessionStore } = await import("../src/server/sessions/store.ts");
+  const stored = (await new SessionStore().loadAll()).find((s) => s.id === session.id) as ChangeSession;
+  expect(stored.autoShipSuppressed).toBe(true);
+  const shipped = await manager.ship(session.id);
+  expect(shipped.shipped).toBe(true);
+  expect((shipped as ChangeSession).autoShipSuppressed).toBeUndefined();
+});

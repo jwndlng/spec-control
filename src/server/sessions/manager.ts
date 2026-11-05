@@ -411,6 +411,7 @@ export class SessionManager {
       repoId: repo.id,
       change,
       action,
+      ...(followupPrompt ? { autoShipSuppressed: true } : {}),
       agentId: agent?.id ?? "server",
       agentName: agent?.name ?? "Server",
       state: "running",
@@ -884,6 +885,8 @@ export class SessionManager {
         return { ...opened, submitted: true };
       }
       const { agent, repo } = await this.prepareRestart(session);
+      session.autoShipSuppressed = true;
+      await this.touch(session);
       if (session.state === "running" && this.live.get(session.id)?.proc) {
         const { submitted } = await this.submit(session.id, typable(prompt));
         return { ...session, submitted };
@@ -905,6 +908,8 @@ export class SessionManager {
 
   private async finishTasksNow(session: ChangeSession): Promise<ShipResult> {
     const { agent, repo } = await this.prepareRestart(session);
+    session.autoShipSuppressed = true;
+    await this.touch(session);
     let submitted: boolean;
     if (session.state === "running" && this.live.get(session.id)?.proc) {
       ({ submitted } = await this.submit(session.id, typable(FINISH_TASKS_PROMPT)));
@@ -959,6 +964,7 @@ export class SessionManager {
       }
     }
     this.shipPreviews.delete(id);
+    session.autoShipSuppressed = undefined;
     const branch = session.branch as string;
 
     // 1. Ensure .openspec.yaml records branch (or archive-branch)
@@ -1307,6 +1313,10 @@ export class SessionManager {
     if (autoMerge) session.autoMergeAskedAt = new Date().toISOString();
     this.touchLater(session);
     const { submitted } = await this.submit(id, text);
+    if (submitted) {
+      session.autoShipSuppressed = undefined;
+      this.touchLater(session);
+    }
     return { ...session, submitted, autoMerge };
   }
 
@@ -1424,6 +1434,7 @@ export class SessionManager {
         session.inPlace ||
         session.adopted ||
         !session.autoMergeAskedAt ||
+        session.autoShipSuppressed ||
         session.autoEnded ||
         session.action === "fastForward"
       ) {
@@ -1623,7 +1634,7 @@ export class SessionManager {
   }
 
   private async shouldAutoShipOnExit(session: ChangeSession): Promise<boolean> {
-    if (session.inPlace || session.adopted || isChangeless(session)) return false;
+    if (session.inPlace || session.adopted || session.autoShipSuppressed || isChangeless(session)) return false;
     const repo = this.deps.getConfig().repos.find((r) => r.id === session.repoId);
     if (!repo) return false;
 

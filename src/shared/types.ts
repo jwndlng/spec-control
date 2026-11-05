@@ -905,6 +905,8 @@ export interface ChangeSession extends SessionBase {
   pullRequest?: number;
   /** Set when a deterministic Ship (manual or automatic on session exit) failed; cleared when Ship succeeds. */
   shipError?: string;
+  /** A task-only request must not trigger shipping or merging when its agent exits. Persisted across resume. */
+  autoShipSuppressed?: boolean;
   /**
    * The worktree cleanup the user confirmed when ending this session, carried on in the background once the session
    * had ended (cleanup-background). Stored, so an outcome — or a cleanup a restart interrupted — outlives a reload.
