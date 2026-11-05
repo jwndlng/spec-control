@@ -175,4 +175,4 @@ test("a change that lives only in a linked worktree is read from that worktree",
   const content = await file(alpha.id, "add-login", "proposal.md");
   expect(content.status).toBe(200);
   expect(((await content.json()) as { text: string }).text).toContain("In a worktree.");
-});
+}, 30_000); // Includes full fixture scans and subprocesses on slower runners.

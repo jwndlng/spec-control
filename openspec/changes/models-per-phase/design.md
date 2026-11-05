@@ -46,6 +46,8 @@ All major agent CLIs supported out-of-the-box (Claude Code `claude`, Codex CLI `
 - Requiring explicit `{model}` in all commands: Would break presets and require existing users to upgrade command lines.
 - Provider-specific switch statements: Violates invariant that the dashboard is provider-agnostic and does not depend on vendor-specific protocols.
 
+Fast-forward is a single process spanning several phases; it uses the profile/global default, with no phase override or runtime model switching.
+
 ### Decision 3: Configuration Schema and Model Hierarchy
 
 *Choice*:
@@ -65,7 +67,7 @@ When the result is `undefined`, the agent CLI runs without an injected model arg
 - [Risk] Invalid model string could cause agent CLI crash on startup.
   → Mitigation: Validate model strings with regex refusing control characters, whitespace-only, and permission-bypass flags (`--dangerously-skip-permissions`, etc.).
 - [Risk] Resuming an ended session might receive a different model if settings changed.
-  → Mitigation: In accordance with invariant that running/resumed sessions keep their established arguments, sessions track whether a model was passed or inherit the session's recorded profile settings.
+  → Mitigation: Running processes keep their established arguments. A resume starts a new process and resolves the current configuration for the session's original action, matching the existing behavior for launch arguments.
 
 ## Migration Plan
 

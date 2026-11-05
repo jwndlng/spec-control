@@ -1,0 +1,6 @@
+schema: spec-driven
+created: 2026-10-29
+skip_specs: true
+spec-control:
+  branch: feat/reduce-ship-it-text
+  archive-branch: chore/archive-reduce-ship-it-text

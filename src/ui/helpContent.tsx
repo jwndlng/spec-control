@@ -82,6 +82,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             needs agent sessions to be on.
           </li>
           <li>
+            <strong>Update OpenSpec setup</strong> in an OpenSpec project's settings opens its existing project console with a
+            request you can review, copy and send to add tools such as Codex or refresh instructions. It asks the agent to
+            preserve existing tools and content and ask what you want to add. Nothing is sent automatically; the agent
+            edits the project folder directly, with its normal permissions. In the demo, the console is simulated.
+          </li>
+          <li>
             <strong>New change</strong> on a board creates <code>openspec/changes/&lt;name&gt;/</code>, optionally with a
             prompt, and stages it. Nothing is committed. A name uses letters, digits, <code>.</code>, <code>-</code> and{" "}
             <code>_</code>, at most 128 of them; it must not start with <code>.</code> or <code>-</code>, contain{" "}
@@ -172,6 +178,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             The agent's terminal is the <strong>Console</strong> tab of the change's detail view. What it changes is decided by
             its own permission prompts. A change has one running session at a time: while it runs, the card shows its badge
             instead of the starters, and the console offers the next step — sent into that session, as a prompt.
+          </li>
+          <li>
+            Choose a <strong>Default model</strong> in Settings → Agent sessions, a profile's <strong>Model</strong>, or its expandable{" "}
+            <strong>Phase models</strong>. A phase inherits the profile model, then the global default; leaving all three empty uses the CLI default. Models
+            apply on session start; running sessions keep theirs. Fast-forward uses the profile or global model throughout. Custom command arguments can contain{" "}
+            <code>{"{model}"}</code>; otherwise the dashboard adds <code>--model</code> followed by the model name.
           </li>
           <li>
             <strong>Open in editor</strong>, beside <strong>Copy cd</strong> in the Console tab and in Open work, opens the

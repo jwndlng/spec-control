@@ -147,6 +147,7 @@ function ProjectConsoleView({ repoId, onClose }: { repoId: string; onClose: () =
         </div>
         <p class="hint">Your agent in this project's folder, for anything that is not a change — questions, setup, housekeeping.</p>
       </div>
+      {ui.projectConsoleSetup && <OpenSpecSetupGuidance />}
       <section class="console-pane main-console" aria-label={`Console of ${name}`}>
         <header class="session-head">
           <div class="row">
@@ -161,7 +162,13 @@ function ProjectConsoleView({ repoId, onClose }: { repoId: string; onClose: () =
           </div>
           <div class="row">
             {session && !running && session.resumable && (
-              <button type="button" class="btn sm" disabled={busy} title="Start the agent again in the same folder, continuing its latest conversation" onClick={() => act(() => api.resumeSession(session.id))}>
+              <button
+                type="button"
+                class="btn sm"
+                disabled={busy}
+                title="Start the agent again in the same folder, continuing its latest conversation"
+                onClick={() => act(() => api.resumeSession(session.id))}
+              >
                 ▶ Resume
               </button>
             )}
@@ -197,7 +204,13 @@ function ProjectConsoleView({ repoId, onClose }: { repoId: string; onClose: () =
               </>
             )}
             {session && !running && (
-              <button type="button" class="btn sm ghost" disabled={busy} title="Delete this session's record and stored output" onClick={() => act(() => api.deleteSession(session.id))}>
+              <button
+                type="button"
+                class="btn sm ghost"
+                disabled={busy}
+                title="Delete this session's record and stored output"
+                onClick={() => act(() => api.deleteSession(session.id))}
+              >
                 Delete record
               </button>
             )}
@@ -221,5 +234,23 @@ function ProjectConsoleView({ repoId, onClose }: { repoId: string; onClose: () =
         )}
       </section>
     </DetailOverlay>
+  );
+}
+
+/** Kept as text for the user to review and send, never submitted to a session by the dashboard. */
+export const OPENSPEC_SETUP_REQUEST =
+  "Help me revisit this project's OpenSpec setup. Inspect the installed OpenSpec CLI version and its help, and inspect the existing setup and configured tools. Ask me which tools I want to add (such as Codex) and whether I want to refresh generated instructions before making changes. Preserve all existing configured tools and project content. Use the appropriate OpenSpec CLI setup or update commands for this installed version, with your normal permission prompts. Report what changed or any failure and what I should do next.";
+
+export function OpenSpecSetupGuidance() {
+  return (
+    <div class="notice">
+      <strong>Update OpenSpec setup</strong>
+      <p>
+        Review and copy this request, then paste and send it in the console when you are ready. Nothing is sent automatically. Your agent edits the project
+        folder directly.
+      </p>
+      <p>{OPENSPEC_SETUP_REQUEST}</p>
+      <Copy text={OPENSPEC_SETUP_REQUEST} label="Copy setup request" />
+    </div>
   );
 }

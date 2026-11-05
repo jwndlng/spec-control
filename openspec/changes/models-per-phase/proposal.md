@@ -35,12 +35,12 @@ None.
   - Resolve effective model for a session action based on phase override -> profile model -> global default model.
   - Inject `--model <model>` into launch arguments (or replace `{model}` in `command`/`launchArgs` when present).
   - Ensure resume commands and console sessions cleanly handle model arguments.
-- **UI & Settings (`src/ui/agentSettings.tsx`, `src/ui/changelog.ts`)**:
+- **UI & Settings (`src/ui/agentSettings.tsx`, `src/ui/changelog.ts`, `src/ui/helpContent.tsx`)**:
   - Add default model input and per-agent phase model inputs in `AgentSettings`.
   - Add What's new entry in `src/ui/changelog.ts`.
 - **Tests**:
   - Unit tests in `test/config.test.ts` for schema validation and migration/inheritance.
   - Unit tests in `test/agentSessions.test.ts` for model resolution and CLI launch argument composition.
-  - UI tests in `test/ui.test.ts`.
+  - UI tests in `test/agentSettingsUi.test.ts`.
 - **Invariants**:
   - Invariant 1 (read-only towards tracked repositories) and loopback-only invariants are fully preserved. No credentials or login flows are introduced; models are purely passed as CLI flags to the agent process.
