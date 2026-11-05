@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-09-console-agent",
+  "date": "2026-10-09",
+  "title": "Pick the console's agent",
+  "summary": "The top-bar **console** can now run a different agent from your default — Codex or Antigravity for questions, say, while Claude Code keeps doing your changes. Choose it under **Settings → Agent sessions → Console**.",
+  "order": 34
+}

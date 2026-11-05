@@ -29,6 +29,6 @@ _None._
 - `src/ui/sessions.tsx`: Update `SessionControls` to render the **End session** button on the card when offered, wired to `ui.requestEnd(session.id)`.
 - Tests: Add unit tests in `test/sessionControls.test.ts` (or `test/kanban.test.ts` / `test/sessionState.test.ts`) covering card controls for archived merged changes with running sessions, auto-ended sessions, unmerged sessions, and active changes.
 
-- `src/ui/helpContent.tsx` and `src/ui/changelog.ts`: document the card action in Help and What's new.
+- `src/ui/helpContent.tsx` and `src/ui/changelog/entries/2026-11-05-show-end-session-overview.json`: document the card action in Help and What's new.
 
-- `test/versionApi.test.ts`: scope process spies to each test to prevent earlier test-file activity from failing the PR’s Linux workflow.
+- PR verification: adopted main’s version-endpoint test fix while resolving the workflow failure; no additional changes to that test remain.

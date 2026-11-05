@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-01-integrate-with-any-agent",
+  "date": "2026-10-01",
+  "title": "Integrate works with every agent",
+  "summary": "**Integrate** and **New project** no longer need an integrate prompt in the agent's profile: every agent gets a default prompt that sets up OpenSpec in the repository.",
+  "order": 64
+}

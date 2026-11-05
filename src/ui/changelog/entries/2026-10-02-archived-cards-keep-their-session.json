@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-02-archived-cards-keep-their-session",
+  "date": "2026-10-02",
+  "title": "Archived cards stay while their session runs",
+  "summary": "With **Hide merged** on, an archived change whose agent session is still running keeps its card in the Archived column, so the way back to that console does not disappear.",
+  "order": 62
+}

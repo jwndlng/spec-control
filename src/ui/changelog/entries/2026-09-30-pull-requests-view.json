@@ -1,0 +1,7 @@
+{
+  "id": "2026-09-30-pull-requests-view",
+  "date": "2026-09-30",
+  "title": "Pull requests",
+  "summary": "The **Pull requests** view lists the open pull requests of your GitHub repositories, read through the GitHub CLI (`gh`) when you open it or press **Refresh**. The overview counts them per project.",
+  "order": 70
+}

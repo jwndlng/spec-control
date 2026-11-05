@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-01-manage-repositories-from-overview",
+  "date": "2026-10-01",
+  "title": "Manage repositories from the overview",
+  "summary": "The **Projects** overview lists disabled, discovered and not-yet-OpenSpec repositories under *Untracked & disabled*, with **Enable**, **Ignore** and **Integrate**; every tracked project can be disabled from its row or tile.",
+  "order": 66
+}

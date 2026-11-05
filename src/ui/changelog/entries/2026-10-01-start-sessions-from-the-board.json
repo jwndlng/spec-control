@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-01-start-sessions-from-the-board",
+  "date": "2026-10-01",
+  "title": "Start sessions without leaving the board",
+  "summary": "Starting an agent from a card keeps you on the board. The card's session badge takes the starter's place and opens the **Console** tab when you want it.",
+  "order": 65
+}

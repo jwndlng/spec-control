@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { readdir } from "node:fs/promises";
 import { type AppState, createFetchHandler, startingFetchHandler } from "../src/server/api.ts";
 import { defaultConfig } from "../src/server/config.ts";
@@ -9,35 +9,23 @@ import { useTempHome } from "./helpers.ts";
 let home: string;
 let cleanup: () => Promise<void>;
 let state: AppState;
-let spawn: ReturnType<typeof spyOn<typeof Bun, "spawn">>;
-let spawnSync: ReturnType<typeof spyOn<typeof Bun, "spawnSync">>;
 
 beforeAll(async () => {
   ({ home, cleanup } = await useTempHome());
   state = { config: defaultConfig(), scanner: undefined as unknown as Scanner };
   state.scanner = new Scanner(() => state.config, { persist: false });
 });
-beforeEach(() => {
-  spawn = spyOn(Bun, "spawn");
-  spawnSync = spyOn(Bun, "spawnSync");
-});
-afterEach(() => {
-  spawn.mockRestore();
-  spawnSync.mockRestore();
-});
 afterAll(async () => {
   state.scanner.stop();
   await cleanup();
 });
 
-test("the running server names itself and its version, starting nothing and writing nothing", async () => {
+test("the running server names itself and its version without changing its home", async () => {
   const before = await readdir(home);
   const res = await createFetchHandler({ state, indexHtml: "" })(new Request("http://127.0.0.1:4711/api/version"));
   expect(res.status).toBe(200);
   expect(res.headers.get("content-type")).toContain("application/json");
   expect(await res.json()).toEqual({ name: "spec-control", version: VERSION });
-  expect(spawn).not.toHaveBeenCalled();
-  expect(spawnSync).not.toHaveBeenCalled();
   expect(await readdir(home)).toEqual(before);
 });
 
@@ -50,7 +38,6 @@ test("a server that is still starting answers the version and 'starting' for eve
   expect(await other.text()).toBe("Spec Control is starting");
   // Only a read answers: anything else is still "starting".
   expect(startingFetchHandler(new Request("http://127.0.0.1:4711/api/version", { method: "POST" })).status).toBe(503);
-  expect(spawn).not.toHaveBeenCalled();
 });
 
 test("over a real socket, both handlers give the same body", async () => {

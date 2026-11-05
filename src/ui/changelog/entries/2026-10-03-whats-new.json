@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-03-whats-new",
+  "date": "2026-10-03",
+  "title": "What's new",
+  "summary": "The **What's new** button in the top corner lists the features added to the dashboard, newest first, and counts the ones you have not seen yet. It works offline: the list is part of the dashboard itself.",
+  "order": 60
+}
