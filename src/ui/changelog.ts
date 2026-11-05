@@ -35,6 +35,12 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
       "Open **Update OpenSpec setup** in a project's settings to add tools such as Codex or refresh instructions through its project console. Review and copy the suggested request, then send it when you are ready.",
   },
   {
+    id: "2026-11-04-remove-ended-consoles",
+    date: "2026-11-04",
+    title: "Remove ended consoles from the session list",
+    summary: "Use the **×** beside an ended session in a change's **Console** tab to remove its record and stored output directly from the list. Its worktree and branch are kept.",
+  },
+  {
     id: "2026-11-02-agent-interoperability",
     date: "2026-11-02",
     title: "Deterministic Ship, Merge, and zero-token cleanup",

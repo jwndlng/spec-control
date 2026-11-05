@@ -22,4 +22,5 @@ When a change accumulates several sessions across its lifecycle (such as draftin
 ## Impact
 
 - Affected UI: `ConsoleSessionList` in `src/ui/sessionPanel.tsx` and related styles in `src/ui/styles.css`.
+- Supporting files: `test/sessionPanelUi.test.ts`, `src/ui/changelog.ts`, and `src/ui/helpContent.tsx` (document the new Console list removal control).
 - Affected APIs: None. Reuses the existing `DELETE /api/sessions/:id` endpoint.
