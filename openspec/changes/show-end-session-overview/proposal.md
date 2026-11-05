@@ -28,3 +28,7 @@ _None._
 - `src/ui/sessionState.ts`: Update `cardSessionControls` (or a helper used by `SessionControls`) to detect eligible archived, merged changes with running sessions and offer the **End session** action.
 - `src/ui/sessions.tsx`: Update `SessionControls` to render the **End session** button on the card when offered, wired to `ui.requestEnd(session.id)`.
 - Tests: Add unit tests in `test/sessionControls.test.ts` (or `test/kanban.test.ts` / `test/sessionState.test.ts`) covering card controls for archived merged changes with running sessions, auto-ended sessions, unmerged sessions, and active changes.
+
+- `src/ui/helpContent.tsx` and `src/ui/changelog/entries/2026-11-05-show-end-session-overview.json`: document the card action in Help and What's new.
+
+- PR verification: adopted main’s version-endpoint test fix while resolving the workflow failure; no additional changes to that test remain.

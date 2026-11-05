@@ -1,6 +1,6 @@
 // Agent sessions in the UI: a provider that polls the session list while the feature is on, and the controls a
 // card shows (starter buttons, or a badge that opens the session panel).
-import { createContext, type ComponentChildren } from "preact";
+import { createContext, Fragment, type ComponentChildren } from "preact";
 import { useCallback, useContext, useEffect, useMemo, useState } from "preact/hooks";
 import { changeSessions, isConsole, isIntegration, isProjectConsole, type AgentAvailability, type ChangeSession, type ChangeSnapshot, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleSession, type PullRequest, type SessionAction, type SessionWorktree, type Snapshot, type EditorAvailability } from "../shared/types.ts";
 import { api } from "./api.ts";
@@ -12,7 +12,7 @@ import { type NextStep, type PullRequestStep, waitingLabel } from "../shared/nex
 import { isProposalPullRequest } from "../shared/pullRequestLink.ts";
 import { runningProposalSession } from "../shared/sessionBranch.ts";
 import { ActionMenu, type ActionItem, type ActionStatus } from "./actionMenu.tsx";
-import { afterStart, agentForChange, agentForRepo, type AutoMergeReport, cardSessionControls, conflictBadge, consoleSteps, editorControl, type EditorControl, endProposalConfirmation, openWork, pullRequestSession, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, starterSplit, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
+import { afterStart, agentForChange, agentForRepo, type AutoMergeReport, canEndArchivedSession, cardSessionControls, conflictBadge, consoleSteps, editorControl, type EditorControl, endProposalConfirmation, openWork, pullRequestSession, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, starterSplit, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
 import { boardFrom, changePath, CONSOLE_TAB, parseDetailQuery, routeFromPath, serializeDetailQuery } from "./routes.ts";
 import { currentPath, currentQuery, followInApp, hrefWithQuery, navigate } from "./url.ts";
 
@@ -575,7 +575,14 @@ export function SessionControls({
   return (
     <>
       {shown.map((session) => (
-        <SessionBadgeView key={session.id} badge={sessionBadge(session)} onClick={() => ui.openPanel(session.id)} />
+        <Fragment key={session.id}>
+          <SessionBadgeView badge={sessionBadge(session)} onClick={() => ui.openPanel(session.id)} />
+          {place === "card" && canEndArchivedSession(card, session, pullRequest, ui.worktrees.find((w) => w.path === session.worktreePath)) && (
+            <button type="button" class="btn sm" title={`End the running session of ${card.name}`} onClick={() => ui.requestEnd(session.id)}>
+              End session
+            </button>
+          )}
+        </Fragment>
       ))}
       <ActionMenu main={mainPart} items={items} name={card.name} disabled={starting !== undefined} />
       {place === "card" && ui.config?.repos.find((repo) => repo.id === card.repoId)?.agent?.changeAgents?.[card.name] && (

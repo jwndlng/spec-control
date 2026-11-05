@@ -8,6 +8,17 @@ import { mergePending, pullRequestReadiness, readinessDetail } from "../shared/p
 import { availableActions, DEFAULT_EDITOR, editorCommandLine, type EditorAvailability, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type RepoPullRequests, type Session, type SessionAction, type SessionCleanup, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
 import { changeAgentFor } from "../shared/changeAgent.ts";
 
+/** Archived, merged changes may open the existing end-session confirmation from their card. */
+export function canEndArchivedSession(
+  card: Pick<ChangeSnapshot, "archived">,
+  session: ChangeSession | undefined,
+  pullRequest: PullRequest | undefined,
+  worktree: SessionWorktree | undefined,
+): boolean {
+  return Boolean(card.archived && session?.state === "running" && session.autoEnded === undefined
+    && (pullRequest?.state === "merged" || worktree?.work.state === "merged"));
+}
+
 /** Session starters are shown when the feature is on, for every tracked repository that has not been switched off. */
 export function sessionsEnabledFor(config: Config | null, repoId: string): boolean {
   if (!config?.agentSessions.enabled) return false;
@@ -78,7 +89,7 @@ export function cleanupNotice(cleanup: SessionCleanup, change?: string): string 
 /**
  * What a card offers about its change's sessions: the sessions to show a badge for, and the starters to offer beside
  * them. While any of the change's sessions runs the badge stands in for the starters and there are none — the badge
- * opens the terminal, which is where the next step and **End session** live. A badge that is not running is the failure
+ * opens the terminal for next steps. Archived, merged cards additionally offer **End session**. A badge that is not running is the failure
  * case `sessionsForChange` keeps, so it comes with the starters and the next attempt stays one activation away.
  *
  * Pure, because this is the rule the card and the console's empty state must agree on, and a component that uses hooks

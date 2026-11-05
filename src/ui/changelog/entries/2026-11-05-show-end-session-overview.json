@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-05-show-end-session-overview",
+  "date": "2026-11-05",
+  "title": "End archived sessions from the board",
+  "summary": "Archived changes whose pull request or session worktree is merged now offer **End session** beside the running session badge on their card. It opens the usual confirmation so you can review cleanup before ending the agent."
+}
