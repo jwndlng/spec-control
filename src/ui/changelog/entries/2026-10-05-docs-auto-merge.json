@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-05-docs-auto-merge",
+  "date": "2026-10-05",
+  "title": "Auto-merge docs-only pull requests",
+  "summary": "Switch on **Docs auto-merge** for a project on the **Projects** overview, and **Ship** asks your agent to enable auto-merge on a pull request that only changes files under `openspec/`, such as an archive. Every other pull request still waits for review.",
+  "order": 59
+}

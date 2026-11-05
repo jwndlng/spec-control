@@ -21,4 +21,4 @@ schema: spec-driven
 
 rules:
   tasks:
-    - When the change adds or changes something users can see, end with a task to add a What's new entry at the top of `src/ui/changelog.ts` (see "What's new" in CONTRIBUTING.md).
+    - When the change adds or changes something users can see, end with a task to add an independent What's new JSON entry file under `src/ui/changelog/entries/` (see "What's new" in CONTRIBUTING.md).

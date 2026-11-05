@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-08-auto-fetch",
+  "date": "2026-10-08",
+  "title": "Projects can fetch on their own",
+  "summary": "A project's settings on **Projects** now have **Auto fetch**: every 5, 15 or 30 minutes or every hour, the dashboard fetches its remote, so a branch whose pull request merged shows as merged without a pull. It only fetches — your checkout changes only when you **Pull** — and beside **Pull** you see when the project was last fetched.",
+  "order": 41
+}

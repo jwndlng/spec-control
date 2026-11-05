@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-01-pull-request-on-cards",
+  "date": "2026-10-01",
+  "title": "Pull requests on cards",
+  "summary": "A card shows its change's pull request — `PR #<n>` with its state — and the detail header shows its title, review and checks, linking to GitHub.",
+  "order": 69
+}

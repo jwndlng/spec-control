@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-01-new-project",
+  "date": "2026-10-01",
+  "title": "Create a new project",
+  "summary": "**New project** on the overview creates an empty folder in one of your workspace roots, initialises git in it and starts an agent that sets up OpenSpec there.",
+  "order": 68
+}

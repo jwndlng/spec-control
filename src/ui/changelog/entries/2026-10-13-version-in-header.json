@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-13-version-in-header",
+  "date": "2026-10-13",
+  "title": "See which version you run",
+  "summary": "The header now shows the release you run next to **Spec Control**, linked to its release notes — in the browser and in the macOS app.",
+  "order": 30
+}
