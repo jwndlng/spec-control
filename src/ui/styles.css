@@ -1961,7 +1961,11 @@ a.badge.needs-you:focus-visible { outline: 2px solid var(--brand); outline-offse
 .console-starters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; }
 .change-agent-name { color: var(--text-muted); font-size: 11px; margin-left: 6px; }
 .change-agent-picker { color: var(--text-muted); font-size: 12px; }
-.console-sessions .console-session { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 12px; }
+.console-sessions .console-session { display: flex; align-items: center; gap: 6px; padding: 0; cursor: default; }
+.console-session-select { display: flex; flex: 1; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 12px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; word-break: break-all; cursor: pointer; }
+.console-session-remove { flex: none; margin-right: 6px; padding: 4px 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fg-subtle); font-size: 18px; cursor: pointer; }
+.console-session-remove:hover, .console-session-remove:focus-visible { background: var(--bg-elevated); color: var(--fg-heading); }
+.console-session-remove:disabled { opacity: 0.5; cursor: default; }
 .console-session .console-session-what { font-weight: 600; }
 .console-session.on { background: var(--info-bg, var(--bg-surface)); border-color: var(--info-border); color: var(--fg-heading); }
 

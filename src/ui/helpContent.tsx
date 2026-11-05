@@ -82,6 +82,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             needs agent sessions to be on.
           </li>
           <li>
+            <strong>Update OpenSpec setup</strong> in an OpenSpec project's settings opens its existing project console with a
+            request you can review, copy and send to add tools such as Codex or refresh instructions. It asks the agent to
+            preserve existing tools and content and ask what you want to add. Nothing is sent automatically; the agent
+            edits the project folder directly, with its normal permissions. In the demo, the console is simulated.
+          </li>
+          <li>
             <strong>New change</strong> on a board creates <code>openspec/changes/&lt;name&gt;/</code>, optionally with a
             prompt, and stages it. Nothing is committed. A name uses letters, digits, <code>.</code>, <code>-</code> and{" "}
             <code>_</code>, at most 128 of them; it must not start with <code>.</code> or <code>-</code>, contain{" "}
@@ -174,6 +180,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             instead of the starters, and the console offers the next step — sent into that session, as a prompt.
           </li>
           <li>
+            Choose a <strong>Default model</strong> in Settings → Agent sessions, a profile's <strong>Model</strong>, or its expandable{" "}
+            <strong>Phase models</strong>. A phase inherits the profile model, then the global default; leaving all three empty uses the CLI default. Models
+            apply on session start; running sessions keep theirs. Fast-forward uses the profile or global model throughout. Custom command arguments can contain{" "}
+            <code>{"{model}"}</code>; otherwise the dashboard adds <code>--model</code> followed by the model name.
+          </li>
+          <li>
             <strong>Open in editor</strong>, beside <strong>Copy cd</strong> in the Console tab and in Open work, opens the
             folder the change's agent works in — its worktree, or the project folder for a session without one — in your
             editor. It runs VS Code's <code>code</code> unless you set another <strong>Editor command</strong> under{" "}
@@ -213,6 +225,10 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             stopping for your review — the pull request is the only review, and it is never merged for you. It asks you
             to confirm first; <strong>Don't show this warning again</strong> skips that, and{" "}
             <AppLink path="/settings" query="?section=agents">Settings → Agent sessions</AppLink> brings it back.
+          </li>
+          <li>
+            In a change's <strong>Console</strong> tab, use the <strong>×</strong> beside an ended session in the session list
+            to remove its record and stored output. Its worktree and branch are kept. Running sessions have no removal control.
           </li>
           <li>
             <strong>Open work</strong> in the top bar lists running agents and worktrees that still hold something.{" "}

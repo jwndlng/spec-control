@@ -13,6 +13,12 @@ export function agentFor(config: Config, repo: RepoConfig, change?: string): Age
   return agents.find((a) => a.id === repo.agent?.agentId) ?? agents.find((a) => a.id === config.agentSessions.defaultAgent);
 }
 
+/** Phase overrides apply only to their starter; other actions inherit the profile/global model. */
+export function resolveModel(config: Config, agent: AgentProfile, action?: SessionAction): string | undefined {
+  const phase = action && action !== "fastForward" && action !== "custom" ? agent.phaseModels?.[action] : undefined;
+  return phase ?? agent.model ?? config.agentSessions.defaultModel;
+}
+
 export function availability(config: Config): AgentAvailability[] {
   return config.agentSessions.agents.map((agent) => {
     const path = whichOnPath(agent.command[0]);
@@ -194,23 +200,27 @@ export interface Launch {
  * Argument list for the agent. The prompt only ever becomes one whole argument or terminal input — never shell text.
  * Inside a longer argument it is inserted literally: a replacer function's result is not scanned for `$&` and the like.
  */
-export function launchCommand(agent: AgentProfile, prompt: string): Launch {
-  if (!agent.command.some((arg) => arg.includes("{prompt}"))) return { argv: withLaunchArgs(agent, agent.command), typed: typedForm(prompt) };
-  return { argv: withLaunchArgs(agent, agent.command.map((arg) => (arg === "{prompt}" ? prompt : arg.replaceAll("{prompt}", () => prompt)))) };
+export function launchCommand(agent: AgentProfile, prompt: string, model?: string): Launch {
+  const argv = withLaunchArgs(agent, agent.command, model);
+  if (!agent.command.some((arg) => arg.includes("{prompt}"))) return { argv, typed: typedForm(prompt) };
+  return { argv: argv.map((arg) => arg.replaceAll("{prompt}", () => prompt)) };
 }
 
 /**
  * The profile's launch arguments directly after the executable (agent-params D2): before a positional prompt or a
  * subcommand such as `codex resume`, where CLIs still read global options. Every start goes through here.
  */
-export function withLaunchArgs(agent: AgentProfile, argv: readonly string[]): string[] {
+export function withLaunchArgs(agent: AgentProfile, argv: readonly string[], model?: string): string[] {
   const [executable, ...rest] = argv;
-  return [executable, ...(agent.launchArgs ?? []), ...rest];
+  const args = [executable, ...(agent.launchArgs ?? []), ...rest];
+  if (model === undefined) return args;
+  if (args.some((arg) => arg.includes("{model}"))) return args.map((arg) => arg.replaceAll("{model}", () => model));
+  return [executable, "--model", model, ...args.slice(1)];
 }
 
 /** The resume command with the launch arguments, or undefined when the profile has none. */
-export function resumeLaunch(agent: AgentProfile): string[] | undefined {
-  return agent.resumeCommand && withLaunchArgs(agent, agent.resumeCommand);
+export function resumeLaunch(agent: AgentProfile, model?: string): string[] | undefined {
+  return agent.resumeCommand && withLaunchArgs(agent, agent.resumeCommand, model);
 }
 
 /** The default profile, whatever repository settings say: what Integrate and New project start. */
@@ -224,8 +234,8 @@ export function consoleAgentOf(config: Config): AgentProfile | undefined {
 }
 
 /** The console has no opening prompt: every argument that would carry one is left out, and nothing is typed. */
-export function launchWithoutPrompt(agent: AgentProfile): string[] {
-  return withLaunchArgs(agent, agent.command.filter((arg) => !arg.includes("{prompt}")));
+export function launchWithoutPrompt(agent: AgentProfile, model?: string): string[] {
+  return withLaunchArgs(agent, agent.command.filter((arg) => !arg.includes("{prompt}")), model);
 }
 
 export function agentEnv(agent: AgentProfile, base: Record<string, string | undefined>): Record<string, string> {

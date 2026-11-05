@@ -183,7 +183,7 @@ test("scanner isolates a failing repo and keeps its last good changes", async ()
   expect(b.ok).toBe(false);
   expect(b.error).toBe("disk on fire");
   expect(b.changes.length).toBe(socChanges);
-});
+}, 30_000); // Scans both fixture repositories twice, including their git metadata.
 
 // --- Checkouts: real linked worktrees in temporary repositories, with a local bare repository as the "remote". ---
 

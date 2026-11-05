@@ -9,6 +9,32 @@ import { addShortcut, moveShortcut, removeShortcut, restoredShortcuts } from "./
 import { argLinesText, argLinesValue, newAgentProfile } from "./sessionState.ts";
 import { followInApp, href } from "./url.ts";
 
+/** Keep typed spaces until save; clearing removes the override. */
+export function ModelField({
+  label,
+  value,
+  inherited,
+  onChange,
+}: {
+  label: string;
+  value?: string;
+  inherited?: string;
+  onChange: (model: string | undefined) => void;
+}) {
+  return (
+    <label class="agent-tools">
+      <span class="agent-prompt-label">{label}</span>
+      <input
+        class="input mono"
+        aria-label={label}
+        value={value ?? ""}
+        placeholder={inherited ? `Inherit: ${inherited}` : "CLI default"}
+        onInput={(e) => onChange(e.currentTarget.value === "" ? undefined : e.currentTarget.value)}
+      />
+    </label>
+  );
+}
+
 interface Props {
   draft: Config;
   update: (patch: Partial<Config>) => void;
@@ -90,6 +116,7 @@ function PromptField({ spec, agent, onPrompt, onSuffix }: { spec: PromptSpec; ag
 export function AgentEditor({
   agent,
   found,
+  defaultModel,
   isDefault,
   canRemove,
   open,
@@ -100,6 +127,7 @@ export function AgentEditor({
 }: {
   agent: AgentProfile;
   found?: AgentAvailability;
+  defaultModel?: string;
   isDefault: boolean;
   canRemove: boolean;
   open: boolean;
@@ -152,6 +180,24 @@ export function AgentEditor({
         <div class="agent-card-body" id={bodyId}>
           <div class="agent-group">
             <h4>Command</h4>
+            <ModelField label="Model" value={agent.model} inherited={defaultModel} onChange={(model) => onChange({ model })} />
+            <details>
+              <summary>Phase models</summary>
+              {STARTER_PROMPT_KEYS.map((phase) => (
+                <ModelField
+                  key={phase}
+                  label={`${ACTION_LABEL[phase]} model`}
+                  value={agent.phaseModels?.[phase]}
+                  inherited={agent.model || defaultModel}
+                  onChange={(model) => {
+                    const phaseModels = { ...agent.phaseModels };
+                    if (model === undefined) delete phaseModels[phase];
+                    else phaseModels[phase] = model;
+                    onChange({ phaseModels: Object.keys(phaseModels).length ? phaseModels : undefined });
+                  }}
+                />
+              ))}
+            </details>
             <label class="agent-tools">
               <span class="agent-prompt-label">Name</span>
               <input class="input" value={agent.name} onInput={(e) => onChange({ name: e.currentTarget.value })} />
@@ -167,8 +213,8 @@ export function AgentEditor({
             <label class="agent-tools">
               <span class="agent-prompt-label">Launch arguments</span>
               <span class="hint">
-                Optional, <strong>one argument per line</strong>, e.g. a mode or a model: added after the executable each time this agent starts, consoles and resumes included. No
-                placeholders.
+                Optional, <strong>one argument per line</strong>, e.g. a mode or a model: added after the executable each time this agent starts, consoles and resumes included. Only
+                <code>{"{model}"}</code> is expanded.
               </span>
               <ArgLinesField value={agent.launchArgs} optional onChange={(launchArgs) => onChange({ launchArgs })} />
             </label>
@@ -436,6 +482,11 @@ export function AgentSettings({ draft, update }: Props) {
       </div>
 
       <fieldset class="agent-fields" disabled={!settings.enabled}>
+        <ModelField label="Default model" value={settings.defaultModel} onChange={(defaultModel) => set({ defaultModel })} />
+        <p class="hint">
+          New sessions inherit this model unless a profile or phase overrides it. Empty uses the CLI default. Custom commands can place <code>{"{model}"}</code>{" "}
+          in an argument; otherwise the model is passed with <code>--model</code>. Fast-forward uses the profile or global model throughout.
+        </p>
         <h3>Agents</h3>
         <p class="hint">
           Any CLI that runs interactively in a terminal works. Claude Code is preconfigured; Codex and Antigravity are presets, marked with whether they were found on this
@@ -445,6 +496,7 @@ export function AgentSettings({ draft, update }: Props) {
           <AgentEditor
             key={agent.id}
             agent={agent}
+            defaultModel={settings.defaultModel}
             found={found.find((f) => f.id === agent.id)}
             isDefault={agent.id === settings.defaultAgent}
             canRemove={settings.agents.length > 1}

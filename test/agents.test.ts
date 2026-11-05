@@ -242,7 +242,9 @@ test("Ship: the auto-merge instruction comes last when asked for, and changes no
   expect(AUTO_MERGE_DOCS_INSTRUCTION).not.toMatch(/[\r\n]/);
   expect(AUTO_MERGE_DOCS_INSTRUCTION).not.toMatch(/\bgh\b|claude|codex/i);
   expect(AUTO_MERGE_DOCS_INSTRUCTION).toContain("openspec/");
-  expectsNoAutoMerge(AUTO_MERGE_DOCS_INSTRUCTION);
+  expect(AUTO_MERGE_DOCS_INSTRUCTION).toContain("Do not merge or enable auto-merge now.");
+  expect(AUTO_MERGE_DOCS_INSTRUCTION).toContain("Spec Control will request a merge without review once checks pass.");
+  expect(AUTO_MERGE_DOCS_INSTRUCTION).toContain("Confirm whether every changed file is under openspec/.");
 });
 
 /** The instruction says not to merge and not to enable auto-merge, and asks for neither anywhere else in it: the only

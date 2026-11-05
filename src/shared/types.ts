@@ -482,8 +482,10 @@ export interface AgentProfile {
   /** Argument list, never a shell string. `{prompt}` is replaced by the opening prompt as one argument; without it
    *  the prompt is typed into the terminal once the agent has started. */
   command: string[];
+  model?: string;
+  phaseModels?: Partial<Record<StarterPromptKey, string>>;
   /** Options of the user's own, put directly after the executable on every start of this agent — with or without a
-   *  prompt, and with the resume command. Never a placeholder: no prompt text reaches them. */
+   *  prompt, and with the resume command. Supports {model}; no prompt text reaches them. */
   launchArgs?: string[];
   /** Opening prompt per session starter; `{change}` is the only placeholder. A starter without a prompt is not offered. */
   prompts: Partial<Record<PromptKey, string>>;
@@ -510,6 +512,7 @@ export interface Shortcut {
 }
 
 export interface AgentSessionsConfig {
+  defaultModel?: string;
   enabled: boolean;
   agents: AgentProfile[];
   defaultAgent: string;
@@ -655,11 +658,11 @@ export type MergeResult = Session & {
 };
 
 export const DEFAULT_SHIP_PROMPT =
-  "Ship the work in this worktree: commit everything that belongs to it with a commit message that follows this repository's conventions, push the branch, and open a pull request against the default branch if there is none yet. Do not merge it. Tell me the pull request URL.";
+  "Commit all work belonging to this worktree using the repository's conventions, push the branch, and open a PR against the default branch if none exists. Do not merge. Report the PR URL.";
 
 /** What Ship adds for a project whose pull request titles follow Conventional Commits: one line, no placeholder. */
 export const CONVENTIONAL_COMMITS_SHIP_SENTENCE =
-  "Title the pull request as a Conventional Commit — <type>(<optional scope>): <summary>, for example feat(api): add pagination — and write the commit messages the same way.";
+  "Use Conventional Commits for commit messages and the PR title: <type>(<optional scope>): <summary>.";
 
 /** Appended to Ship's prompt, after the profile's additional instructions, only when the project allows docs-only pull
  *  requests to merge and the dashboard found nothing outside `openspec/` (auto-merge-docs design D4). One line, because
@@ -667,7 +670,7 @@ export const CONVENTIONAL_COMMITS_SHIP_SENTENCE =
  *  pull request is ready and then sends the Merge prompt (agent-merges-docs-prs D6). Not editable: it is the one
  *  instruction that loosens review. */
 export const AUTO_MERGE_DOCS_INSTRUCTION =
-  "This project lets a pull request that changes only files under openspec/ merge without review once its checks pass; Spec Control will ask you to merge it when it is ready. So open the pull request as asked, do not merge it and do not enable auto-merge on it, and tell me whether every file it changes is under openspec/.";
+  "Open the PR as asked. For openspec/-only changes, Spec Control will request a merge without review once checks pass. Do not merge or enable auto-merge now. Confirm whether every changed file is under openspec/.";
 
 /** Appended to the Archive prompt, after the profile's additional instructions, only when the project allows docs-only
  *  pull requests to merge and the session's worktree holds nothing outside `openspec/` (archive-auto-merge-docs design
