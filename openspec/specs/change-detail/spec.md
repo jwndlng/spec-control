@@ -202,6 +202,8 @@ control"), the others ended, their output still readable and their worktrees pos
 state, most recent first, and show the selected one; with a single session the list MAY be omitted. The most recently
 active session SHALL be selected by default.
 
+Each ended session in the list SHALL offer a removal control ("X") to delete that session's record. A running session MUST NOT offer a removal control. Activating the removal control SHALL delete the session's record and stored output via session deletion. When the removed session was selected, the Console tab SHALL fall back to the most recently active remaining session. When removing a session leaves only one session, the session list MAY be omitted.
+
 The selected session SHALL be part of the URL, so the console can be linked to and survives a reload, alongside the
 selected tab. A URL naming a session the change does not have SHALL fall back to the default selection without an
 error. Typing, default responses and next-step prompts MUST reach only the selected session.
@@ -222,6 +224,18 @@ error. Typing, default responses and next-step prompts MUST reach only the selec
 #### Scenario: Input reaches only the selected session
 - **WHEN** the change has two sessions and the user activates a default response
 - **THEN** only the selected session's terminal receives it
+
+#### Scenario: Removing an ended session from the list
+- **WHEN** the change has multiple sessions and the user activates the removal control ("X") on an ended session
+- **THEN** the session's record and stored output are deleted, and it is removed from the session list
+
+#### Scenario: Running session has no removal control
+- **WHEN** the change has multiple sessions and one session is running
+- **THEN** the running session's entry in the list shows no removal control ("X")
+
+#### Scenario: Removing the selected session falls back to the most recent
+- **WHEN** the user activates the removal control on the currently selected ended session
+- **THEN** that session is deleted and the Console tab selects the change's most recently active remaining session
 
 ### Requirement: The console tab shows work status and offers Ship
 The Console tab SHALL show the work status of the selected session's worktree and a Ship button while that status is
