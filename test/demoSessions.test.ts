@@ -423,3 +423,14 @@ test("custom demo session waits for the visitor and duplicate starts reuse it", 
   expect((await api.openSession("a71c02e9", "idempotency-keys", "custom")).id).toBe(session.id);
   view.connection.close();
 });
+
+test("refreshing demo pull requests never automatically ends sessions or removes worktrees", async () => {
+  const { api } = demo();
+  const before = await api.sessions();
+  const config = await api.config();
+  expect(config.agentSessions.endMergedSessions).not.toBe(false);
+  await api.refreshPullRequests({ force: true });
+  const after = await api.sessions();
+  expect(after.sessions).toEqual(before.sessions);
+  expect(after.worktrees).toEqual(before.worktrees);
+});

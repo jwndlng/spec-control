@@ -525,6 +525,11 @@ export interface AgentSessionsConfig {
   /** Whether Fast-forward asks for confirmation first; absent means it does. */
   confirmFastForward?: boolean;
   /**
+   * Whether a session whose own pull request merged is ended and its worktree removed when nothing in it would be lost
+   * (auto-end-session); absent means it is. Saved only as `false`.
+   */
+  endMergedSessions?: boolean;
+  /**
    * The editor Open in editor starts (openspec/specs/editor-launch): an argument list, never shell text, whose `{path}`
    * is replaced by the folder; without `{path}` the folder is the last argument. Absent means `DEFAULT_EDITOR`.
    */
@@ -869,7 +874,15 @@ export interface ChangeSession extends SessionBase {
    * a Merge prompt on its own (agent-merges-docs-prs).
    */
   autoMergeAskedAt?: string;
-  /** Set once the dashboard ended this session because its auto-merge pull request merged; it is never ended twice. */
+  /**
+   * When the session's agent was last started — opened, resumed, or started again for Ship or Resolve conflicts. A
+   * record without it reads `createdAt`. Only a pull request merged after it can end the session (auto-end-session D2).
+   */
+  agentStartedAt?: string;
+  /**
+   * Set once the dashboard ended this session because its pull request merged; it is never ended twice between starts,
+   * and starting its agent again clears it (auto-end-session D4).
+   */
   autoEnded?: AutoEnded;
   /**
    * The last Merge prompt sent to this session, by the dashboard or the user: written before anything is typed, so a

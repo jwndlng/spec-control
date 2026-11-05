@@ -1248,18 +1248,19 @@ export class SessionManager {
   }
 
   /**
-   * A pull-request query for `repoId` has completed: every session of that repository whose prompt carried the docs
-   * auto-merge instruction and whose pull request the list shows merged since is ended, and its worktree removed under the same
+   * A pull-request query for `repoId` has completed: eligible sessions whose own pull request merged are ended,
+   * under the docs auto-merge rule or the general rule when enabled, and their worktrees removed under the same
    * checks as the end-session dialog (auto-merge-cleanup D3, D4). Decided from the list and read-only git only — no
    * query, no fetch, and the branch is kept for repository cleanup. Once a session carries `autoEnded` it never
-   * matches again, so seeing the same merged pull request twice changes nothing.
+   * matches again until its agent starts again, so seeing the same merged pull request twice changes nothing.
    */
-  async endMergedAutoMerge(repoId: string, pullRequests: readonly PullRequest[]): Promise<void> {
+  async endMergedSessions(repoId: string, pullRequests: readonly PullRequest[]): Promise<void> {
     const config = this.deps.getConfig();
     if (!config.agentSessions.enabled) return;
     const repo = config.repos.find((r) => r.id === repoId);
-    if (repo?.agent?.autoMergeDocs !== true) return;
-    const candidate = (session: ChangeSession) => session.repoId === repoId && !session.inPlace && !session.adopted && session.autoMergeAskedAt !== undefined && !session.autoEnded && !this.autoEnding.has(session.id);
+    if (!repo) return;
+    const autoMergeEnabled = repo.agent?.autoMergeDocs === true;
+    const candidate = (session: ChangeSession) => session.repoId === repoId && !session.inPlace && !session.adopted && !session.autoEnded && !this.autoEnding.has(session.id) && (session.autoMergeAskedAt !== undefined && autoMergeEnabled || config.agentSessions.endMergedSessions !== false);
     if (!changeSessions(this.list()).some(candidate)) return;
     // Only the session's own pull request: not from a fork — an unknown answer counts as one — and into the default
     // branch as known locally, read once per call (D6), as the ready-merge and Resolve conflicts already require.
@@ -1267,12 +1268,21 @@ export class SessionManager {
     if (base === undefined) return;
     for (const session of changeSessions(this.list())) {
       if (!candidate(session)) continue;
-      const askedAt = Date.parse(session.autoMergeAskedAt as string);
-      const merged = pullRequests.find((pr) => pr.state === "merged" && pr.isCrossRepository === false && pr.base === base && pr.head === session.branch && pr.mergedAt !== undefined && Date.parse(pr.mergedAt) > askedAt);
+      const isAutoMergeSession = session.autoMergeAskedAt !== undefined && autoMergeEnabled;
+      const startedAt = Date.parse(session.agentStartedAt ?? session.createdAt);
+      const merged = pullRequests.find((pr) => pr.state === "merged" && pr.isCrossRepository === false && pr.base === base && pr.head === session.branch && pr.mergedAt !== undefined && Date.parse(pr.mergedAt) > startedAt && (!isAutoMergeSession || Date.parse(pr.mergedAt) > Date.parse(session.autoMergeAskedAt as string)));
       if (!merged) continue;
-      // Taken before the first await, so a second query settling meanwhile cannot end the same session again.
+      // Taken before the first per-session await, including the general rule's read-only checks.
       this.autoEnding.add(session.id);
       try {
+        if (!isAutoMergeSession) {
+          const work = await readWorkStatus(repo.path, session.worktreePath);
+          if (work.work.state === "uncommitted" || work.work.state === "missing") continue;
+          const head = await headCommit(session.worktreePath);
+          if (work.work.state !== "merged" && (merged.headOid === undefined || head !== merged.headOid)) continue;
+        }
+        // A user may have resumed the agent while git was answering about the previous start.
+        if (Date.parse(session.agentStartedAt ?? session.createdAt) !== startedAt) continue;
         // Nothing left to end or remove: the user already ended the session and removed its worktree.
         if (session.state !== "running" && !(await stat(session.worktreePath).catch(() => undefined))) continue;
         const { worktree } = await this.close(session.id, { removeWorktree: true });
@@ -1473,6 +1483,11 @@ export class SessionManager {
   }
 
   private start(session: Session, argv: string[], env: Record<string, string>, typed?: string): void {
+    if (!isChangeless(session)) {
+      session.agentStartedAt = new Date().toISOString();
+      session.autoEnded = undefined;
+      this.touchLater(session);
+    }
     const live: Live = { scrollback: this.live.get(session.id)?.scrollback ?? new Scrollback(), viewers: this.live.get(session.id)?.viewers ?? new Set(), lastStamp: 0, startedAt: 0, echoUntil: 0, lastUserInputAt: 0 };
     // A report never outlives the process that wrote it: whatever an earlier run left is gone before this one starts.
     const stateFile = this.store.statePath(session.id);
