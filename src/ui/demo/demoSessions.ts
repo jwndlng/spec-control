@@ -16,7 +16,7 @@ const DAY = 24 * HOUR;
 
 
 /** Fast-forward has no recording of its own: the demo plays its first phase, the draft. */
-const transcriptOf = (action: SessionAction): TranscriptName => (action === "fastForward" ? "draft" : action);
+const transcriptOf = (action: SessionAction): TranscriptName => (action === "custom" ? "custom" : action === "fastForward" ? "draft" : action);
 
 /** Same names the dashboard uses for a session's worktree and branch. */
 const worktreeName = (action: SessionAction, change: string) => (action === "archive" ? `archive-${change}` : change);

@@ -412,3 +412,14 @@ test("the demo reports its editor as found and opens none (editor-launch)", asyn
   expect(await refusal(api.openWorktreeEditor(session.repoId, listed.worktrees[0].name))).toBe("503: The demo opens no editor");
   expect(JSON.stringify(await api.sessions())).toBe(before);
 });
+
+test("custom demo session waits for the visitor and duplicate starts reuse it", async () => {
+  const { api, terminal, advance } = demo();
+  const session = await api.openSession("a71c02e9", "idempotency-keys", "custom");
+  expect(session.action).toBe("custom");
+  const view = terminal(session.id);
+  advance(60_000);
+  expect(view.text()).not.toContain("/opsx:");
+  expect((await api.openSession("a71c02e9", "idempotency-keys", "custom")).id).toBe(session.id);
+  view.connection.close();
+});

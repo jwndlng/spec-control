@@ -14,7 +14,7 @@ export type WaitingReason = "draft" | "checks running" | "mergeability unknown";
 export type NextStep = { kind: "start"; action: SessionAction } | { kind: "pullRequest"; step: PullRequestStep } | { kind: "waiting"; reason: WaitingReason };
 
 /** The menu's fixed order; the pull request's own action comes after these. */
-export const MENU_ORDER: readonly SessionAction[] = ["draft", "fastForward", "implement", "validate", "archive"];
+export const MENU_ORDER: readonly SessionAction[] = ["draft", "fastForward", "implement", "validate", "archive", "custom"];
 
 /** The stage's primary step, whether or not it is available. */
 export function stagePrimary(change: Pick<ChangeSnapshot, "stage" | "subState">): SessionAction | undefined {

@@ -57,9 +57,9 @@ test("a pending archive can be continued even without a pull request or session"
 test("a Ready card without a design shows Implement with Draft in the menu", () => {
   const controls = cardSessionControls(config, [], card({ artifacts: artifacts("ready") }));
   expect(controls.main).toEqual({ kind: "start", action: "implement" });
-  expect(controls.menu).toEqual([{ kind: "start", action: "draft" }]);
+  expect(controls.menu).toEqual([{ kind: "start", action: "draft" }, { kind: "start", action: "custom" }]);
   // With the design written there is nothing else: no arrow part.
-  expect(cardSessionControls(config, [], card()).menu).toEqual([]);
+  expect(cardSessionControls(config, [], card()).menu).toEqual([{ kind: "start", action: "custom" }]);
 });
 
 test("a card whose pull request's checks run shows the waiting label with its starters in the menu", () => {
@@ -68,8 +68,9 @@ test("a card whose pull request's checks run shows the waiting label with its st
   expect(controls.menu).toEqual([
     { kind: "start", action: "validate" },
     { kind: "start", action: "archive" },
+    { kind: "start", action: "custom" },
   ]);
-  expect(controls.starters).toEqual(["validate", "archive"]);
+  expect(controls.starters).toEqual(["validate", "archive", "custom"]);
 });
 
 test("a running session's badge stands in for the whole split button", () => {

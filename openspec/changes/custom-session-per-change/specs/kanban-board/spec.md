@@ -117,7 +117,7 @@ the split button on a card exactly as it does for the starters today.
 
 #### Scenario: Nothing else available
 - **WHEN** a change in `Done` with the sub-state `complete` has no linked open pull request
-- **THEN** the split button shows **Archive** and no arrow part
+- **THEN** the split button shows **Archive** and its menu offers **Custom session**
 
 #### Scenario: Running session
 - **WHEN** a session of `rotate-keys` is running and `#58` is ready

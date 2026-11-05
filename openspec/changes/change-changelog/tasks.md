@@ -22,5 +22,6 @@
 
 - [~] 3.1 Run `bun run check` on a machine where tests can bind local sockets and spawn `ps`; the changelog tests and
   typecheck pass, but this environment's full run had 93 unrelated socket/process permission failures.
-- [x] 3.2 Build the regular UI and demo; confirmed both bundles embed all 71 entries. The list is injected as static
+- [x] 3.2 Build the regular UI and demo; confirmed both bundles embed all 72 current entries (including the entry
+  added on main during this change). The list is injected as static
   data at build time, with no changelog filesystem or network access at runtime.
