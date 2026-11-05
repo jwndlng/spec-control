@@ -20,8 +20,7 @@
 
 ## 3. Verification
 
-- [~] 3.1 Run `bun run check` on a machine where tests can bind local sockets and spawn `ps`; the changelog tests and
-  typecheck pass, but this environment's full run had 93 unrelated socket/process permission failures.
+- [x] 3.1 Run `bun run check`; CI passed, and the migrated 71 entries were compared against the original data and order.
 - [x] 3.2 Build the regular UI and demo; confirmed both bundles embed all 72 current entries (including the entry
   added on main during this change). The list is injected as static
   data at build time, with no changelog filesystem or network access at runtime.
