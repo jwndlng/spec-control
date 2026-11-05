@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE } from "../src/shared/agentDefaults.ts";
 import type { AgentAvailability, AgentProfile, AgentSessionsConfig, KeepAwakeStatus, PromptKey } from "../src/shared/types.ts";
 import { defaultConfig, validateConfig } from "../src/server/config.ts";
-import { AgentEditor, ArgLinesArea, ArgLinesField, ConsoleAgentPicker, EditorCommandField, KeepAwakeSetting, keepAwakeState, PerProjectNote, PresetPicker, ShortcutEditor, withoutAgent } from "../src/ui/agentSettings.tsx";
+import { ModelField, AgentEditor, ArgLinesArea, ArgLinesField, ConsoleAgentPicker, EditorCommandField, KeepAwakeSetting, keepAwakeState, PerProjectNote, PresetPicker, ShortcutEditor, withoutAgent } from "../src/ui/agentSettings.tsx";
 import { argLinesText, argLinesValue } from "../src/ui/sessionState.ts";
 import { byComponent, byTag, elements, textOf } from "./vnode.ts";
 
@@ -119,7 +119,7 @@ test("each prompt's additional instructions follow that prompt before the next p
   const { tree } = editor({ open: true });
   // Every prompt and instructions field in document order, as P (prompt) or S (additional instructions).
   const order = elements(tree)
-    .filter((el) => (el.type === "input" || el.type === "textarea") && el.props.placeholder !== undefined)
+    .filter((el) => (el.type === "input" || el.type === "textarea") && el.props.placeholder !== undefined && !el.props["aria-label"])
     .map((el) => (el.props.placeholder === "nothing is appended" ? "S" : "P"))
     .join("");
   expect(order).toBe("PS".repeat(KEYS.length));
@@ -127,7 +127,7 @@ test("each prompt's additional instructions follow that prompt before the next p
   const labels = elements(tree)
     .filter((el) => el.props.class === "agent-prompt-label")
     .map((el) => textOf(el));
-  expect(labels).toEqual(["Name", "Command", "Launch arguments", "Resume command", "Draft artifacts", "Implement", "Validate", "Archive", "Ship", "Resolve conflicts", "Merge", "Integrate"]);
+  expect(labels).toEqual(["Model", "Draft artifacts model", "Implement model", "Validate model", "Archive model", "Name", "Command", "Launch arguments", "Resume command", "Draft artifacts", "Implement", "Validate", "Archive", "Ship", "Resolve conflicts", "Merge", "Integrate"]);
 });
 
 test("the Agent sessions section is grouped as Agents, Shortcuts, Fast-forward, Console, Projects and lists no worktree", async () => {
@@ -136,7 +136,7 @@ test("the Agent sessions section is grouped as Agents, Shortcuts, Fast-forward, 
   // AgentSettings uses hooks, so its order is read from its source.
   const source = await Bun.file(new URL("../src/ui/agentSettings.tsx", import.meta.url)).text();
   const body = source.slice(source.indexOf("export function AgentSettings"));
-  const at = ["<h2>Agent sessions</h2>", "<h3>Agents</h3>", "<ShortcutEditor", "<h3>Fast-forward</h3>", "<h3>Console</h3>", "<PerProjectNote"].map((s) => body.indexOf(s));
+  const at = ["<h2>Agent sessions</h2>", '<ModelField label="Default model"', "<h3>Agents</h3>", "<ShortcutEditor", "<h3>Fast-forward</h3>", "<h3>Console</h3>", "<PerProjectNote"].map((s) => body.indexOf(s));
   expect(at.every((i) => i >= 0)).toBe(true);
   expect([...at].sort((a, b) => a - b)).toEqual(at);
   expect(source).not.toContain("Session worktrees");
@@ -407,4 +407,45 @@ test("the editor command field: one argument per line, empty stores nothing, and
   expect(hint).toContain("Empty uses code");
   expect(hint).toContain('open -a "Visual Studio Code" {path}');
   expect(byComponent(EditorCommandField({ editor: ["zed", "--new"], onChange: () => {} }), ArgLinesField)[0].props.value).toEqual(["zed", "--new"]);
+});
+
+test("model inputs show inheritance, preserve typed spaces, and clear overrides", () => {
+  let changed: string | undefined = "old";
+  const tree = ModelField({
+    label: "Default model",
+    inherited: "global",
+    onChange: (value) => {
+      changed = value;
+    },
+  });
+  const input = byTag(tree, "input")[0];
+  expect(input.props.placeholder).toBe("Inherit: global");
+  const type = input.props.onInput as (e: { currentTarget: { value: string } }) => void;
+  type({ currentTarget: { value: " new model " } });
+  expect(changed).toBe(" new model ");
+  type({ currentTarget: { value: "" } });
+  expect(changed).toBeUndefined();
+  let patch: Partial<AgentProfile> = {};
+  const editor = AgentEditor({
+    agent: profile({ model: "profile", phaseModels: { draft: "deep" } }),
+    defaultModel: "global",
+    isDefault: true,
+    canRemove: false,
+    open: true,
+    onToggle: () => {},
+    onChange: (p) => {
+      patch = p;
+    },
+    onRemove: () => {},
+    onDefault: () => {},
+  });
+  expect(textOf(editor)).toContain("Phase models");
+  const fields = byTag(editor, "input").filter((el) => String(el.props["aria-label"] ?? "").endsWith("model") || el.props["aria-label"] === "Model");
+  expect(fields).toHaveLength(5);
+  expect(fields[0].props.placeholder).toBe("Inherit: global");
+  expect(fields[1].props.placeholder).toBe("Inherit: profile");
+  (fields[1].props.onInput as (e: { currentTarget: { value: string } }) => void)({ currentTarget: { value: "" } });
+  expect(patch.phaseModels).toBeUndefined();
+  (fields[2].props.onInput as (e: { currentTarget: { value: string } }) => void)({ currentTarget: { value: "coder" } });
+  expect(patch.phaseModels).toEqual({ draft: "deep", implement: "coder" });
 });

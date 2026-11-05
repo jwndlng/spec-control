@@ -12,7 +12,7 @@ import { isBranchName, isCleaningUp } from "../cleanup.ts";
 import { isDismissing } from "../dismissChange.ts";
 import { canonicalPath, worktreesDir } from "../paths.ts";
 import { CHANGE_NAME, LocalRepoSource } from "../source.ts";
-import { agentEnv, agentFor, availability, carryOverPrompt, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, removeDuplicatePrompt, resolveConflictsPrompt, resumeLaunch, shipPrompt, typedForm, type Launch } from "./agents.ts";
+import { resolveModel, agentEnv, agentFor, availability, carryOverPrompt, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, removeDuplicatePrompt, resolveConflictsPrompt, resumeLaunch, shipPrompt, typedForm, type Launch } from "./agents.ts";
 import { consoleFolderProblem, prepareConsoleFolder } from "./consoleFolder.ts";
 import { editorArgv, EditorError, editorCommand, editorFound, openEditor } from "./editor.ts";
 import type { SessionActivity } from "../activity/events.ts";
@@ -94,8 +94,8 @@ function typable(prompt: string): string {
 }
 
 /** How a prompt reaches the agent — as an argument, or typed after start-up through `resume` or a command without `{prompt}`. */
-function checkedLaunch(agent: AgentProfile, prompt: string, resume?: string[]): Launch {
-  const launch = resume ? { argv: resume, typed: prompt } : launchCommand(agent, prompt);
+function checkedLaunch(agent: AgentProfile, prompt: string, resume?: string[], model?: string): Launch {
+  const launch = resume ? { argv: resume, typed: prompt } : launchCommand(agent, prompt, model);
   return launch.typed === undefined ? launch : { ...launch, typed: typable(launch.typed) };
 }
 
@@ -537,7 +537,7 @@ export class SessionManager {
       session.autoMergeAskedAt = new Date().toISOString();
     }
     // Final only now: refused before the session is registered; a worktree just made stays, as any without a record.
-    const launch = checkedLaunch(agent!, prompt!);
+    const launch = checkedLaunch(agent!, prompt!, undefined, resolveModel(config, agent!, action));
     this.sessions.set(session.id, session);
     await this.store.saveMeta(session);
     this.start(session, launch.argv, agentEnv(agent!, process.env), launch.typed);
@@ -628,7 +628,7 @@ export class SessionManager {
     };
     this.sessions.set(session.id, session);
     await this.store.saveMeta(session);
-    this.start(session, launchWithoutPrompt(agent), agentEnv(agent, process.env));
+    this.start(session, launchWithoutPrompt(agent, resolveModel(config, agent)), agentEnv(agent, process.env));
     for (const removed of await this.store.prune(this.list())) this.sessions.delete(removed);
     return { session, created: true };
   }
@@ -647,7 +647,7 @@ export class SessionManager {
     this.refuseAgentInOrBelow(folder);
     const agent = defaultAgentOf(config);
     if (!agent) throw new SessionError(503, "no agent is configured");
-    const launch = checkedLaunch(agent, integratePrompt(agent));
+    const launch = checkedLaunch(agent, integratePrompt(agent), undefined, resolveModel(config, agent));
     if (!Bun.which(agent.command[0])) throw new SessionError(503, `${agent.name} was not found (${agent.command[0]}); install it or change its command in Settings`);
     const now = new Date().toISOString();
     const session: IntegrationSession = {
@@ -708,7 +708,7 @@ export class SessionManager {
     };
     this.sessions.set(session.id, session);
     await this.store.saveMeta(session);
-    this.start(session, launchWithoutPrompt(agent), agentEnv(agent, process.env));
+    this.start(session, launchWithoutPrompt(agent, resolveModel(config, agent)), agentEnv(agent, process.env));
     for (const removed of await this.store.prune(this.list())) this.sessions.delete(removed);
     return { session, created: true };
   }
@@ -1049,7 +1049,8 @@ export class SessionManager {
       this.report(session, { kind: "session-conflicts-resolve", submitted });
       return { ...session, submitted };
     }
-    const launch = checkedLaunch(agent, prompt, resumeLaunch(agent));
+    const model = resolveModel(this.deps.getConfig(), agent, session.action);
+    const launch = checkedLaunch(agent, prompt, resumeLaunch(agent, model), model);
     if (!Bun.which(launch.argv[0])) throw new SessionError(503, `${agent.name} was not found (${launch.argv[0]})`);
     await this.restart(session, repo.path, launch.argv, agentEnv(agent, process.env), launch.typed);
     this.report(session, { kind: "session-conflicts-resolve", submitted: true });
@@ -1144,7 +1145,7 @@ export class SessionManager {
     const config = this.deps.getConfig();
     const agent = agentFor(config, repo, change);
     if (!agent) throw new SessionError(503, "no agent is configured");
-    const launch = checkedLaunch(agent, resolveConflictsPrompt(agent, change, pr));
+    const launch = checkedLaunch(agent, resolveConflictsPrompt(agent, change, pr), undefined, resolveModel(config, agent));
     if (!Bun.which(agent.command[0])) throw new SessionError(503, `${agent.name} was not found (${agent.command[0]}); install it or change its command in Settings`);
 
     const now = new Date().toISOString();
@@ -1459,7 +1460,7 @@ export class SessionManager {
         : isProjectConsole(session)
           ? { ...(await this.prepareProjectConsoleRestart(session)), repoPath: undefined }
           : await this.prepareRestart(session).then(({ agent, repo }) => ({ agent, repoPath: repo.path }));
-    const resume = resumeLaunch(agent);
+    const resume = resumeLaunch(agent, resolveModel(this.deps.getConfig(), agent, isChangeless(session) ? undefined : session.action));
     if (!resume) throw new SessionError(400, "this agent has no resume command configured");
     if (!Bun.which(resume[0])) throw new SessionError(503, `${agent.name} was not found (${resume[0]})`);
     await this.restart(session, repoPath, resume, agentEnv(agent, process.env));
