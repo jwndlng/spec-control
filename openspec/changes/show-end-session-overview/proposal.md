@@ -30,3 +30,5 @@ _None._
 - Tests: Add unit tests in `test/sessionControls.test.ts` (or `test/kanban.test.ts` / `test/sessionState.test.ts`) covering card controls for archived merged changes with running sessions, auto-ended sessions, unmerged sessions, and active changes.
 
 - `src/ui/helpContent.tsx` and `src/ui/changelog.ts`: document the card action in Help and What's new.
+
+- `test/versionApi.test.ts`: scope process spies to each test to prevent earlier test-file activity from failing the PR’s Linux workflow.

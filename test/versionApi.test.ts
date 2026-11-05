@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from "bun:test";
 import { readdir } from "node:fs/promises";
 import { type AppState, createFetchHandler, startingFetchHandler } from "../src/server/api.ts";
 import { defaultConfig } from "../src/server/config.ts";
@@ -9,21 +9,23 @@ import { useTempHome } from "./helpers.ts";
 let home: string;
 let cleanup: () => Promise<void>;
 let state: AppState;
-const spawn = spyOn(Bun, "spawn");
-const spawnSync = spyOn(Bun, "spawnSync");
+let spawn: ReturnType<typeof spyOn<typeof Bun, "spawn">>;
+let spawnSync: ReturnType<typeof spyOn<typeof Bun, "spawnSync">>;
 
 beforeAll(async () => {
   ({ home, cleanup } = await useTempHome());
   state = { config: defaultConfig(), scanner: undefined as unknown as Scanner };
   state.scanner = new Scanner(() => state.config, { persist: false });
 });
-afterEach(() => {
-  spawn.mockClear();
-  spawnSync.mockClear();
+beforeEach(() => {
+  spawn = spyOn(Bun, "spawn");
+  spawnSync = spyOn(Bun, "spawnSync");
 });
-afterAll(async () => {
+afterEach(() => {
   spawn.mockRestore();
   spawnSync.mockRestore();
+});
+afterAll(async () => {
   state.scanner.stop();
   await cleanup();
 });
