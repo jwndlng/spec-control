@@ -22,9 +22,9 @@ and MUST NOT read or write any tracked repository.
 - **WHEN** multiple entry files have the same date
 - **THEN** the assembled list preserves established same-day positions and orders new entries by id ascending, regardless of filesystem enumeration order
 
-#### Scenario: Invalid entry file
-- **WHEN** a file name disagrees with its entry id, ids are duplicated, or an entry has an invalid date or empty text
-- **THEN** the loader fails and identifies the offending entry
+#### Scenario: Invalid entry source
+- **WHEN** an entry file has a filename that disagrees with its id, duplicate id, invalid date, empty title or empty summary
+- **THEN** validation fails and identifies the offending entry
 
 #### Scenario: Offline binary
 - **WHEN** the compiled binary runs on a machine without network access and the user opens What's new
@@ -75,14 +75,18 @@ still show the control and the dialog, with no count.
 
 ### Requirement: The changelog stays well-formed and current
 The build and test suite SHALL use the same validation logic and fail when two entries share an id, an id is not of the
-form `<YYYY-MM-DD>-<kebab-case-slug>` with the entry's own date, a date is not a valid calendar date, or a title or
-summary is empty. `CONTRIBUTING.md` SHALL tell contributors to add an independent entry file for every `feat` pull
-request whose change users can see, and this repository's OpenSpec configuration SHALL tell agents planning such a
-change to include a task to add that file.
+form `<YYYY-MM-DD>-<kebab-case-slug>` with the entry's own date, a date is not a valid calendar date, the list is not
+ordered newest first, or a title or summary is empty. `CONTRIBUTING.md` SHALL tell contributors to add an independent
+entry file for every `feat` pull request whose change users can see, and this repository's OpenSpec configuration SHALL
+tell agents planning such a change to include a task to add that file.
 
 #### Scenario: Duplicate id
 - **WHEN** a contributor adds an entry whose id is already in the list
 - **THEN** `bun run check` fails naming that id
+
+#### Scenario: Out of order
+- **WHEN** the assembled list orders an entry dated 2026-09-01 above one dated 2026-10-01
+- **THEN** `bun run check` fails
 
 #### Scenario: Same-day order is stable
 - **WHEN** filesystem enumeration returns same-day entries in a different order
