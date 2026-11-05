@@ -61,6 +61,13 @@ export interface ChangeMetadata {
   parse(text: string): { created?: string; recorded?: ChangeRecord };
 }
 
+export interface ChangeMetadataPaths {
+  /** Relative path of the change's active metadata file. */
+  active: string;
+  /** Relative path of the change's archived metadata file, when an archive directory is given. */
+  archived?: string;
+}
+
 /** Files a new change starts with: path relative to the change directory → content, written in this order. */
 export type ChangeScaffold = Record<string, string>;
 
@@ -132,6 +139,23 @@ export abstract class SpecFramework {
 
   /** The change metadata stale-change detection reads on a git ref; undefined when the framework records none. */
   readonly changeMetadata?: ChangeMetadata;
+
+  /**
+   * Pure transformation that sets `branch` or `archive-branch` in change metadata text.
+   * Undefined when the framework records no branch metadata.
+   */
+  recordBranchInMetadata?(text: string, key: "branch" | "archive-branch", branch: string): string;
+
+  /**
+   * Relative paths where a change's metadata file lives in a worktree (active metadata path, and archived when archiveDirName is given).
+   * Undefined when the framework records no metadata file.
+   */
+  changeMetadataPaths?(changeName: string, archiveDirName?: string): ChangeMetadataPaths;
+
+  /**
+   * Relative directory path where an active change would be moved when archived on date (YYYY-MM-DD); undefined when the framework does not archive.
+   */
+  archiveDirPath?(changeName: string, date: string): string;
 
   /** The files a new change starts with. The writer decides whether and how to write them. */
   abstract scaffold(input: { project: FrameworkProject; today: string }): ChangeScaffold;

@@ -1,7 +1,7 @@
 import type { ActivityQuery } from "../shared/activity.ts";
 import type { RepoAgentPatch } from "../shared/repoSettings.ts";
 import type { EditorAvailability, EditorStarted, GithubClone, GithubClonesResponse, GithubRepoList, KeepAwakeStatus } from "../shared/types.ts";
-import type { ActivityPage, AutoMergePromptResult, BranchDeletePreview, BranchDeleteRequest, BranchDeleteResult, ConsoleSession, ProjectConsoleLike, CleanupPreview, CleanupResult, CleanupSelection, ChangeIssueRef, CreateChangeResponse, DismissPreview, DismissResult, EnvironmentReport, EnvironmentView, FolderPickResult, PromptResult, PullRequestsResponse, PullResolve, PullResult, RepoIssues, SetupState, ShipRequest, ShipResult, StaleCleanupPreview, StaleCleanupRequest, StaleCleanupResult, StartResult, UpdateStatus, WorkStatus } from "../shared/types.ts";
+import type { ActivityPage, AutoMergePromptResult, BranchDeletePreview, BranchDeleteRequest, BranchDeleteResult, ConsoleSession, ProjectConsoleLike, CleanupPreview, CleanupResult, CleanupSelection, ChangeIssueRef, CreateChangeResponse, DismissPreview, DismissResult, EnvironmentReport, EnvironmentView, FolderPickResult, PromptResult, PullRequestsResponse, PullResolve, PullResult, RepoIssues, SessionCleanup, SetupState, ShipRequest, ShipResult, StaleCleanupPreview, StaleCleanupRequest, StaleCleanupResult, StartResult, UpdateStatus, WorkStatus } from "../shared/types.ts";
 import type { AgentAvailability, AutoFetchSeconds, ArtifactFileContent, ChangeArtifacts, Config, CreateProjectResponse, DiscoverResult, IntegrationSession, PrTitleConvention, RepoConfig, ScanTriggerResult, Session, SessionAction, SessionWorktree, SharedConfig, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Snapshot } from "../shared/types.ts";
 import { socketOrigin } from "./url.ts";
 
@@ -103,6 +103,7 @@ export interface Api {
   renameRepo(repoId: string, name: string): Promise<Config>;
   /** A project's agent-session toggle and agent picker, saved at once; `agentId: null` means the default agent. */
   setRepoAgent(repoId: string, patch: RepoAgentPatch): Promise<Config>;
+  setChangeAgent(repoId: string, change: string, agentId: string | null): Promise<Config>;
   /** A project's labels dialog, saved at once: either list replaced, an empty one removed. */
   setRepoLabels(repoId: string, patch: Pick<RepoConfig, "labels" | "hiddenLabels">): Promise<Config>;
   /** A project's PR titles picker, saved at once; `null` means no convention. */
@@ -198,6 +199,11 @@ export interface Api {
   staleCleanupPreview(repoId: string, change: string, ending?: string): Promise<StaleCleanupPreview>;
   /** Removes the stale leftovers the user confirmed, each re-checked by the server, after a backup of their uncommitted files. */
   staleCleanup(repoId: string, change: string, request: StaleCleanupRequest): Promise<StaleCleanupResult>;
+  /**
+   * The same cleanup for the ended session `sessionId`, carried on in the background: answered once it is recorded as
+   * pending on that session, whose `cleanup` later holds the outcome (cleanup-background).
+   */
+  staleCleanupInBackground(repoId: string, change: string, request: StaleCleanupRequest, sessionId: string): Promise<{ session: Session; cleanup: SessionCleanup }>;
   /** Read-only: what dismissing the change would delete, file by file, and whether git could restore each. */
   dismissPreview(repoId: string, change: string): Promise<DismissPreview>;
   /**
@@ -258,6 +264,8 @@ export interface Api {
   removeWorktree(repoId: string, name: string): Promise<{ removable: boolean; reason?: string }>;
   /** Ends the agent if it is running; removes the worktree only when asked and safe. */
   closeSession(id: string, removeWorktree: boolean): Promise<{ session: Session; worktree?: { removable: boolean; reason?: string } }>;
+  /** Ends the agent, then removes the worktree in the background when safe; the outcome lands on the session's `cleanup`. */
+  closeSessionInBackground(id: string): Promise<{ session: Session; cleanup: SessionCleanup }>;
   deleteSession(id: string): Promise<{ deleted: boolean }>;
   /** Whether the worktree could be removed, and its work status read at this moment (not from the list's cache). */
   worktreeStatus(id: string): Promise<{ removable: boolean; reason?: string; work?: WorkStatus }>;
@@ -325,6 +333,7 @@ export const httpApi: Api = {
   ignorePath: (path) => callConfig("/api/ignore-paths", { method: "POST", body: JSON.stringify({ path }) }),
   renameRepo: (repoId, name) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/name`, { method: "POST", body: JSON.stringify({ name }) }),
   setRepoAgent: (repoId, patch) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/agent`, { method: "POST", body: JSON.stringify(patch) }),
+  setChangeAgent: (repoId, change, agentId) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/agent`, { method: "POST", body: JSON.stringify({ agentId }) }),
   // An absent list is sent as an empty one: the route removes the key, which is what "no labels left" means.
   setRepoLabels: (repoId, patch) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/labels`, { method: "POST", body: JSON.stringify(labelLists(patch)) }),
   setRepoPrTitleConvention: (repoId, convention) =>
@@ -373,6 +382,8 @@ export const httpApi: Api = {
     call<StaleCleanupPreview>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/stale-cleanup${ending ? `?ending=${encodeURIComponent(ending)}` : ""}`),
   staleCleanup: (repoId, change, request) =>
     call<StaleCleanupResult>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/stale-cleanup`, { method: "POST", body: JSON.stringify(request) }),
+  staleCleanupInBackground: (repoId, change, request, sessionId) =>
+    call(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/stale-cleanup`, { method: "POST", body: JSON.stringify({ ...request, session: sessionId }) }),
   dismissPreview: (repoId, change) => call<DismissPreview>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/dismiss`),
   dismissChange: (repoId, change, fingerprint) =>
     call<DismissResult>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/dismiss`, { method: "POST", body: JSON.stringify({ fingerprint }) }),
@@ -395,6 +406,7 @@ export const httpApi: Api = {
   openWorktreeEditor: (repoId, name) => call<EditorStarted>("/api/worktrees/editor", { method: "POST", body: JSON.stringify({ repoId, name }) }),
   removeWorktree: (repoId, name) => call("/api/worktrees/remove", { method: "POST", body: JSON.stringify({ repoId, name }) }),
   closeSession: (id, removeWorktree) => call(`/api/sessions/${id}/close`, { method: "POST", body: JSON.stringify({ removeWorktree }) }),
+  closeSessionInBackground: (id) => call(`/api/sessions/${id}/close`, { method: "POST", body: JSON.stringify({ removeWorktree: true, background: true }) }),
   deleteSession: (id) => call<{ deleted: boolean }>(`/api/sessions/${id}`, { method: "DELETE" }),
   worktreeStatus: (id) => call<{ removable: boolean; reason?: string; work?: WorkStatus }>(`/api/sessions/${id}/worktree`),
   promptSession: (id, action) => call<AutoMergePromptResult>(`/api/sessions/${id}/prompt`, { method: "POST", body: JSON.stringify({ action }) }),
@@ -441,6 +453,7 @@ export const api: Api = {
   ignorePath: (path) => current.ignorePath(path),
   renameRepo: (...args) => current.renameRepo(...args),
   setRepoAgent: (...args) => current.setRepoAgent(...args),
+  setChangeAgent: (...args) => current.setChangeAgent(...args),
   setRepoLabels: (...args) => current.setRepoLabels(...args),
   setRepoPrTitleConvention: (...args) => current.setRepoPrTitleConvention(...args),
   setRepoAutoFetch: (...args) => current.setRepoAutoFetch(...args),
@@ -477,6 +490,7 @@ export const api: Api = {
   deleteBranch: (...args) => current.deleteBranch(...args),
   staleCleanupPreview: (...args) => current.staleCleanupPreview(...args),
   staleCleanup: (...args) => current.staleCleanup(...args),
+  staleCleanupInBackground: (...args) => current.staleCleanupInBackground(...args),
   dismissPreview: (...args) => current.dismissPreview(...args),
   dismissChange: (...args) => current.dismissChange(...args),
   sharedConfig: () => current.sharedConfig(),
@@ -498,6 +512,7 @@ export const api: Api = {
   openWorktreeEditor: (...args) => current.openWorktreeEditor(...args),
   removeWorktree: (...args) => current.removeWorktree(...args),
   closeSession: (...args) => current.closeSession(...args),
+  closeSessionInBackground: (...args) => current.closeSessionInBackground(...args),
   deleteSession: (...args) => current.deleteSession(...args),
   worktreeStatus: (...args) => current.worktreeStatus(...args),
   promptSession: (...args) => current.promptSession(...args),

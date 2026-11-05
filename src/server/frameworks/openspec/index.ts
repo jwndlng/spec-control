@@ -5,9 +5,9 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { FRAMEWORK_INFO } from "../../../shared/types.ts";
 import { boundedReadWarning, CHANGE_NAME, type ChangeDirEntry, MAX_REPO_FILE_BYTES, type RepoSource } from "../../source.ts";
-import { type ChangeMetadata, type ChangeScaffold, type FrameworkChange, type FrameworkChangeOutputs, type FrameworkLayout, type FrameworkProject, SpecFramework, type SpecSyncResult } from "../framework.ts";
+import { type ChangeMetadata, type ChangeMetadataPaths, type ChangeScaffold, type FrameworkChange, type FrameworkChangeOutputs, type FrameworkLayout, type FrameworkProject, SpecFramework, type SpecSyncResult } from "../framework.ts";
 import { DEFAULT_SCHEMA, readChangeArtifacts } from "./adapter.ts";
-import { isPlainSchemaName, parseMarker } from "./marker.ts";
+import { isPlainSchemaName, parseMarker, type RecordedBranchKey, setRecordedBranchInMarker } from "./marker.ts";
 import { changeSpecsSynced } from "./specSync.ts";
 
 const ROOT = "openspec";
@@ -92,6 +92,21 @@ export class OpenSpecFramework extends SpecFramework {
     return changeSpecsSynced(source, entry.dir);
   }
 
+  override recordBranchInMetadata(text: string, key: RecordedBranchKey, branch: string): string {
+    return setRecordedBranchInMarker(text, key, branch);
+  }
+
+  override changeMetadataPaths(changeName: string, archiveDirName?: string): ChangeMetadataPaths {
+    return {
+      active: `${this.layout.changesDir}/${changeName}/${CHANGE_MARKER}`,
+      ...(archiveDirName ? { archived: `${this.layout.archiveDir}/${archiveDirName}/${CHANGE_MARKER}` } : {}),
+    };
+  }
+
+  override archiveDirPath(changeName: string, date: string): string {
+    return `${this.layout.archiveDir}/${date}-${changeName}`;
+  }
+
   /**
    * The record instruction (spec-frameworks: "OpenSpec changes record their pull request's branch in `.openspec.yaml`"):
    * the agent, not the dashboard, writes the head branch into the change's marker, in the commit with its work. One
@@ -100,7 +115,7 @@ export class OpenSpecFramework extends SpecFramework {
   override recordInstruction({ change, archive }: { change: string; archive: boolean }): string {
     if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
     const key = archive ? "archive-branch" : "branch";
-    return `Before you commit, set ${key}: <the branch you push> under the top-level key spec-control: in openspec/changes/${change}/${CHANGE_MARKER} (or openspec/changes/archive/<date>-${change}/${CHANGE_MARKER} if this branch archived it), indented two spaces, unless it already says so. Change nothing else in the file. Commit it with your work before you push; add no pull request number and no later commit.`;
+    return `Before committing, set ${key}: <the branch you push> under top-level spec-control: (two-space indent) in openspec/changes/${change}/${CHANGE_MARKER} (or openspec/changes/archive/<date>-${change}/${CHANGE_MARKER} if archived here). Leave it if correct; preserve all other fields. Commit with the work before pushing; no PR number or later record-only commit.`;
   }
 
   /** `.openspec.yaml` naming the project's schema and today's date, as `openspec new change` writes it. */

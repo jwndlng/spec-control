@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ConfigValidationError, configRevision, defaultAgentSessions, defaultConfig, loadConfig, newRepoConfig, repoId, saveConfig, updateConfig, validateConfig, validateIgnorePaths } from "../src/server/config.ts";
+import { assignRepoId, ConfigValidationError, configRevision, defaultAgentSessions, defaultConfig, loadConfig, newRepoConfig, repoId, saveConfig, updateConfig, validateConfig, validateIgnorePaths } from "../src/server/config.ts";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE, CODEX_PROFILE, DEFAULT_SHORTCUTS, FORMER_PROMPTS } from "../src/shared/agentDefaults.ts";
 import type { PromptKey } from "../src/shared/types.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
@@ -51,7 +51,7 @@ test("invalid config is rejected with messages", () => {
   expect(() => validateConfig({ ...defaultConfig(), scanRoots: ["relative/path"] })).toThrow(/absolute/);
   const repo = newRepoConfig("/tmp/a");
   expect(() => validateConfig({ ...defaultConfig(), repos: [repo, repo] })).toThrow(/duplicate/);
-  expect(() => validateConfig({ ...defaultConfig(), repos: [{ ...repo, id: "000000000000" }] })).toThrow(/does not match/);
+  expect(() => validateConfig({ ...defaultConfig(), repos: [{ ...repo, id: "not-an-id" }] })).toThrow(/repos\.0\.id/);
 });
 
 test("rename keeps id; id derives from path", () => {
@@ -320,7 +320,8 @@ test("legacy entries for one directory under two spellings merge; the enabled on
   };
   await writeFile(join(home, "config.json"), JSON.stringify(legacy), "utf8");
   const { config, warning } = await loadConfig();
-  expect(config.repos).toEqual([{ id: repoId(real), path: real, name: "Beta SOC", enabled: true }]);
+  // The winner keeps its own id, as stored.
+  expect(config.repos).toEqual([{ id: legacyId(viaLink), path: real, name: "Beta SOC", enabled: true }]);
   expect(config.scanRoots).toEqual([join(work, "acme")]);
   expect(warning).toMatch(/merged "beta-soc" into "Beta SOC"/);
   expect(warning).not.toMatch(/reset to defaults/);
@@ -335,7 +336,32 @@ test("a legacy non-canonical path is repaired instead of resetting the config", 
   const { config, warning } = await loadConfig();
   expect(warning).toBeUndefined();
   expect(config.pollIntervalSeconds).toBe(120);
-  expect(config.repos).toEqual([{ id: repoId(join(work, "acme", "beta-soc")), path: join(work, "acme", "beta-soc"), name: "Kept", enabled: true }]);
+  expect(config.repos).toEqual([{ id: legacyId(viaLink), path: join(work, "acme", "beta-soc"), name: "Kept", enabled: true }]);
+});
+
+test("loading keeps a stored id when the path now has another spelling, and assigns one only where none is stored", async () => {
+  const viaLink = join(work, "link", "beta-soc");
+  const other = join(work, "acme", "other");
+  await writeFile(join(home, "config.json"), JSON.stringify({ ...defaultConfig(), repos: [{ id: "0123456789ab", path: viaLink, name: "beta-soc", enabled: true }, { path: other, name: "other", enabled: false }] }), "utf8");
+  const { config, warning } = await loadConfig();
+  expect(warning).toBeUndefined();
+  expect(config.repos.map((r) => [r.id, r.path])).toEqual([
+    ["0123456789ab", join(work, "acme", "beta-soc")],
+    [repoId(other), other],
+  ]);
+});
+
+test("a folder renamed by case keeps its id across a restart (case-insensitive file systems only)", async () => {
+  const dir = join(work, "case", "Acme");
+  await mkdir(dir, { recursive: true });
+  const lower = join(work, "case", "acme");
+  if (!(await stat(lower).catch(() => undefined))) return; // case-sensitive: the rename makes another directory
+  const repo = newRepoConfig(dir, true);
+  await saveConfig({ ...defaultConfig(), repos: [repo] });
+  await rename(dir, join(work, "case", "acme-tmp"));
+  await rename(join(work, "case", "acme-tmp"), lower);
+  const { config } = await loadConfig();
+  expect(config.repos).toEqual([{ ...repo, path: lower }]);
 });
 
 test("one directory has one id, however it is spelled", () => {
@@ -343,11 +369,49 @@ test("one directory has one id, however it is spelled", () => {
   expect(newRepoConfig(`${join(work, "link", "beta-soc")}/`).path).toBe(join(work, "acme", "beta-soc"));
 });
 
-test("validation stays strict: mismatching id and two repos resolving to one directory are rejected", () => {
+test("validation keeps a stored id whatever spelling its path has, and refuses one directory listed twice", () => {
   const real = newRepoConfig(join(work, "acme", "beta-soc"));
   const viaLink = join(work, "link", "beta-soc");
-  expect(() => validateConfig({ ...defaultConfig(), repos: [{ ...real, path: viaLink, id: legacyId(viaLink) }] })).toThrow(/does not match/);
-  expect(() => validateConfig({ ...defaultConfig(), repos: [real, { ...real, path: viaLink, name: "again" }] })).toThrow(/duplicate repo id/);
+  const respelled = validateConfig({ ...defaultConfig(), repos: [{ ...real, path: viaLink, id: legacyId(viaLink) }] });
+  expect(respelled.repos[0]).toEqual({ ...real, id: legacyId(viaLink) });
+  expect(() => validateConfig({ ...defaultConfig(), repos: [real, { ...real, id: legacyId(viaLink), path: viaLink, name: "again" }] })).toThrow(`repos.1.path: the same directory is listed twice: ${real.path}`);
+});
+
+test("a new repository gets its path's id, or the next derived one when that is taken", () => {
+  const path = "/w/acme/Tools";
+  expect(assignRepoId(path, [])).toBe(repoId(path));
+  expect(assignRepoId(path, ["0123456789ab"])).toBe(repoId(path));
+  const next = assignRepoId(path, [repoId(path)]);
+  expect(next).toMatch(/^[a-f0-9]{12}$/);
+  expect(next).not.toBe(repoId(path));
+  expect(assignRepoId(path, [repoId(path)])).toBe(next); // deterministic
+  const third = assignRepoId(path, [repoId(path), next]);
+  expect([repoId(path), next]).not.toContain(third);
+  expect(newRepoConfig(path, true, [repoId(path)]).id).toBe(next);
+});
+
+test("a write keeps an id on its directory: old spellings save canonically, re-pointed or invented ids are refused", async () => {
+  const real = join(work, "acme", "beta-soc");
+  await mkdir(join(work, "acme", "gamma"), { recursive: true });
+  const beta = newRepoConfig(real, true);
+  const gamma = newRepoConfig(join(work, "acme", "gamma"), true);
+  const state = { config: await saveConfig({ ...defaultConfig(), repos: [beta, gamma] }) };
+  const stored = await readFile(join(home, "config.json"), "utf8");
+
+  // The id with the old spelling (here through the link) is saved under the canonical path.
+  const { saved } = await updateConfig(state, (current) => ({ ...current, repos: [{ ...beta, path: join(work, "link", "beta-soc"), name: "Beta" }, gamma] }));
+  expect(saved.repos[0]).toEqual({ ...beta, name: "Beta" });
+  const afterRename = await readFile(join(home, "config.json"), "utf8");
+
+  await expect(updateConfig(state, (current) => ({ ...current, repos: [{ ...current.repos[0], path: gamma.path }] }))).rejects.toThrow("repos.0.id: this id belongs to another directory");
+  const newcomer = join(work, "acme", "delta");
+  await expect(updateConfig(state, (current) => ({ ...current, repos: [...current.repos, { ...newRepoConfig(newcomer), id: "0123456789ab" }] }))).rejects.toThrow("repos.2.id: not the id this path is assigned");
+  expect(await readFile(join(home, "config.json"), "utf8")).toBe(afterRename);
+  expect(afterRename).not.toBe(stored);
+
+  // The assigned id is accepted.
+  const added = await updateConfig(state, (current) => ({ ...current, repos: [...current.repos, newRepoConfig(newcomer, false, current.repos.map((r) => r.id))] }));
+  expect(added.saved.repos[2].id).toBe(repoId(newcomer));
 });
 
 test("ignore paths must be absolute and are stored canonically", () => {
@@ -373,6 +437,16 @@ test("the console agent is optional, kept when it names a profile, and refused w
   expect(validateConfig({ ...base, agentSessions: two }).agentSessions.consoleAgent).toBeUndefined();
   expect(validateConfig({ ...base, agentSessions: { ...two, consoleAgent: "my-agent" } }).agentSessions.consoleAgent).toBe("my-agent");
   expect(() => validateConfig({ ...base, agentSessions: { ...two, consoleAgent: "nope" } })).toThrow(/agentSessions\.consoleAgent: unknown agent/);
+});
+
+test("change agent overrides validate change names and configured profiles", () => {
+  const base = defaultConfig();
+  const second = { ...CLAUDE_PROFILE, id: "my-agent", name: "My Agent", command: ["my-agent-cli", "{prompt}"] };
+  const repo = { ...newRepoConfig("/w/change-agents", true), agent: { enabled: true, changeAgents: { "rotate-keys": "my-agent" } } };
+  const config = { ...base, repos: [repo], agentSessions: { ...base.agentSessions, agents: [CLAUDE_PROFILE, second] } };
+  expect(validateConfig(config).repos[0].agent?.changeAgents).toEqual({ "rotate-keys": "my-agent" });
+  expect(() => validateConfig({ ...config, repos: [{ ...repo, agent: { ...repo.agent, changeAgents: { "bad/name": "my-agent" } } }] })).toThrow(/changeAgents/);
+  expect(() => validateConfig({ ...config, repos: [{ ...repo, agent: { ...repo.agent, changeAgents: { "rotate-keys": "missing" } } }] })).toThrow(/unknown agent/);
 });
 
 test("the Resolve conflicts prompt and its suffix survive a round trip, like Ship's", () => {
@@ -583,4 +657,39 @@ test("a config's revision depends on its content only: equal configs share one, 
   expect(configRevision({ ...config, pollIntervalSeconds: 90 })).not.toBe(configRevision(config));
   expect(configRevision({ ...config, labelColors: { bug: 3 } })).not.toBe(configRevision(config));
   expect(configRevision(config)).toMatch(/^"[0-9a-f]{16}"$/);
+});
+test("model settings trim and round-trip; invalid models are rejected at every level", async () => {
+  const base = defaultConfig();
+  const configWith = (value: string) => ({
+    ...base,
+    agentSessions: {
+      ...base.agentSessions,
+      defaultModel: value,
+      agents: [{ ...base.agentSessions.agents[0], model: value, phaseModels: { draft: value, implement: value, validate: value, archive: value } }],
+    },
+  });
+  const config = validateConfig(configWith(" custom-v1 "));
+  expect(config.agentSessions.defaultModel).toBe("custom-v1");
+  expect(config.agentSessions.agents[0].phaseModels?.draft).toBe("custom-v1");
+  await saveConfig(config);
+  expect((await loadConfig()).config.agentSessions).toEqual(config.agentSessions);
+  for (const bad of ["", "  ", "a".repeat(129), "model\n", "model\t", "model\u0085", "--yolo", "bypassPermissions", "model --dangerously-skip-permissions"]) {
+    for (const settings of [
+      { ...base.agentSessions, defaultModel: bad },
+      { ...base.agentSessions, agents: [{ ...base.agentSessions.agents[0], model: bad }] },
+      { ...base.agentSessions, agents: [{ ...base.agentSessions.agents[0], phaseModels: { implement: bad } }] },
+    ])
+      expect(() => validateConfig({ ...base, agentSessions: settings })).toThrow();
+    await expect(saveConfig(configWith(bad))).rejects.toThrow();
+    expect((await loadConfig()).config.agentSessions).toEqual(config.agentSessions);
+  }
+  expect(
+    validateConfig({
+      ...base,
+      agentSessions: {
+        ...base.agentSessions,
+        agents: [{ ...base.agentSessions.agents[0], command: ["custom", "--select={model}", "{prompt}"], launchArgs: ["{model}"] }],
+      },
+    }).agentSessions.agents[0].launchArgs,
+  ).toEqual(["{model}"]);
 });

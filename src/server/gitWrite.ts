@@ -41,6 +41,85 @@ export function writeSettings(hooksDir: string): string[] {
   return ["-c", `core.hooksPath=${hooksDir}`, "-c", "gc.auto=0", "-c", "maintenance.auto=false"];
 }
 
+/** `https://user:secret@host/…` must never reach the browser or logs. */
+export function maskCredentials(text: string): string {
+  return text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, "$1***@");
+}
+
+/** SSH environment that prevents interactive prompts. */
+function batchSshEnv(): Record<string, string> {
+  return process.env.GIT_SSH_COMMAND ? {} : { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" };
+}
+
+/** Stages all changes and commits in the worktree with hooks disabled and author fallback if none configured. */
+export async function commitWorktreeAll(cwd: string, message: string, options: GitWriteOptions = {}): Promise<GitWriteResult> {
+  const addRes = await gitWrite(cwd, ["add", "--all"], options);
+  if (!addRes.ok) {
+    return { ...addRes, err: maskCredentials(addRes.err) };
+  }
+  let commitRes = await gitWrite(cwd, ["commit", "--no-verify", "-m", message], options);
+  if (!commitRes.ok && /user\.name|user\.email|author identity unknown|tell me who you are|empty ident name/i.test(commitRes.err)) {
+    const fallbackEnv = {
+      ...options.env,
+      GIT_AUTHOR_NAME: "Spec Control",
+      GIT_AUTHOR_EMAIL: "spec-control@localhost",
+      GIT_COMMITTER_NAME: "Spec Control",
+      GIT_COMMITTER_EMAIL: "spec-control@localhost",
+    };
+    commitRes = await gitWrite(
+      cwd,
+      ["-c", "user.name=Spec Control", "-c", "user.email=spec-control@localhost", "commit", "--no-verify", "-m", message],
+      { ...options, env: fallbackEnv }
+    );
+  }
+  return { ...commitRes, err: maskCredentials(commitRes.err) };
+}
+
+/** Pushes the worktree's HEAD to branch on remote with hooks disabled, batch SSH, and masked credentials. */
+export async function pushWorktreeBranch(
+  cwd: string,
+  branch: string,
+  remote = "origin",
+  options: GitWriteOptions = {}
+): Promise<GitWriteResult> {
+  const env = { ...batchSshEnv(), ...options.env };
+  const res = await gitWrite(cwd, ["push", "--no-verify", "--set-upstream", remote, `HEAD:refs/heads/${branch}`], {
+    ...options,
+    env,
+  });
+  return { ...res, err: maskCredentials(res.err) };
+}
+
+/** Runs git cherry-pick on commit in the worktree with hooks disabled and masked credentials. */
+export async function cherryPickWorktreeCommit(
+  cwd: string,
+  commit: string,
+  options: GitWriteOptions = {}
+): Promise<GitWriteResult> {
+  const fallbackEnv = {
+    ...options.env,
+    GIT_AUTHOR_NAME: "Spec Control",
+    GIT_AUTHOR_EMAIL: "spec-control@localhost",
+    GIT_COMMITTER_NAME: "Spec Control",
+    GIT_COMMITTER_EMAIL: "spec-control@localhost",
+  };
+  let res = await gitWrite(cwd, ["cherry-pick", commit], { ...options, env: fallbackEnv });
+  if (!res.ok && /user\.name|user\.email|author identity unknown|tell me who you are|empty ident name/i.test(res.err)) {
+    res = await gitWrite(
+      cwd,
+      ["-c", "user.name=Spec Control", "-c", "user.email=spec-control@localhost", "cherry-pick", commit],
+      { ...options, env: fallbackEnv }
+    );
+  }
+  return { ...res, err: maskCredentials(res.err) };
+}
+
+/** Aborts an in-progress cherry-pick in the worktree with hooks disabled. */
+export async function abortWorktreeCherryPick(cwd: string, options: GitWriteOptions = {}): Promise<GitWriteResult> {
+  const res = await gitWrite(cwd, ["cherry-pick", "--abort"], options);
+  return { ...res, err: maskCredentials(res.err) };
+}
+
 /** git without a shell, a prompt or stdin, with no hooks and no automatic maintenance. Never throws. */
 export async function gitWrite(cwd: string, args: string[], options: GitWriteOptions = {}): Promise<GitWriteResult> {
   let hooks: string;

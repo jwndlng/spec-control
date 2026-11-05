@@ -160,3 +160,101 @@ export async function listGithubRepos(owner: string | undefined, added: Readonly
     .sort((a, b) => (Date.parse(b.pushedAt) || 0) - (Date.parse(a.pushedAt) || 0) || a.repo.localeCompare(b.repo));
   return { status: "ok", owner: login, truncated: raw.length >= REPO_LIST_LIMIT, repos };
 }
+
+// ---- pull request mutations (pull-requests: "Pull requests are created and merged through the GitHub CLI") ----
+
+export interface CreatePullRequestInput {
+  head: string;
+  base: string;
+  title: string;
+  body?: string;
+}
+
+export interface CreatePullRequestResult {
+  ok: boolean;
+  url?: string;
+  failure?: GhFailure;
+}
+
+export interface MergePullRequestResult {
+  ok: boolean;
+  failure?: GhFailure;
+}
+
+/**
+ * Creates a pull request via `gh pr create --repo <owner/name> --head <branch> --base <defaultBranch> --title <title> --body <body>`.
+ * Runs in the dashboard home directory without a shell, with prompts disabled.
+ */
+export async function createPullRequest(
+  repo: string,
+  input: CreatePullRequestInput,
+  timeoutMs = GH_TIMEOUT_MS
+): Promise<CreatePullRequestResult> {
+  const purpose = "create a pull request";
+  if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) {
+    return { ok: false, failure: { kind: "failed", reason: `invalid repository name: ${repo}` } };
+  }
+  if (!input.head || !input.base || !input.title) {
+    return { ok: false, failure: { kind: "failed", reason: "head, base and title are required" } };
+  }
+
+  const args = [
+    "pr",
+    "create",
+    "--repo",
+    repo,
+    "--head",
+    input.head,
+    "--base",
+    input.base,
+    "--title",
+    input.title,
+    "--body",
+    input.body ?? "",
+  ];
+
+  const run = await runGh(args, timeoutMs);
+  const failure = failureOf(run, purpose);
+  if (failure) return { ok: false, failure };
+  return { ok: true, url: run.out.trim() };
+}
+
+/**
+ * Merges a pull request via `gh pr merge <number> --repo <owner/name> --squash --match-head-commit <headOid>`.
+ * Never passes `--delete-branch` or `--auto`.
+ * Runs in the dashboard home directory without a shell, with prompts disabled.
+ */
+export async function mergePullRequest(
+  repo: string,
+  number: number,
+  headOid: string,
+  timeoutMs = GH_TIMEOUT_MS
+): Promise<MergePullRequestResult> {
+  const purpose = "merge a pull request";
+  if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) {
+    return { ok: false, failure: { kind: "failed", reason: `invalid repository name: ${repo}` } };
+  }
+  if (!Number.isInteger(number) || number <= 0) {
+    return { ok: false, failure: { kind: "failed", reason: `invalid pull request number: ${number}` } };
+  }
+  if (!/^[0-9a-f]{40}$/i.test(headOid)) {
+    return { ok: false, failure: { kind: "failed", reason: `invalid head commit: ${headOid}` } };
+  }
+
+  const args = [
+    "pr",
+    "merge",
+    String(number),
+    "--repo",
+    repo,
+    "--squash",
+    "--match-head-commit",
+    headOid,
+  ];
+
+  const run = await runGh(args, timeoutMs);
+  const failure = failureOf(run, purpose);
+  if (failure) return { ok: false, failure };
+  return { ok: true };
+}
+

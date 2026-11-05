@@ -24,3 +24,7 @@ Ship currently reads work status and sends a configurable prompt, without checki
 - [A stale PR cache or changed worktree misleads] → Name freshness, recheck before action, and tell the agent to verify evidence; never tick automatically.
 - [Custom profiles and other spec frameworks differ] → Preserve custom prompt content and use framework-neutral task reading; if unavailable, show unknown rather than assuming completion.
 - [Another worktree owns the implementation branch] → Reuse only under existing adoption and one-session rules; otherwise explain the refusal.
+
+## Integration update
+
+The merged agent-interoperability change replaced Ship prompts with deterministic server-side commit, push and PR operations. Preflight now runs before these writes; Finish tasks remains an agent request and never ships. Automatic Ship refuses unresolved or unknown tasks rather than treating awaiting tasks as complete. Proposal-only automatic Ship is exempt because it precedes implementation. Automatic docs merging is gated for implementation and archive sessions. Fast-forward keeps its Draft and Implement prompts, gains the evidence instruction, and relies on the same server task gate when the agent exits. Customized Ship prompt helpers retain their text and completion instruction for compatibility, but interactive Ship no longer sends them.

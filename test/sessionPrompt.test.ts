@@ -26,6 +26,30 @@ afterAll(() => cleanup());
 const changeOf = (h: Harness, name: string) => h.snapshot.repos[0].changes.find((c) => c.name === name) as ChangeSnapshot;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+test("change overrides choose the new session's profile and its available prompts", async () => {
+  const h = await harness();
+  managers.push(h.manager);
+  h.config.agentSessions.agents.push(fakeProfile({ id: "other", name: "Other", prompts: { implement: "other {change}" } }));
+  h.config.repos[0].agent = { enabled: true, changeAgents: { "upgrade-runtime": "other" } };
+  const change = changeOf(h, "upgrade-runtime");
+  const s = await h.manager.open({ repoId: h.repoId, change: change.name, action: "implement" });
+  expect(s.agentId).toBe("other");
+  const seen = await watch(h.manager, s.id);
+  await waitFor(() => seen.text().includes("other upgrade-runtime"), "the overridden prompt");
+  h.manager.write(s.id, "exit\r");
+  await waitFor(() => h.manager.get(s.id).state === "exited", "exit");
+  delete h.config.repos[0].agent?.changeAgents;
+  const resumed = await h.manager.resume(s.id);
+  expect(resumed.agentId).toBe("other");
+  h.manager.write(resumed.id, "exit\r");
+  await waitFor(() => h.manager.get(resumed.id).state === "exited", "resumed exit");
+  h.config.repos[0].agent = { enabled: true, changeAgents: { "upgrade-runtime": "other" } };
+  const { session: consoleSession } = await h.manager.openProjectConsole(h.repoId);
+  expect(consoleSession.agentId).toBe("fake");
+  Object.assign(change, { stage: "done" });
+  await expect(h.manager.open({ repoId: h.repoId, change: change.name, action: "archive" })).rejects.toThrow(/no "archive" prompt configured/);
+});
+
 test("the next step is submitted to the running session with no key press from the user", async () => {
   const h = await harness();
   managers.push(h.manager);

@@ -82,6 +82,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             needs agent sessions to be on.
           </li>
           <li>
+            <strong>Update OpenSpec setup</strong> in an OpenSpec project's settings opens its existing project console with a
+            request you can review, copy and send to add tools such as Codex or refresh instructions. It asks the agent to
+            preserve existing tools and content and ask what you want to add. Nothing is sent automatically; the agent
+            edits the project folder directly, with its normal permissions. In the demo, the console is simulated.
+          </li>
+          <li>
             <strong>New change</strong> on a board creates <code>openspec/changes/&lt;name&gt;/</code>, optionally with a
             prompt, and stages it. Nothing is committed. A name uses letters, digits, <code>.</code>, <code>-</code> and{" "}
             <code>_</code>, at most 128 of them; it must not start with <code>.</code> or <code>-</code>, contain{" "}
@@ -174,6 +180,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             instead of the starters, and the console offers the next step — sent into that session, as a prompt.
           </li>
           <li>
+            Choose a <strong>Default model</strong> in Settings → Agent sessions, a profile's <strong>Model</strong>, or its expandable{" "}
+            <strong>Phase models</strong>. A phase inherits the profile model, then the global default; leaving all three empty uses the CLI default. Models
+            apply on session start; running sessions keep theirs. Fast-forward uses the profile or global model throughout. Custom command arguments can contain{" "}
+            <code>{"{model}"}</code>; otherwise the dashboard adds <code>--model</code> followed by the model name.
+          </li>
+          <li>
             <strong>Open in editor</strong>, beside <strong>Copy cd</strong> in the Console tab and in Open work, opens the
             folder the change's agent works in — its worktree, or the project folder for a session without one — in your
             editor. It runs VS Code's <code>code</code> unless you set another <strong>Editor command</strong> under{" "}
@@ -187,12 +199,9 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             Ship first reads tasks from the session checkout. Unfinished or unreadable tasks offer <strong>Finish tasks</strong>, <strong>Ship anyway</strong> and Cancel.
             Finish tasks does not ship. Ship anyway keeps unresolved markers for PR-dependent checks and withholds docs auto-merge. Automatic merging of implementation and archive PRs waits until every task is marked complete; proposal PRs can still merge before implementation.
             After a linked implementation PR merges, <strong>Finish checks</strong> on the card and Console tab asks the agent to verify actual evidence and prepare a follow-up PR; cached merge status never completes a task.
-            Fast-forward includes the same completion instructions, but its combined prompt cannot enforce this interactive Ship gate.
-            The fixed Ship completion instruction follows your custom Ship text, before title, branch-recording and additional instructions; docs auto-merge instructions remain last.
-            <strong>Ship</strong> asks the agent to commit, push and open a pull request, and to record the branch it pushes
-            in the change's <code>.openspec.yaml</code>, under <code>spec-control:</code>, in the same commit;{" "}
-            <strong>Resolve conflicts</strong> asks it to bring a branch that no longer merges up to date. The dashboard
-            itself commits, merges and pushes nothing.
+            Fast-forward includes the same completion instructions and automatically ships only when every task is marked complete.
+            <strong>Ship</strong> commits, pushes and opens the pull request on the server, after the task review. <strong>Finish tasks</strong> and <strong>Finish checks</strong> send requests to the agent; they do not ship.
+            <strong>Resolve conflicts</strong> asks the agent to bring the branch up to date.
             An archived card whose work is still pending offers <strong>Continue archive</strong> to open its console:
             resume its session to review unfinished tasks, or use <strong>Ship</strong> to ask the agent to open a pull request.
           </li>
@@ -222,7 +231,9 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           <li>
             <strong>Open work</strong> in the top bar lists running agents and worktrees that still hold something.{" "}
             <strong>End session</strong> stops an agent and, by default, pulls the repository and — when nothing would be
-            lost — removes its worktree; clear either box before confirming to skip it. Once the change is archived and
+            lost — removes its worktree; clear either box before confirming to skip it. Confirmed worktree cleanup continues
+            in the background so you can keep working immediately; while running, the session shows <em>cleaning up…</em>,
+            and its completion, kept worktree, or failure is reported on the card and console. Once the change is archived and
             merged, it offers <strong>Clean up leftovers</strong> instead: the session's worktree and whatever else of the
             change is left over go in the same confirmation, after a copy of their uncommitted files is kept. It is selected
             unless a file outside the change would be deleted.
@@ -236,6 +247,10 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             Each project's <strong>console</strong> button — on its overview row or tile and on its board — opens its agent
             in the project's own folder, for anything that is not a change. It works there directly, with no branch and no
             undo. The session that set a new project up shows here until you start a new console.
+          </li>
+          <li>
+            With more than one agent profile, a change's Console tab lets you choose an agent for its next session.
+            Choose Project agent to return to the project's choice. A running session keeps its original agent.
           </li>
         </ul>
         <p>

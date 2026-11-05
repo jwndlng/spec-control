@@ -465,6 +465,8 @@ export interface RepoAgentConfig {
   enabled: boolean;
   /** Agent profile used for this repository; absent means the default agent. */
   agentId?: string;
+  /** Agent profiles selected for individual active changes. */
+  changeAgents?: Record<string, string>;
   /** Docs auto-merge: Ship and Archive leave a docs-only pull request open and Spec Control asks the agent to merge it once
    *  it is ready (agent-merges-docs-prs). The name predates that and is kept for compatibility. Absent means off. */
   autoMergeDocs?: boolean;
@@ -480,8 +482,10 @@ export interface AgentProfile {
   /** Argument list, never a shell string. `{prompt}` is replaced by the opening prompt as one argument; without it
    *  the prompt is typed into the terminal once the agent has started. */
   command: string[];
+  model?: string;
+  phaseModels?: Partial<Record<StarterPromptKey, string>>;
   /** Options of the user's own, put directly after the executable on every start of this agent — with or without a
-   *  prompt, and with the resume command. Never a placeholder: no prompt text reaches them. */
+   *  prompt, and with the resume command. Supports {model}; no prompt text reaches them. */
   launchArgs?: string[];
   /** Opening prompt per session starter; `{change}` is the only placeholder. A starter without a prompt is not offered. */
   prompts: Partial<Record<PromptKey, string>>;
@@ -508,6 +512,7 @@ export interface Shortcut {
 }
 
 export interface AgentSessionsConfig {
+  defaultModel?: string;
   enabled: boolean;
   agents: AgentProfile[];
   defaultAgent: string;
@@ -629,9 +634,16 @@ export type PromptKey = StarterPromptKey | "ship" | "integrate" | "resolveConfli
  *  was submitted. `false` means the agent of a running session did not show the typed prompt (it may be showing a
  *  menu), so Enter was not pressed and nothing was confirmed. */
 export type PromptResult = Session & { submitted: boolean };
-/** What Ship and a starter's prompt sent into a running session answer: the same, plus whether the prompt carried an
- *  auto-merge instruction — `AUTO_MERGE_DOCS_INSTRUCTION` for Ship, `AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION` for Archive,
- *  `AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION` for Draft. */
+/** What Ship answers: the session, whether it was shipped deterministically, and whether docs auto-merge was asked. */
+export type ShipResult = Session & {
+  shipped: boolean;
+  preflight?: ShipPreflight;
+  submitted: boolean;
+  autoMerge: boolean;
+  autoMergeInstructionIncluded: boolean;
+  pullRequestUrl?: string;
+  pullRequestNumber?: number;
+};
 export type AutoMergePromptResult = PromptResult & { autoMerge: boolean };
 export interface ShipPreflight {
   token: string;
@@ -646,24 +658,32 @@ export interface ShipTaskSummary {
   awaiting: string[];
   truncated: boolean;
 }
-export interface ShipRequest { confirmation?: string; finishTasks?: boolean }
-export type ShipResult = AutoMergePromptResult & { preflight?: ShipPreflight };
+export interface ShipRequest { title?: string; confirmation?: string; finishTasks?: boolean }
 
 export const TASK_COMPLETION_INSTRUCTION = "Complete and verify every task you can, including automated checks, before shipping. Tick only tasks supported by evidence; report the precise blocker for anything unresolved. Reserve - [~] for work that truly requires the user, complete all automatable parts first, and state exactly what the user must check or do on that task's line.";
 export const SHIP_COMPLETION_INSTRUCTION = `${TASK_COMPLETION_INSTRUCTION} Identify checks that require a PR or its CI, preserve their unresolved markers, and revisit them when evidence is available.`;
 export const FINISH_TASKS_PROMPT = `${TASK_COMPLETION_INSTRUCTION} Finish the remaining tasks in this checkout and report blockers. Do not ship as part of this request.`;
 export const FINISH_CHECKS_PROMPT = `${TASK_COMPLETION_INSTRUCTION} Verify the remaining checks against actual command results and PR check evidence; a merged PR alone proves no task complete. Prepare the verified task update for review in a follow-up PR when needed. Before committing or pushing, create a fresh follow-up branch in this worktree; never push to the merged branch or alter the main checkout. Leave tasks unresolved when evidence is missing.`;
+
 /** What starting a session answers: the session, and whether its opening prompt carried
  *  `AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION` or `AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION`. Always `false` for a session that
  *  was already open and was returned. */
-export type StartResult = Session & { autoMerge: boolean };
+export type StartResult = Session & { autoMerge: boolean; shipped?: boolean };
+
+/** What Merge answers: the session and the merged pull request's number and head commit. */
+export type MergeResult = Session & {
+  merged: true;
+  number: number;
+  headOid: string;
+  submitted: boolean;
+};
 
 export const DEFAULT_SHIP_PROMPT =
-  "Ship the work in this worktree: commit everything that belongs to it with a commit message that follows this repository's conventions, push the branch, and open a pull request against the default branch if there is none yet. Do not merge it. Tell me the pull request URL.";
+  "Commit all work belonging to this worktree using the repository's conventions, push the branch, and open a PR against the default branch if none exists. Do not merge. Report the PR URL.";
 
 /** What Ship adds for a project whose pull request titles follow Conventional Commits: one line, no placeholder. */
 export const CONVENTIONAL_COMMITS_SHIP_SENTENCE =
-  "Title the pull request as a Conventional Commit — <type>(<optional scope>): <summary>, for example feat(api): add pagination — and write the commit messages the same way.";
+  "Use Conventional Commits for commit messages and the PR title: <type>(<optional scope>): <summary>.";
 
 /** Appended to Ship's prompt, after the profile's additional instructions, only when the project allows docs-only pull
  *  requests to merge and the dashboard found nothing outside `openspec/` (auto-merge-docs design D4). One line, because
@@ -671,7 +691,7 @@ export const CONVENTIONAL_COMMITS_SHIP_SENTENCE =
  *  pull request is ready and then sends the Merge prompt (agent-merges-docs-prs D6). Not editable: it is the one
  *  instruction that loosens review. */
 export const AUTO_MERGE_DOCS_INSTRUCTION =
-  "This project lets a pull request that changes only files under openspec/ merge without review once its checks pass; Spec Control will ask you to merge it when it is ready. So open the pull request as asked, do not merge it and do not enable auto-merge on it, and tell me whether every file it changes is under openspec/.";
+  "Open the PR as asked. For openspec/-only changes, Spec Control will request a merge without review once checks pass. Do not merge or enable auto-merge now. Confirm whether every changed file is under openspec/.";
 
 /** Appended to the Archive prompt, after the profile's additional instructions, only when the project allows docs-only
  *  pull requests to merge and the session's worktree holds nothing outside `openspec/` (archive-auto-merge-docs design
@@ -883,6 +903,34 @@ export interface ChangeSession extends SessionBase {
    * re-created for it starts from `origin/<branch>` rather than from the base (resolve-pr-conflicts D2).
    */
   pullRequest?: number;
+  /** Set when a deterministic Ship (manual or automatic on session exit) failed; cleared when Ship succeeds. */
+  shipError?: string;
+  /**
+   * The worktree cleanup the user confirmed when ending this session, carried on in the background once the session
+   * had ended (cleanup-background). Stored, so an outcome — or a cleanup a restart interrupted — outlives a reload.
+   */
+  cleanup?: SessionCleanup;
+}
+
+/**
+ * `pending`: still running. `done`: it ran — a stale cleanup may still have kept or copied some items, see `stale`.
+ * `failed`: the worktree was kept, or nothing was attempted (`reason`). `interrupted`: the dashboard stopped before it
+ * finished; every step re-checks what it removes, so confirming the cleanup again is safe.
+ */
+export type SessionCleanupState = "pending" | "done" | "failed" | "interrupted";
+
+/** A cleanup confirmed in the end-session dialog: the plain worktree removal, or Clean up leftovers of a stale change. */
+export interface SessionCleanup {
+  kind: "worktree" | "stale";
+  state: SessionCleanupState;
+  startedAt: string;
+  finishedAt?: string;
+  /** Whether the session's own worktree is gone afterwards. */
+  worktreeRemoved?: boolean;
+  /** Why the cleanup failed or was interrupted, in the words of the check that refused it. */
+  reason?: string;
+  /** A stale cleanup's per-item outcomes, exactly as the cleanup route reports them. */
+  stale?: StaleCleanupResult;
 }
 
 /** A Merge prompt sent to a session (agent-merges-docs-prs D4). */

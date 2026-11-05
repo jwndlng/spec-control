@@ -456,11 +456,11 @@ export function createDemoSessions({ now, getConfig, getSnapshot, integratable, 
       if (!SHIPPABLE_WORK.includes(work.state)) throw new ApiError(409, `there is nothing to ship (${work.state})`);
       const change = getSnapshot().repos.find((r) => r.id === s.session.repoId)?.changes.find((c) => c.name === s.session.change);
       if ((!change?.tasks || change.tasks.total === 0 || change.tasks.done < change.tasks.total) && request.confirmation !== `demo:${id}` && !request.finishTasks) {
-        return { ...s.session, submitted: false, autoMerge: false, preflight: { token: `demo:${id}`, summary: { verified: !!change?.tasks?.total, reason: "Demo task state; no real checks run.", total: change?.tasks?.total ?? 0, done: change?.tasks?.done ?? 0, open: ["Verify the implementation checks"], awaiting: change?.tasks?.awaitingTasks ?? [], truncated: false } } };
+        return { ...s.session, shipped: false, autoMergeInstructionIncluded: false, submitted: false, autoMerge: false, preflight: { token: `demo:${id}`, summary: { verified: !!change?.tasks?.total, reason: "Demo task state; no real checks run.", total: change?.tasks?.total ?? 0, done: change?.tasks?.done ?? 0, open: ["Verify the implementation checks"], awaiting: change?.tasks?.awaitingTasks ?? [], truncated: false } } };
       }
       run(s, request.finishTasks ? "implement" : "ship");
       // The recording's agent ships nothing real, so its prompt never carries the docs auto-merge instruction.
-      return { ...s.session, submitted: true, autoMerge: false };
+      return { ...s.session, shipped: !request.finishTasks, submitted: true, autoMerge: false, autoMergeInstructionIncluded: false };
     },
 
     resolveConflicts(id: string): PromptResult {
@@ -506,6 +506,16 @@ export function createDemoSessions({ now, getConfig, getSnapshot, integratable, 
       const worktree = removable(workOf(s), s.session.adopted);
       if (worktree.removable) s.removed = true;
       return { session: s.session, worktree };
+    },
+
+    /** Nothing in the demo is slow: the "background" removal has finished by the time the answer arrives. */
+    closeInBackground(id: string) {
+      const { session, worktree } = this.close(id, true);
+      if (isChangeless(session)) throw new ApiError(409, "this session belongs to no change");
+      const at = iso(now());
+      const removed = worktree?.removable === true;
+      session.cleanup = { kind: "worktree", state: removed ? "done" : "failed", startedAt: at, finishedAt: at, worktreeRemoved: removed, ...(removed ? {} : { reason: worktree?.reason ?? "the worktree is not safe to remove" }) };
+      return { session, cleanup: session.cleanup };
     },
 
     removeWorktree(repoId: string, name: string) {

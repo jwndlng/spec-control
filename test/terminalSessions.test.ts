@@ -1,5 +1,5 @@
 import { TASK_COMPLETION_INSTRUCTION } from "../src/shared/types.ts";
-import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -156,7 +156,7 @@ test("archive is offered once the delta is already in the main specs: the change
   expect(h.snapshot.repos[0].changes.find((c) => c.name === "bump-toolchain")).toMatchObject({ specsSynced: true, stage: "done", column: "Done" });
 
   const arch = await h.manager.open({ repoId: h.repoId, change: "bump-toolchain", action: "archive" });
-  expect(arch).toMatchObject({ state: "running", action: "archive", branch: "chore/archive-bump-toolchain" });
+  expect(arch).toMatchObject({ state: "exited", action: "archive", branch: "chore/archive-bump-toolchain" });
   expect(arch.worktreePath.endsWith("archive-bump-toolchain")).toBe(true);
 });
 
@@ -253,8 +253,7 @@ test("Fast-forward: one session on the change's branch whose prompt drafts, impl
   await waitFor(() => view.text().includes("fake-agent ready"), "agent banner");
   const args = view.text().replace(/\r?\n/g, "");
   expect(args).toContain(`args=["draft ${drafting.name} This change is fast-forwarded`);
-  expect(args).toContain(`implement ${drafting.name} ${TASK_COMPLETION_INSTRUCTION} When every task is settled, ship the work without asking me: Ship the work`);
-  expect(args).toContain("Title the pull request as a Conventional Commit");
+  expect(args).toContain(`implement ${drafting.name} ${TASK_COMPLETION_INSTRUCTION}`);
   expect(args).not.toContain("auto-merge");
 });
 
@@ -421,14 +420,18 @@ test("an agent showing a menu gets the text but never an Enter, and keeps runnin
 
 test("an opening prompt typed after start-up is not sent into a dialog", async () => {
   const h = await harness({ agent: { command: [FAKE_AGENT, "--menu"] } });
-  const manager = h.newManager({ ...FAST_SUBMIT, typePromptDelayMs: 1500 });
+  // Use the production startup delay: the harness's 150 ms shortcut can type before the fake agent enters raw mode.
+  const manager = h.newManager({ ...FAST_SUBMIT, typePromptDelayMs: undefined });
   managers.push(manager);
+  const submit = spyOn(manager, "submit");
   const s = await manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
   const view = await watch(manager, s.id);
   await waitFor(() => view.text().includes("Enter to confirm"), "the menu");
-  await new Promise((r) => setTimeout(r, 1500 + 600 + 300)); // start-up delay + echo timeout + margin
+  await waitFor(() => submit.mock.calls.length > 0, "the opening prompt is typed");
+  expect(await submit.mock.results[0]!.value).toEqual({ submitted: false });
   expect(view.text()).not.toContain("menu confirmed by Enter");
   expect(manager.get(s.id).state).toBe("running");
+  submit.mockRestore();
 });
 
 test("submissions to one session run one after another", async () => {

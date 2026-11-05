@@ -13,8 +13,9 @@ import { cdCommand } from "./format.ts";
 import { inPlaceReason } from "./inPlaceText.ts";
 import { NOT_SUBMITTED_NOTICE, shortcutHint, shortcutMessage, visibleShortcuts } from "./quickReplies.ts";
 import { usePullRequests } from "./pullRequests.tsx";
-import { autoEndedText, autoMergeNotice, conflictAction, consoleSteps, handedOverProposal, mergeControl, mergeNotice, oneAtATime, RESUME_TO_MERGE, resolvable, sessionBadge, sessionsEnabledFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
+import { autoEndedText, autoMergeNotice, cleanupNotice, conflictAction, consoleSteps, handedOverProposal, mergeControl, mergeNotice, oneAtATime, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, sessionsEnabledFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
 import { ConflictBadge, OpenInEditor, SessionBadgeView, SessionControls, useSessionUi } from "./sessions.tsx";
+import { StaleCleanupOutcome } from "./staleCleanup.tsx";
 
 export function Copy({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false);
@@ -276,6 +277,22 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   // The badge sits beside the work badge, not instead of it: "pushed" and "no longer merges" are both true.
   // The change's pull request, from the lists the page already holds: GitHub's conflict counts here too.
   const card = repoId && change ? ui.snapshot?.repos.find((r) => r.id === repoId)?.changes.find((c) => c.name === change && !c.archived) : undefined;
+  const nextAgentId = repo && change ? (repo.agent?.changeAgents?.[change] ?? repo.agent?.agentId ?? ui.config?.agentSessions.defaultAgent) : undefined;
+  const nextAgent = ui.config?.agentSessions.agents.find((agent) => agent.id === nextAgentId);
+  const [agentError, setAgentError] = useState<string>();
+  const [savingAgent, setSavingAgent] = useState(false);
+  const chooseAgent = async (agentId: string) => {
+    if (!repoId || !change || savingAgent) return;
+    setSavingAgent(true);
+    setAgentError(undefined);
+    try {
+      ui.saveConfig(await api.setChangeAgent(repoId, change, agentId || null));
+    } catch (err) {
+      setAgentError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingAgent(false);
+    }
+  };
   const canResolve = resolvable(session, tree, card ? linkedPullRequest(card, prs.data?.repos) : undefined, prs.data?.repos.find((r) => r.repoId === repoId)?.fetchedAt);
   const merged = tree?.work.state === "merged";
   // Merge: the session's open pull request, from the lists the page already holds (agent-merges-docs-prs D7) — or the
@@ -314,6 +331,16 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   return (
     <section class="console-pane" aria-label={`Agent console ${change ?? ""}`}>
       <header class="session-head">
+        {card && repo && ui.config && ui.config.agentSessions.agents.length > 1 && (
+          <div class="row change-agent-picker">
+            <label>Agent <select aria-label="Change agent" value={repo.agent?.changeAgents?.[change ?? ""] ?? ""} disabled={savingAgent} onChange={(event) => void chooseAgent(event.currentTarget.value)}>
+              <option value="">Project agent ({ui.config.agentSessions.agents.find((agent) => agent.id === repo.agent?.agentId)?.name ?? ui.config.agentSessions.agents.find((agent) => agent.id === ui.config?.agentSessions.defaultAgent)?.name})</option>
+              {ui.config.agentSessions.agents.map((agent) => <option value={agent.id}>{agent.name}</option>)}
+            </select></label>
+          </div>
+        )}
+        {agentError && <div class="notice danger" role="status">{agentError}</div>}
+        {session && nextAgent && session.agentId !== nextAgent.id && <div class="hint">This session uses {session.agentName}; the next session starts {nextAgent.name}.</div>}
         <div class="row">
           {session && <span class="hint">{session.agentName}</span>}
           {repo && <span class="hint">· {repo.name}</span>}
@@ -346,11 +373,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
               type="button"
               class="btn sm primary"
               disabled={acting}
-              title={
-                session.state === "running"
-                  ? `Sends ${session.agentName} a prompt asking it to commit, push and open a pull request`
-                  : `Starts ${session.agentName} in this worktree with a prompt to commit, push and open a pull request`
-              }
+              title="Commits, pushes and opens a pull request deterministically on the server without an agent"
               onClick={() =>
                 act(async () => {
                   await ui.ship(session.id);
@@ -446,8 +469,8 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
             />
           )}
           {session && (
-            <button type="button" class="btn sm" onClick={() => ui.requestEnd(session.id)}>
-              {session.state === "running" ? "End session" : "Clean up"}
+            <button type="button" class="btn sm" disabled={session.cleanup?.state === "pending"} onClick={() => ui.requestEnd(session.id)}>
+              {session.state === "running" ? "End session" : session.cleanup?.state === "pending" ? "Cleaning up…" : "Clean up"}
             </button>
           )}
           {session && session.state !== "running" && (
@@ -460,6 +483,12 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
         </div>
         {(error ?? session?.error) && <div class="notice danger">{error ?? session?.error}</div>}
         {session?.autoEnded && <div class={`notice ${session.autoEnded.removed ? "ok" : "warn"}`}>{autoEndedText(session.autoEnded)}</div>}
+        {session?.cleanup && (
+          <div class={`notice ${session.cleanup.state === "done" ? (session.cleanup.worktreeRemoved ? "ok" : "warn") : session.cleanup.state === "pending" ? "" : "danger"}`} role="status">
+            {cleanupNotice(session.cleanup, session.change)}
+          </div>
+        )}
+        {session?.cleanup?.stale && <StaleCleanupOutcome result={session.cleanup.stale} />}
         {pendingMerge && (
           <div class={`notice ${pendingMerge.tone === "warn" ? "warn" : ""}`} role="status" title={pendingMerge.title}>
             {pendingMerge.text}

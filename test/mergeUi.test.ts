@@ -37,7 +37,7 @@ test("Merge is enabled for a running session with a ready pull request and a hea
   expect(mergeControl(session(), lists(pr({ checks: "pending" })))).toMatchObject({ enabled: false, title: expect.stringContaining("checks are still running") });
   expect(mergeControl(session(), lists(pr({ mergeable: "conflicting" })))).toMatchObject({ enabled: false, title: expect.stringContaining("conflicts") });
   expect(mergeControl(session(), lists(pr({ headOid: undefined })))).toMatchObject({ enabled: false, title: expect.stringContaining("no head commit") });
-  expect(mergeControl(session({ state: "exited" }), lists(pr()))).toMatchObject({ enabled: false, title: RESUME_TO_MERGE });
+  expect(mergeControl(session({ state: "exited" }), lists(pr()))).toMatchObject({ enabled: true, title: expect.stringContaining("#88, only if its head is still c0ffee1") });
   // No open pull request: no Merge at all.
   expect(mergeControl(session(), lists())).toBeUndefined();
   expect(mergeControl(undefined, lists(pr()))).toBeUndefined();

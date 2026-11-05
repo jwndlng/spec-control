@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { realpathSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type AppState, createFetchHandler } from "../src/server/api.ts";
-import { defaultConfig, newRepoConfig, repoId, saveConfig } from "../src/server/config.ts";
+import { assignRepoId, defaultConfig, newRepoConfig, repoId, saveConfig } from "../src/server/config.ts";
 import { configPath } from "../src/server/paths.ts";
 import { type Config, repoAgentEnabled } from "../src/shared/types.ts";
+import type { Snapshot } from "../src/shared/types.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
 
 let cleanup: () => Promise<void>;
@@ -79,6 +80,61 @@ test("tracking a configured repository re-enables it and keeps its name", async 
   expect(res.status).toBe(200);
   expect((await saved()).repos).toEqual([{ ...newRepoConfig(paths().alpha, true), name: "Alpha" }]);
   expect(triggered).toBe(1);
+});
+
+test("change agent overrides set and clear without triggering a scan", async () => {
+  const alpha = state.config.repos[0];
+  state.config = { ...state.config, repos: [{ ...alpha, enabled: true, agent: { enabled: true, changeAgents: { "gone-change": "claude" } } }], agentSessions: { ...state.config.agentSessions, enabled: true } };
+  (state.scanner as unknown as { snapshot: Snapshot }).snapshot = {
+    generatedAt: new Date().toISOString(),
+    repos: [{ id: alpha.id, changes: [{ name: "rotate-keys" }] }],
+  } as unknown as Snapshot;
+  const path = `/api/repos/${alpha.id}/changes/rotate-keys/agent`;
+  expect((await send(path, { agentId: "missing" })).status).toBe(400);
+  expect((await send(path, {})).status).toBe(400);
+  expect((await send(`/api/repos/${alpha.id}/changes/bad%20name/agent`, { agentId: null })).status).toBe(400);
+  expect((await send(`/api/repos/${alpha.id}/changes/old-change/agent`, { agentId: null })).status).toBe(404);
+  expect((await send(path, { agentId: null }, { origin: "https://example.com" })).status).toBe(403);
+  const set = await send(path, { agentId: "claude" });
+  expect(set.status).toBe(200);
+  expect((await set.json() as Config).repos[0].agent?.changeAgents).toEqual({ "rotate-keys": "claude" });
+  const clear = await send(path, { agentId: null });
+  expect(clear.status).toBe(200);
+  expect("changeAgents" in ((await clear.json() as Config).repos[0].agent ?? {})).toBe(false);
+  expect(triggered).toBe(0);
+  state.config = { ...state.config, repos: [{ ...state.config.repos[0], agent: { enabled: false } }] };
+  expect((await send(path, { agentId: null })).status).toBe(403);
+});
+
+test("tracking a folder tracked under an older spelling re-enables that entry and adds none", async () => {
+  // delta-ops was tracked, then moved to moved/, leaving a link at the stored path: the same directory.
+  const old = join(work, "acme", "delta-ops");
+  const now = join(work, "moved", "delta-ops");
+  await mkdir(join(old, "openspec"), { recursive: true });
+  await writeFile(join(old, "openspec", "config.yaml"), "schema: spec-driven\n");
+  const delta = { ...newRepoConfig(old, false), name: "Delta" };
+  state.config = await saveConfig({ ...state.config, repos: [...state.config.repos, delta] });
+  await mkdir(join(work, "moved"));
+  await rename(old, now);
+  await symlink(now, old);
+  try {
+    const res = await send("/api/repos/track", { path: now });
+    expect(res.status).toBe(200);
+    const repos = (await saved()).repos;
+    expect(repos.filter((r) => r.name === "Delta" || r.path === now)).toEqual([{ ...delta, path: now, enabled: true }]);
+    expect(repos).toHaveLength(2);
+  } finally {
+    await rm(old);
+    await rm(join(work, "moved"), { recursive: true });
+  }
+});
+
+test("a candidate whose path's id another repository holds is tracked with the next one", async () => {
+  state.config = await saveConfig({ ...state.config, repos: [{ ...state.config.repos[0], id: repoId(paths().beta) }] });
+  const res = await send("/api/repos/track", { path: paths().beta });
+  expect(res.status).toBe(200);
+  const added = (await saved()).repos.find((r) => r.path === paths().beta);
+  expect(added?.id).toBe(assignRepoId(paths().beta, [repoId(paths().beta)]));
 });
 
 test("a colliding default name is disambiguated, as for any enabled candidate", async () => {

@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-10-29
+spec-control:
+  branch: feat/agent-interoperability
+  archive-branch: chore/archive-agent-interoperability

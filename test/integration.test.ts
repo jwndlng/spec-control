@@ -1,9 +1,9 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type AppState, createFetchHandler } from "../src/server/api.ts";
-import { defaultAgentSessions, defaultConfig, newRepoConfig } from "../src/server/config.ts";
+import { assignRepoId, defaultAgentSessions, defaultConfig, newRepoConfig, repoId } from "../src/server/config.ts";
 import { confirmIntegration, confirmIntegrationSession, confirmPendingIntegrations, startIntegration, type IntegrationState } from "../src/server/integration.ts";
 import { discoverRepos } from "../src/server/discover.ts";
 import { worktreesDir } from "../src/server/paths.ts";
@@ -227,6 +227,31 @@ test("an integrated repository whose name is taken is disambiguated by its paren
   await writeMarker(h.folder);
   expect(await confirmIntegration(h, h.folder)).toBe(true);
   expect(h.config.repos[1].name).toBe(`beta-soc (${h.root.split("/").at(-1)})`);
+});
+
+test("a folder already tracked under an older spelling is not added again", async () => {
+  const h = await harness();
+  await writeMarker(h.folder);
+  const tracked = newRepoConfig(h.folder, true);
+  h.config = { ...h.config, repos: [tracked] };
+  // The folder moves and a link to it is left at the stored path: the same directory, spelled differently now.
+  const moved = join(h.root, "moved");
+  await mkdir(moved);
+  await rename(h.folder, join(moved, "beta-soc"));
+  await symlink(join(moved, "beta-soc"), h.folder);
+  expect(await confirmIntegration(h, join(moved, "beta-soc"))).toBe(false);
+  expect(h.config.repos).toEqual([tracked]);
+  expect(h.scans).toBe(0);
+});
+
+test("an integrated repository whose path's id is taken gets the next one", async () => {
+  // Another directory kept the id this folder's path derives (it was once spelled like it).
+  const h = await harness();
+  h.config = { ...h.config, repos: [{ ...newRepoConfig("/w/acme/alpha-infra", true), id: repoId(h.folder) }] };
+  await writeMarker(h.folder);
+  expect(await confirmIntegration(h, h.folder)).toBe(true);
+  expect(h.config.repos[1].id).toBe(assignRepoId(h.folder, [repoId(h.folder)]));
+  expect(h.config.repos[1].id).not.toBe(repoId(h.folder));
 });
 
 test("the folder is re-checked when the session ends, and again on every discovery run while the session runs", async () => {

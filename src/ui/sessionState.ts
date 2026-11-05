@@ -5,7 +5,8 @@ import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { relTime } from "./format.ts";
 import { isEndedProposalSession, isProposalSession, receivingSession } from "../shared/sessionBranch.ts";
 import { mergePending, pullRequestReadiness, readinessDetail } from "../shared/pullRequestReadiness.ts";
-import { availableActions, DEFAULT_EDITOR, editorCommandLine, type EditorAvailability, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type RepoPullRequests, type Session, type SessionAction, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
+import { availableActions, DEFAULT_EDITOR, editorCommandLine, type EditorAvailability, fastForwardAvailable, isChangeless, OPEN_SESSION_STATES, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type AutoEnded, type ProjectConsoleLike, type ChangeSnapshot, type Config, type RepoSnapshot, type ChangeSession, changeSessions, type ConsoleSession, type PullRequest, type RepoPullRequests, type Session, type SessionAction, type SessionCleanup, type SessionWorktree, type ShipResult, type WorkStatus } from "../shared/types.ts";
+import { changeAgentFor } from "../shared/changeAgent.ts";
 
 /** Session starters are shown when the feature is on, for every tracked repository that has not been switched off. */
 export function sessionsEnabledFor(config: Config | null, repoId: string): boolean {
@@ -20,9 +21,18 @@ export function agentForRepo(config: Config | null, repoId: string): AgentProfil
   return agents.find((a) => a.id === wanted) ?? agents.find((a) => a.id === config.agentSessions.defaultAgent);
 }
 
+export function agentForChange(config: Config | null, repoId: string, change: string): AgentProfile | undefined {
+  const repo = config?.repos.find((item) => item.id === repoId);
+  return config && repo ? changeAgentFor(config, repo, change) : undefined;
+}
+
 /** What the change's stage allows, narrowed to what this repository's agent has an opening prompt for. */
-export function startersFor(config: Config | null, card: Pick<ChangeSnapshot, "repoId" | "archived" | "artifacts" | "stage" | "subState" | "blocked">): SessionAction[] {
-  const agent = agentForRepo(config, card.repoId);
+export function startersFor(config: Config | null, card: Pick<ChangeSnapshot, "repoId" | "archived" | "artifacts" | "stage" | "subState" | "blocked"> & Partial<Pick<ChangeSnapshot, "name">>): SessionAction[] {
+  const agent = agentForChange(config, card.repoId, card.name ?? "");
+  return startersForAgent(agent, card);
+}
+
+function startersForAgent(agent: AgentProfile | undefined, card: Pick<ChangeSnapshot, "archived" | "artifacts" | "stage" | "subState" | "blocked">): SessionAction[] {
   if (!agent) return [];
   return availableActions(card).filter((action) => (action === "fastForward" ? fastForwardAvailable(agent) : Boolean(agent.prompts[action])));
 }
@@ -38,12 +48,31 @@ export function sessionsForChange(sessions: ChangeSession[], repoId: string, cha
   if (running.length > 0) return running;
   const latest = mine[0];
   // An end the dashboard decided on (its auto-merge pull request merged) stays on the card, so the user sees what happened.
-  return latest && (latest.state === "failed" || latest.autoEnded !== undefined || (latest.exitCode ?? 0) !== 0) ? [latest] : [];
+  // A background cleanup (pending, failed, or interrupted) also stays on the card so the user sees what happened.
+  return latest && (latest.state === "failed" || latest.autoEnded !== undefined || latest.cleanup?.state === "pending" || latest.cleanup?.state === "failed" || latest.cleanup?.state === "interrupted" || (latest.exitCode ?? 0) !== 0) ? [latest] : [];
 }
 
 /** Why the dashboard ended a session on its own, and what became of its worktree (auto-merge-cleanup D6). */
 export function autoEndedText(ended: AutoEnded): string {
   return `Ended because #${ended.pr} merged; ${ended.removed ? "worktree removed" : `worktree kept: ${ended.reason ?? "it could not be removed"}`}`;
+}
+
+/** What became of a background worktree or stale cleanup (cleanup-background). */
+export function cleanupNotice(cleanup: SessionCleanup, change?: string): string {
+  const target = change ? ` of ${change}` : "";
+  if (cleanup.state === "pending") {
+    return cleanup.kind === "stale" ? `Cleaning up leftovers${target} in the background…` : `Removing worktree${target} in the background…`;
+  }
+  if (cleanup.state === "interrupted") {
+    return cleanup.reason ?? `Cleanup${target} was interrupted.`;
+  }
+  if (cleanup.state === "failed") {
+    return `Cleanup${target} failed: ${cleanup.reason ?? "the worktree could not be removed"}`;
+  }
+  if (cleanup.worktreeRemoved === false) {
+    return `Worktree${target} kept: ${cleanup.reason ?? "not safe to remove"}`;
+  }
+  return cleanup.kind === "stale" ? `Leftovers${target} cleaned up.` : `Session ended and worktree${target} removed.`;
 }
 
 /**
@@ -157,10 +186,13 @@ export function nextStepFor(sessions: ChangeSession[], repoId: string, change: s
  * session that ends the proposal session first (one-console-per-change D2). Undefined when the session receives nothing:
  * it has ended, or another session of the change is the one that runs.
  */
-export function consoleSteps(config: Config | null, sessions: ChangeSession[], card: Pick<ChangeSnapshot, "repoId" | "archived" | "artifacts" | "stage" | "subState" | "blocked">, session: ChangeSession): { into: SessionAction[]; endFirst: SessionAction[] } | undefined {
+export function consoleSteps(config: Config | null, sessions: ChangeSession[], card: Pick<ChangeSnapshot, "repoId" | "archived" | "artifacts" | "stage" | "subState" | "blocked"> & Partial<Pick<ChangeSnapshot, "name">>, session: ChangeSession): { into: SessionAction[]; endFirst: SessionAction[] } | undefined {
   if (session.state !== "running") return undefined;
   const receives = (action: SessionAction) => nextStepFor(sessions, session.repoId, session.change, action).promptSessionId === session.id;
-  const starters = startersFor(config, card);
+  // A running process keeps its own profile even after the next-session override changes. Its next-step availability
+  // and prompt therefore follow the recorded agent, while an untouched change follows its configured override.
+  const sessionAgent = config?.agentSessions.agents.find((agent) => agent.id === session.agentId);
+  const starters = startersForAgent(sessionAgent, card);
   if (isProposalSession(session)) {
     if (!receives("draft")) return undefined;
     return { into: starters.filter((a) => a === "draft"), endFirst: starters.filter((a) => a !== "draft" && a !== "fastForward") };
@@ -252,8 +284,8 @@ export function worktreeRemovalPossible(session: Pick<Session, "inPlace"> | unde
  * worktree only once its status arrived, since the warning and the removal are decided on it. An in-place session has
  * no worktree status to wait for, so it can be confirmed at once.
  */
-export function endConfirmable(session: Pick<Session, "inPlace"> | undefined, status: unknown, busy: boolean): boolean {
-  return !busy && (!worktreeRemovalPossible(session) || status !== undefined);
+export function endConfirmable(session: (Pick<Session, "inPlace"> & { cleanup?: SessionCleanup }) | undefined, status: unknown, busy: boolean): boolean {
+  return !busy && session?.cleanup?.state !== "pending" && (!worktreeRemovalPossible(session) || status !== undefined);
 }
 
 /**
@@ -352,6 +384,26 @@ export function sessionBadge(session: Session, now = Date.now()): SessionBadge {
   if (!isChangeless(session) && session.autoEnded) {
     const ended = session.autoEnded;
     return { icon: "✓", label: `ended · #${ended.pr} merged`, tone: ended.removed ? "success" : "warning", title: autoEndedText(ended) };
+  }
+  if (!isChangeless(session) && session.cleanup) {
+    const c = session.cleanup;
+    if (c.state === "pending") {
+      return { icon: "●", label: "cleaning up…", live: true, tone: "info", title: cleanupNotice(c, session.change) };
+    }
+    if (c.state === "failed") {
+      return { icon: "⚠", label: "cleanup failed", tone: "danger", title: cleanupNotice(c, session.change) };
+    }
+    if (c.state === "interrupted") {
+      return { icon: "⚠", label: "cleanup interrupted", tone: "warning", title: cleanupNotice(c, session.change) };
+    }
+    if (c.state === "done") {
+      return {
+        icon: c.worktreeRemoved ? "✓" : "⚠",
+        label: c.worktreeRemoved ? "ended · cleaned up" : "ended · worktree kept",
+        tone: c.worktreeRemoved ? "success" : "warning",
+        title: cleanupNotice(c, session.change),
+      };
+    }
   }
   if (session.state === "failed") return { icon: "⚠", label: "failed", tone: "danger", title: session.error ?? "the agent could not be started" };
   const code = session.exitCode;
@@ -547,7 +599,7 @@ export interface OpenWorkItem {
 export function openWork(worktrees: SessionWorktree[], all: readonly Session[], now = Date.now()): { items: OpenWorkItem[]; unshipped: number; running: number } {
   // The main console belongs to no repository and no change: it is never open work.
   const sessions = changeSessions(all);
-  const live = sessions.filter((s) => s.state === "running").sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const live = sessions.filter((s) => s.state === "running" || s.cleanup?.state === "pending").sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const items: OpenWorkItem[] = live.map((session) => ({
     key: session.id,
     repoId: session.repoId,
@@ -725,9 +777,8 @@ export function mergeControl(session: ChangeSession | undefined, lists: readonly
   const readiness = pullRequestReadiness(pr);
   if (!readiness?.ready) return { pr, recordedOn, enabled: false, title: `${readiness ? readinessDetail(readiness) : "Not ready"}, so #${pr.number} cannot be merged yet.` };
   if (!pr.headOid) return { pr, recordedOn, enabled: false, title: `The pull-request list names no head commit for #${pr.number} yet; refresh it first.` };
-  if (session.state !== "running") return { pr, recordedOn, enabled: false, title: RESUME_TO_MERGE };
   const which = handed ? `the proposal's pull request #${pr.number} (from ${pr.head})` : `#${pr.number}`;
-  return { pr, recordedOn, enabled: true, title: `Sends ${session.agentName} a prompt asking it to merge ${which}, only if its head is still ${shortCommit(pr.headOid)}. The dashboard merges nothing itself.` };
+  return { pr, recordedOn, enabled: true, title: `Merges ${which}, only if its head is still ${shortCommit(pr.headOid)}. Merged directly via the GitHub CLI.` };
 }
 
 /** What the panel says next to a ready pull request whose agent has ended: nothing is merged automatically then. */
@@ -756,8 +807,8 @@ export type AutoMergeReport = { id: string; action: "ship" | "archive" };
  *  auto-merge instruction. Archive's is conditional, like the instruction: the Archive prompt may open no pull request. */
 export function autoMergeNotice(action: AutoMergeReport["action"]): string {
   return action === "ship"
-    ? "Only OpenSpec documents changed, so the pull request will be handed back to the agent to merge once its checks pass. The dashboard itself merges nothing."
-    : "Only OpenSpec documents are in this worktree, so if the agent opens a pull request it will be handed back to the agent to merge once its checks pass. The dashboard itself merges nothing.";
+    ? "Only OpenSpec documents changed, so Spec Control will merge the pull request automatically once its checks pass."
+    : "Only OpenSpec documents are in this worktree, so if a pull request is opened, Spec Control will merge it automatically once its checks pass.";
 }
 
 /** What both Ship controls report afterwards: a prompt typed but not sent, and whether auto-merge was asked for. */

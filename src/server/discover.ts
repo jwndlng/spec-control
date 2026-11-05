@@ -2,7 +2,7 @@ import type { Dirent } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
 import type { DiscoveredRepo, DiscoverResult, FrameworkId, IntegratableRepo, RepoConfig } from "../shared/types.ts";
-import { newRepoConfig, repoId, repoNameFromPath } from "./config.ts";
+import { assignRepoId, newRepoConfig, repoNameFromPath } from "./config.ts";
 import { detectFramework, skippedDirs } from "./frameworks/registry.ts";
 import { normalizeRemote, originUrl } from "./git.ts";
 import { canonicalPath } from "./paths.ts";
@@ -126,9 +126,10 @@ function withoutContainers(integratable: Set<string>, projects: Set<string>): st
  */
 export function toIntegratable(known: RepoConfig[], paths: string[]): IntegratableRepo[] {
   const knownPaths = new Set(known.map((r) => canonicalPath(r.path)));
+  const taken = known.map((r) => r.id);
   return paths
     .filter((path) => !knownPaths.has(path))
-    .map((path) => ({ id: repoId(path), path, name: repoNameFromPath(path) }))
+    .map((path) => ({ id: assignRepoId(path, taken), path, name: repoNameFromPath(path) }))
     .sort((a, b) => a.path.localeCompare(b.path));
 }
 
@@ -138,11 +139,14 @@ export function toIntegratable(known: RepoConfig[], paths: string[]): Integratab
  */
 export function toCandidates(known: RepoConfig[], paths: string[], frameworks?: Map<string, FrameworkId>): DiscoveredRepo[] {
   const knownPaths = new Set(known.map((r) => canonicalPath(r.path)));
+  // The id each candidate would be added with, so Enable and Settings store exactly what discovery reported.
+  const taken = known.map((r) => r.id);
   return paths
     .filter((path) => !knownPaths.has(path))
     .map((path) => {
       const framework = frameworks?.get(path);
-      return framework ? { ...newRepoConfig(path, false), framework } : newRepoConfig(path, false);
+      const repo = newRepoConfig(path, false, taken);
+      return framework ? { ...repo, framework } : repo;
     })
     .sort((a, b) => a.path.localeCompare(b.path));
 }

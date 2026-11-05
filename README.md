@@ -3,11 +3,11 @@
 A local Kanban board that shows where every [OpenSpec](https://github.com/Fission-AI/OpenSpec) change stands, across
 all the repositories on your machine — and lets you hand each one to a coding agent without leaving the board.
 
-**[Live demo →](https://blog.wndlng.ch/spec-control/)** — the real UI on sample data, nothing to install.
+**[Live demo →](https://wndlng.ch/spec-control/)** — the real UI on sample data, nothing to install.
 
 <a href="https://blog.wndlng.ch/spec-control/#/board">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://blog.wndlng.ch/spec-control/screenshots/board-dark.png">
+    <source media="(prefers-color-scheme: dark)" srcset="https://wndlng.ch/spec-control/screenshots/board-dark.png">
     <img alt="The combined Kanban board: one column per lifecycle step from Backlog to Archived, cards grouped and coloured by repository, with task progress, last activity, branch badges and warnings." src="https://blog.wndlng.ch/spec-control/screenshots/board-light.png">
   </picture>
 </a>

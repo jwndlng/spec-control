@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { oneAtATime } from "../src/ui/sessionState.ts";
 
 const panel = readFileSync(join(import.meta.dir, "..", "src", "ui", "sessionPanel.tsx"), "utf8");
+const sessionsSource = readFileSync(join(import.meta.dir, "..", "src", "ui", "sessions.tsx"), "utf8");
+
+const controls = readFileSync(join(import.meta.dir, "..", "src", "ui", "sessions.tsx"), "utf8");
 
 /** A request that stays in flight until the test lets it finish. */
 function pending() {
@@ -64,3 +67,19 @@ test("the panel's header actions go through the guard and are disabled while one
     expect(header.slice(Math.max(0, at - 120), at)).toContain("act(");
   }
 });
+
+test("the agent picker in the console pane renders when multiple agents exist, and displays running agent hint when different", () => {
+  expect(panel).toContain('aria-label="Change agent"');
+  expect(panel).toContain("ui.config.agentSessions.agents.length > 1");
+  expect(panel).toContain("setChangeAgent(repoId, change, agentId || null)");
+  expect(panel).toContain("This session uses {session.agentName}; the next session starts {nextAgent.name}.");
+});
+
+test("cards show the overriding profile's name with its tooltip and cards without an override show no agent name", () => {
+  expect(sessionsSource).toContain('class="change-agent-name"');
+  expect(sessionsSource).toContain('title="This change uses this agent instead of the project\'s"');
+  expect(sessionsSource).toContain('place === "card" && ui.config?.repos.find((repo) => repo.id === card.repoId)?.agent?.changeAgents?.[card.name]');
+  expect(sessionsSource).toContain("{agent?.name}</span>");
+});
+
+

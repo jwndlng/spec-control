@@ -57,7 +57,12 @@ export function App() {
   // The terminal of an integration started from Settings; same reasoning, and the same need to make the page inert.
   const [integrationId, showIntegration] = useState<string>();
   // The project whose console overlay is open; like the main console, not in the route.
-  const [projectConsoleRepoId, showProjectConsole] = useState<string>();
+  const [projectConsoleRepoId, setProjectConsoleRepoId] = useState<string>();
+  const [projectConsoleSetup, setProjectConsoleSetup] = useState(false);
+  const showProjectConsole = (repoId: string | undefined, setup = false) => {
+    setProjectConsoleSetup(setup);
+    setProjectConsoleRepoId(repoId);
+  };
   /** What this machine is missing. Owned here because both Settings and the hero read the same report. */
   const [environment, setEnvironment] = useState<EnvironmentState>({ loading: true });
   /** What the server last learned about newer releases; read here because the banner and Settings both show it. */
@@ -351,7 +356,7 @@ export function App() {
     <PullRequestsProvider>
     {/* Above both the page and the overlay: the detail view's Console tab reads sessions from here too, and the
         end-session dialog it opens must not sit inside the part that goes inert. */}
-    <SessionProvider config={config} snapshot={shown} consoleOpen={consoleShown} showConsole={showConsole} integrationId={integrationShown ? integrationId : undefined} showIntegration={showIntegration} projectConsoleRepoId={projectConsoleShown ? projectConsoleRepoId : undefined} showProjectConsole={showProjectConsole} onConfig={setConfig}>
+    <SessionProvider config={config} snapshot={shown} consoleOpen={consoleShown} showConsole={showConsole} integrationId={integrationShown ? integrationId : undefined} showIntegration={showIntegration} projectConsoleRepoId={projectConsoleShown ? projectConsoleRepoId : undefined} showProjectConsole={showProjectConsole} projectConsoleSetup={projectConsoleSetup} onConfig={setConfig}>
     {/* Everything but the detail overlay: inert while it is open, so the board behind it takes no focus and no clicks. */}
     <div class="app" inert={overlayOpen} aria-hidden={overlayOpen ? "true" : undefined}>
       <UpdateBanner status={update} dismissed={updateDismissed} onDismiss={dismissUpdate} />

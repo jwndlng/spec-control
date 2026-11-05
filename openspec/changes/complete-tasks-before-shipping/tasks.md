@@ -3,7 +3,7 @@
 ## 1. Completion instructions
 
 - [x] 1.1 Update preset Implement and Fast-forward instructions to require evidence, completion of automatable tasks and precise human blockers; verify preset, customized profile and fast-forward prompt tests.
-- [x] 1.2 Extend Ship instructions while preserving custom text, additional instructions, title conventions and auto-merge ordering; verify prompt composition tests and update the conflicting agent-sessions requirements during spec sync.
+- [x] 1.2 Extend Ship instructions while preserving custom text, additional instructions, title conventions and auto-merge ordering; verify prompt composition tests and align the delta requirements with deterministic Ship on current main.
 
 ## 2. Ship preflight
 
@@ -20,5 +20,5 @@
 
 ## 4. Integration
 
-- [x] 4.1 Run `bun run check` and verify the full suite passes; build and exercise the compiled binary for changed agent-session behavior.
+- [ ] 4.1 Run `bun run check` and verify the full suite passes; build and exercise the compiled binary for changed agent-session behavior.
 - [x] 4.2 Add a What's new entry at the top of `src/ui/changelog.ts` and verify the changelog tests pass.

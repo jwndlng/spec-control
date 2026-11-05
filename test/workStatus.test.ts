@@ -1,4 +1,3 @@
-import { shipAnyway } from "./shipTaskHelpers.ts";
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, readFile, realpath, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -14,7 +13,7 @@ import { CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_RESOLVE_CONFLICTS_PROMPT, D
 const DEFAULT_SHIP_PROMPT = `${BASE_SHIP_PROMPT} ${SHIP_COMPLETION_INSTRUCTION}`;
 import { tempDir, useTempHome } from "./helpers.ts";
 import { commitFiles, monorepo, squashMerge } from "./monorepoHelpers.ts";
-import { FAKE_AGENT, fakeProfile, git, harness, recordFor, tempGitRepo, waitFor, watch, type Harness } from "./sessionHelpers.ts";
+import { FAKE_AGENT, fakeProfile, git, harness, tempGitRepo, waitFor, watch, type Harness } from "./sessionHelpers.ts";
 
 setDefaultTimeout(30_000);
 
@@ -149,93 +148,17 @@ test("worktrees are listed per directory, survive their session record, and are 
   expect(await h.newManager().worktrees()).toEqual([]);
 });
 
-test("ship types the prompt into a running agent, and starts an ended one again with it", async () => {
-  const h = await harness({ agent: { prompts: { ...fakeProfile().prompts, ship: "ship {change} now" } } });
-  managers.push(h.manager);
-  const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
-  const seen = await watch(h.manager, s.id);
-  await waitFor(() => seen.text().includes("fake-agent ready"), "the agent");
-  await writeFile(join(s.worktreePath, "work.txt"), "x");
-
-  expect((await shipAnyway(h.manager, s.id)).submitted).toBe(true);
-  await waitFor(() => seen.text().includes("you said: ship upgrade-runtime now"), "the submitted ship prompt");
-  expect(h.manager.list().filter((x) => x.state === "running")).toHaveLength(1);
-
-  h.manager.write(s.id, "exit\r");
-  await waitFor(() => h.manager.get(s.id).state === "exited", "exit");
-  const again = await shipAnyway(h.manager, s.id);
-  expect(again.id).toBe(s.id);
-  expect(again.state).toBe("running");
-  await waitFor(() => seen.text().includes('args=["--resumed"]') && seen.text().split("you said: ship upgrade-runtime now").length === 3, "resume command plus typed prompt");
-});
-
-test("ship submits the default prompt plus the profile's additional Ship instructions", async () => {
-  // The case the feature exists for: a standing instruction about pull requests, without restating the whole prompt.
+test("shipPrompt composes the prompt with the profile's additional Ship instructions", () => {
   const extra = "Add the checklist from CONTRIBUTING.md to the PR body.";
-  const h = await harness({ agent: { promptSuffixes: { ship: `  ${extra}\n  Then tell me the URL.  ` } } });
-  managers.push(h.manager);
-  const record = recordFor("upgrade-runtime");
-  const composed = `${DEFAULT_SHIP_PROMPT} ${record} ${extra} Then tell me the URL.`;
-  expect(shipPrompt(h.config.agentSessions.agents[0], "upgrade-runtime", { record })).toBe(composed);
-
-  const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
-  const seen = await watch(h.manager, s.id);
-  await waitFor(() => seen.text().includes("fake-agent ready"), "the agent");
-  await writeFile(join(s.worktreePath, "work.txt"), "x");
-
-  expect((await shipAnyway(h.manager, s.id)).submitted).toBe(true);
-  await waitFor(() => seen.text().includes(`you said: ${composed}`), "the composed ship prompt");
+  const agent = { ...fakeProfile(), promptSuffixes: { ship: `  ${extra}\n  Then tell me the URL.  ` } };
+  const composed = `${DEFAULT_SHIP_PROMPT} ${extra} Then tell me the URL.`;
+  expect(shipPrompt(agent, "upgrade-runtime")).toBe(composed);
 });
 
-test("ship for a project with Conventional Commits titles carries the sentence, running and resumed; Implement does not", async () => {
-  const h = await harness({ agent: { prompts: { ...fakeProfile().prompts, ship: "ship {change} now" } } });
-  managers.push(h.manager);
-  h.config.repos[0].prTitleConvention = "conventional-commits";
-  const composed = `ship upgrade-runtime now ${SHIP_COMPLETION_INSTRUCTION} ${CONVENTIONAL_COMMITS_SHIP_SENTENCE}`;
-  const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
-  const seen = await watch(h.manager, s.id);
-  await waitFor(() => seen.text().includes("fake-agent ready"), "the agent");
-  expect(seen.text()).not.toContain(CONVENTIONAL_COMMITS_SHIP_SENTENCE);
-  await writeFile(join(s.worktreePath, "work.txt"), "x");
-
-  expect((await shipAnyway(h.manager, s.id)).submitted).toBe(true);
-  await waitFor(() => seen.text().includes(`you said: ${composed}`), "the ship prompt with the convention");
-
-  h.manager.write(s.id, "exit\r");
-  await waitFor(() => h.manager.get(s.id).state === "exited", "exit");
-  await shipAnyway(h.manager, s.id);
-  await waitFor(() => seen.text().includes('args=["--resumed"]') && seen.text().split(`you said: ${composed}`).length === 3, "resumed with the convention");
-});
-
-test("ship into a running agent that shows a menu is typed, not confirmed, and says so", async () => {
-  const h = await harness({ agent: { command: [FAKE_AGENT, "--menu", "{prompt}"] } });
-  const manager = h.newManager({ submitTimings: { echoTimeoutMs: 600, settleMs: 20 } });
-  managers.push(manager);
-  const s = await manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
-  const seen = await watch(manager, s.id);
-  await waitFor(() => seen.text().includes("Enter to confirm"), "the menu");
-  await writeFile(join(s.worktreePath, "work.txt"), "x");
-  const result = await shipAnyway(manager, s.id);
-  expect(result.submitted).toBe(false);
-  expect(result.id).toBe(s.id);
-  await new Promise((r) => setTimeout(r, 200));
-  expect(seen.text()).not.toContain("menu confirmed by Enter");
-});
-
-test("ship without a resume command starts the agent with the default prompt; nothing to ship is refused", async () => {
-  const h = await harness({ agent: { resumeCommand: undefined } });
-  managers.push(h.manager);
-  const shipped = `${DEFAULT_SHIP_PROMPT} ${recordFor("upgrade-runtime")}`;
-  expect(shipPrompt(h.config.agentSessions.agents[0], "upgrade-runtime", { record: recordFor("upgrade-runtime") })).toBe(shipped);
-  const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
-  h.manager.write(s.id, "exit\r");
-  await waitFor(() => h.manager.get(s.id).state === "exited", "exit");
-  await expect(shipAnyway(h.manager, s.id)).rejects.toMatchObject({ status: 409 }); // clean: the change is committed in the fixture
-
-  await writeFile(join(s.worktreePath, "work.txt"), "x");
-  await shipAnyway(h.manager, s.id);
-  const seen = await watch(h.manager, s.id);
-  await waitFor(() => seen.text().includes(JSON.stringify([shipped])), "the default prompt as the opening argument");
+test("shipPrompt for a project with Conventional Commits titles carries the sentence", () => {
+  const agent = fakeProfile();
+  const composed = `${DEFAULT_SHIP_PROMPT} ${CONVENTIONAL_COMMITS_SHIP_SENTENCE}`;
+  expect(shipPrompt(agent, "upgrade-runtime", { convention: "conventional-commits" })).toBe(composed);
 });
 
 test("API: worktrees ride along with the sessions; removal validates its input, spares running sessions and accepts merged work without a record", async () => {

@@ -15,7 +15,7 @@ import { type NextStep, type PullRequestStep, waitingLabel } from "../shared/nex
 import { isProposalPullRequest } from "../shared/pullRequestLink.ts";
 import { runningProposalSession } from "../shared/sessionBranch.ts";
 import { ActionMenu, type ActionItem, type ActionStatus } from "./actionMenu.tsx";
-import { afterStart, agentForRepo, type AutoMergeReport, reportShip, cardSessionControls, conflictBadge, consoleSteps, editorControl, type EditorControl, endProposalConfirmation, openWork, pullRequestSession, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, starterSplit, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
+import { afterStart, agentForChange, agentForRepo, type AutoMergeReport, reportShip, cardSessionControls, conflictBadge, consoleSteps, editorControl, type EditorControl, endProposalConfirmation, openWork, pullRequestSession, type SessionBadge, nextStepFor, sessionBadge, sessionsEnabledFor, starterSplit, startShowsConsole, type StarterPlace, workBadge, worktreeForChange } from "./sessionState.ts";
 import { boardFrom, changePath, CONSOLE_TAB, parseDetailQuery, routeFromPath, serializeDetailQuery } from "./routes.ts";
 import { currentPath, currentQuery, followInApp, hrefWithQuery, navigate } from "./url.ts";
 
@@ -40,7 +40,8 @@ interface SessionUi {
   projectConsoles: ProjectConsoleSession[];
   /** The project whose console overlay is open, if any. Like the main console, not part of the route. */
   projectConsoleRepoId?: string;
-  showProjectConsole(repoId: string | undefined): void;
+  projectConsoleSetup?: boolean;
+  showProjectConsole(repoId: string | undefined, setup?: boolean): void;
   agents: AgentAvailability[];
   /** Every session worktree with what became of its work; outlives session records. */
   worktrees: SessionWorktree[];
@@ -81,11 +82,12 @@ interface SessionUi {
    */
   start(repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; removeDuplicate?: boolean; resolveConflicts?: boolean; endProposal?: boolean }): Promise<string | undefined>;
   ship(id: string): Promise<void>;
+  saveConfig(config: Config): void;
   refresh(): Promise<void>;
 }
 
 const noop = async () => undefined;
-const Context = createContext<SessionUi>({ config: null, snapshot: null, sessions: [], consoles: [], consoleOpen: false, showConsole: () => {}, integrations: [], showIntegration: () => {}, projectConsoles: [], showProjectConsole: () => {}, agents: [], worktrees: [], focusTick: { tick: 0 }, reportUnsent: () => {}, reportAutoMerge: () => {}, requestEnd: () => {}, openPanel: () => {}, openChangeConsole: () => {}, start: noop, ship: noop, refresh: noop });
+const Context = createContext<SessionUi>({ config: null, snapshot: null, sessions: [], consoles: [], consoleOpen: false, showConsole: () => {}, integrations: [], showIntegration: () => {}, projectConsoles: [], showProjectConsole: () => {}, agents: [], worktrees: [], focusTick: { tick: 0 }, reportUnsent: () => {}, reportAutoMerge: () => {}, requestEnd: () => {}, openPanel: () => {}, openChangeConsole: () => {}, start: noop, ship: noop, refresh: noop, saveConfig: () => {} });
 
 export const useSessionUi = () => useContext(Context);
 
@@ -101,6 +103,7 @@ export function SessionProvider({
   integrationId,
   showIntegration = () => {},
   projectConsoleRepoId,
+  projectConsoleSetup = false,
   showProjectConsole = () => {},
   onConfig = () => {},
   children,
@@ -112,7 +115,8 @@ export function SessionProvider({
   integrationId?: string;
   showIntegration?: (id: string | undefined) => void;
   projectConsoleRepoId?: string;
-  showProjectConsole?: (repoId: string | undefined) => void;
+  projectConsoleSetup?: boolean;
+  showProjectConsole?: (repoId: string | undefined, setup?: boolean) => void;
   /** Takes a configuration the server saved on the way, so the app's copy follows (the Fast-forward warning). */
   onConfig?: (config: Config) => void;
   children: ComponentChildren;
@@ -250,8 +254,8 @@ export function SessionProvider({
 
   const shown = consoleOpen && enabled;
   const value = useMemo(
-    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, ship, refresh }),
-    [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, autoMerge, error, openPanel, openConsole, start, ship, refresh],
+    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, projectConsoleSetup, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, ship, refresh, saveConfig: onConfig }),
+    [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, projectConsoleSetup, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, autoMerge, error, openPanel, openConsole, start, ship, refresh],
   );
   const answerFastForward = useCallback(
     (choice: FastForwardChoice | undefined) => {
@@ -504,7 +508,7 @@ function pullRequestItem(step: PullRequestStep, pr: PullRequest, target: ChangeS
   const where = target ? `the Console tab of ${target.branch}` : "the Console tab";
   const title =
     step === "merge"
-      ? `#${pr.number} is ready: opens ${where}, where Merge asks the agent to merge it`
+      ? `#${pr.number} is ready: opens ${where}, where Merge merges it via the GitHub CLI`
       : step === "resolveConflicts"
         ? `#${pr.number} conflicts with its base: opens ${where}, where the agent can be asked to resolve the conflicts`
         : `#${pr.number}'s checks fail: opens ${where}, where the agent can be resumed to fix them`;
@@ -550,7 +554,7 @@ export function SessionControls({
   const offered = into ? consoleSteps(ui.config, ui.sessions, card, into) : undefined;
   const endsProposal = (action: SessionAction) => offered?.endFirst.includes(action) === true;
   const { main, menu } = into ? starterSplit(card, offered ? [...offered.into, ...offered.endFirst] : [], pullRequest) : controls;
-  const agent = agentForRepo(ui.config, card.repoId);
+  const agent = agentForChange(ui.config, card.repoId, card.name);
   const found = ui.agents.find((a) => a.id === agent?.id);
   const unavailable = !into && found && !found.available ? `${found.name} was not found on this machine — check its command in Settings` : undefined;
   const target = pullRequestSession(ui.sessions, card, pullRequest);
@@ -597,6 +601,9 @@ export function SessionControls({
       ))}
       {place !== "console" && <FinishChecks card={card} />}
       <ActionMenu main={mainPart} items={items} name={card.name} disabled={starting !== undefined} />
+      {place === "card" && ui.config?.repos.find((repo) => repo.id === card.repoId)?.agent?.changeAgents?.[card.name] && (
+        <span class="change-agent-name" title="This change uses this agent instead of the project's">{agent?.name}</span>
+      )}
       {failure && (
         <span class="notice danger session-failure" role="status">
           {failure}

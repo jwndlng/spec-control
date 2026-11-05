@@ -1,19 +1,19 @@
 import { realpath } from "node:fs/promises";
-import { ACTIVITY_KINDS, AUTO_FETCH_SECONDS, type ActivityKind, isChangeless, UNCOMMITTED_LISTED } from "../shared/types.ts";
+import { ACTIVITY_KINDS, AUTO_FETCH_SECONDS, repoAgentEnabled, type ActivityKind, isChangeless, UNCOMMITTED_LISTED } from "../shared/types.ts";
 import { availableName } from "../shared/nameHints.ts";
 import { isChangeDirName } from "../shared/changeNames.ts";
 import { labelKey } from "../shared/labels.ts";
 import { withAutoFetch, withPrTitleConvention, withRepoAgent } from "../shared/repoSettings.ts";
 import { MAX_PAGE, type ActivityLog, type PageQuery } from "./activity/log.ts";
 import { isTimeZone, pageEvents } from "../shared/activity.ts";
-import type { AutoFetchSeconds, BranchDeleteRequest, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequest, PullRequestsResponse, PullResult, RepoPullRequests, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Session, StaleCleanupRequest, UpdateStatus } from "../shared/types.ts";
+import type { AutoFetchSeconds, BranchDeleteRequest, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequest, PullRequestsResponse, PullResult, RepoPullRequests, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Session, StaleCleanupRequest, StaleCleanupResult, UpdateStatus } from "../shared/types.ts";
 import type { AutoFetcher } from "./autoFetch.ts";
 import { applyCleanup, applyStaleCleanup, CleanupBusyError, deleteBranch, isBranchName, previewBranchDelete, previewCleanup, previewStaleCleanup, StaleCleanupError, type StaleScope } from "./cleanup.ts";
 import { changeDirFor, listArtifactFiles, readArtifactFile } from "./artifacts.ts";
 import { consoleFolderProblem } from "./sessions/consoleFolder.ts";
 import { createWorkspaceFolder, type FolderPickerContext, FolderPickerBusyError, folderPickerContext, markSetupDone, pickFolder, setupState } from "./setup.ts";
 import { NewFolderError } from "./newFolder.ts";
-import { ConfigValidationError, configRevision, newRepoConfig, repoId, updateConfig, validateConfig, validateIgnorePaths, validateScanRoots } from "./config.ts";
+import { ConfigValidationError, configRevision, newRepoConfig, updateConfig, validateConfig, validateIgnorePaths, validateScanRoots } from "./config.ts";
 import { createChange } from "./createChange.ts";
 import { createProject, CreateProjectError } from "./createProject.ts";
 import { dismissChange, DismissError, previewDismiss } from "./dismissChange.ts";
@@ -30,13 +30,13 @@ import { PullRequests, type RepoTarget } from "./pullRequests.ts";
 import type { Scanner } from "./scanner.ts";
 import { applyTo, EMPTY_SHARED_CONFIG, loadSharedConfig, previewDigest, previewFor, SharedConfigValidationError, saveSharedConfig } from "./sharedConfig.ts";
 import { SessionError, type SessionManager } from "./sessions/manager.ts";
-import { LocalRepoSource } from "./source.ts";
+import { CHANGE_NAME, LocalRepoSource } from "./source.ts";
 import { sessionHints } from "./staleChanges.ts";
 import { frameworkById } from "./frameworks/registry.ts";
 import type { KeepAwake } from "./keepAwake.ts";
 import type { UpdateChecker } from "./updateCheck.ts";
 import { VERSION } from "./version.ts";
-import { gitExecutable } from "./paths.ts";
+import { canonicalPath, gitExecutable } from "./paths.ts";
 
 export interface AppState {
   config: Config;
@@ -131,13 +131,21 @@ async function putConfig(state: AppState, req: Request): Promise<Response> {
   const ifMatch = req.headers.get("if-match");
   let stale: Config | undefined;
   // `setup` is the server's, not the client's: a Settings tab holding an older copy can neither end nor restart setup.
-  const { previous, saved } = await updateConfig(state, (current) => {
-    if (ifMatch !== null && ifMatch !== configRevision(current)) {
-      stale = current;
-      return undefined;
-    }
-    return { ...next, setup: current.setup };
-  });
+  let written: Awaited<ReturnType<typeof updateConfig>>;
+  try {
+    written = await updateConfig(state, (current) => {
+      if (ifMatch !== null && ifMatch !== configRevision(current)) {
+        stale = current;
+        return undefined;
+      }
+      return { ...next, setup: current.setup };
+    });
+  } catch (err) {
+    // The id check against the config it replaces runs inside the write: an id re-pointed at another directory.
+    if (err instanceof ConfigValidationError) return json({ error: err.message, issues: err.issues }, 400);
+    throw err;
+  }
+  const { previous, saved } = written;
   if (stale) return new Response(JSON.stringify({ error: "the configuration was changed elsewhere since it was read", config: stale }), { status: 412, headers: { ...JSON_HEADERS, etag: configRevision(stale) } });
   afterConfigChange(state, previous);
   return configJson(saved);
@@ -180,15 +188,21 @@ const NOT_A_CANDIDATE = "this folder is not a repository discovery offers for tr
 async function postTrackRepo(state: AppState, req: Request): Promise<Response> {
   const path = requestedPath(await readJson(req));
   if (!path) return json({ error: "path must be an absolute path" }, 400);
-  const id = repoId(path);
+  // By directory, not by id: a repository keeps its id after its folder's spelling changed (repo-discovery).
+  const configured = (repos: RepoConfig[]) => repos.find((r) => canonicalPath(r.path) === path);
   // Slow and read-only, so it runs before the write is queued; the write re-checks only what can change meanwhile.
-  const candidate = state.config.repos.some((r) => r.id === id)
+  const candidate = configured(state.config.repos)
     ? undefined
-    : (await discoverRepos(state.config.repos, state.config.scanRoots, state.config.ignorePaths, state.githubClones?.runningPaths())).candidates.find((c) => c.id === id);
+    : (await discoverRepos(state.config.repos, state.config.scanRoots, state.config.ignorePaths, state.githubClones?.runningPaths())).candidates.find((c) => c.path === path);
   const { previous, saved } = await updateConfig(state, (current) => {
-    if (current.repos.some((r) => r.id === id)) return { ...current, repos: current.repos.map((r) => (r.id === id ? { ...r, enabled: true } : r)) };
+    const existing = configured(current.repos);
+    if (existing) return { ...current, repos: current.repos.map((r) => (r === existing ? { ...r, enabled: true } : r)) };
     if (!candidate) throw new TrackingError(404, NOT_A_CANDIDATE);
-    const repo = newRepoConfig(candidate.path, true);
+    const repo = newRepoConfig(
+      candidate.path,
+      true,
+      current.repos.map((r) => r.id),
+    );
     const named = {
       ...repo,
       name: availableName(
@@ -262,6 +276,37 @@ async function postRepoAgent(state: AppState, req: Request, id: string): Promise
     if (typeof agentId === "string" && !state.config.agentSessions.agents.some((a) => a.id === agentId)) throw new TrackingError(400, `unknown agent ${agentId}`);
     return withRepoAgent(repo, { enabled, agentId, autoMergeDocs });
   });
+}
+
+async function postChangeAgent(state: AppState, req: Request, id: string, change: string): Promise<Response> {
+  if (!CHANGE_NAME.test(change)) return json({ error: "invalid change name" }, 400);
+  const body = await readJson(req);
+  if (!Object.hasOwn(body, "agentId")) return json({ error: "send agentId" }, 400);
+  const { agentId } = body;
+  if (agentId !== null && typeof agentId !== "string") return json({ error: "agentId must be an agent id or null" }, 400);
+  const snapshot = state.scanner.snapshot;
+  const active = snapshot.repos.find((repo) => repo.id === id)?.changes.some((item) => item.name === change && !item.archived);
+  if (!active) return json({ error: "active change not found" }, 404);
+  const configuredRepo = state.config.repos.find((repo) => repo.id === id);
+  if (!configuredRepo) return json({ error: "repository not found" }, 404);
+  if (!state.config.agentSessions.enabled || !repoAgentEnabled(configuredRepo)) return json({ error: "agent sessions are disabled for this repository" }, 403);
+  const { saved } = await updateConfig(state, (current) => {
+    const index = current.repos.findIndex((repo) => repo.id === id);
+    if (index < 0) throw new TrackingError(404, "repository not found");
+    const repo = current.repos[index];
+    if (!current.agentSessions.enabled || !repoAgentEnabled(repo)) throw new TrackingError(403, "agent sessions are disabled for this repository");
+    if (typeof agentId === "string" && !current.agentSessions.agents.some((agent) => agent.id === agentId)) throw new TrackingError(400, `unknown agent ${agentId}`);
+    const currentActive = state.scanner.snapshot.repos.find((item) => item.id === id)?.changes.filter((item) => !item.archived).map((item) => item.name) ?? [];
+    if (!currentActive.includes(change)) throw new TrackingError(404, "active change not found");
+    const overrides = Object.fromEntries(Object.entries(repo.agent?.changeAgents ?? {}).filter(([name]) => currentActive.includes(name)));
+    if (agentId === null) delete overrides[change]; else overrides[change] = agentId;
+    const agent = { enabled: repo.agent?.enabled ?? true, ...repo.agent };
+    if (Object.keys(overrides).length) agent.changeAgents = overrides; else delete agent.changeAgents;
+    const repos = [...current.repos];
+    repos[index] = { ...repo, agent };
+    return { ...current, repos };
+  });
+  return configJson(saved);
 }
 
 /** The project's PR titles picker on the overview: `conventional-commits` sets the convention, `null` removes the key. */
@@ -586,12 +631,22 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
         const body = req.body ? await readJson(req) : {};
         if (body.finishTasks !== undefined && typeof body.finishTasks !== "boolean") return json({ error: "finishTasks must be a boolean" }, 400);
         if (body.confirmation !== undefined && typeof body.confirmation !== "string") return json({ error: "confirmation must be a preview token" }, 400);
-        return json(await sessions.ship(id, body));
+        const title = typeof body.title === "string" && body.title.trim() ? body.title.trim() : undefined;
+        return json(await sessions.ship(id, { ...body, title }));
       }
       if (sub === "resolve-conflicts") return json(await sessions.resolveConflicts(id, await cachedPullRequests(state, sessions.get(id).repoId)));
-      if (sub === "merge") return json(await sessions.merge(id, lastGoodPullRequests(state, sessions.get(id))));
+      if (sub === "merge") {
+        const body = (await readJson(req).catch(() => ({}))) as Record<string, unknown>;
+        const proposal = body.proposal === true;
+        return json(await sessions.merge(id, lastGoodPullRequests(state, sessions.get(id)), { proposal }));
+      }
       if (sub === "prompt") return json(await sessions.prompt(id, await readJson(req)));
-      if (sub === "close") return json(await sessions.close(id, { removeWorktree: (await readJson(req)).removeWorktree === true }));
+      if (sub === "close") {
+        const body = await readJson(req);
+        // `background`: the end-session dialog's way — answered once the agent has ended, the removal carried on after it.
+        if (body.removeWorktree === true && body.background === true) return json(await sessions.closeInBackground(id), 202);
+        return json(await sessions.close(id, { removeWorktree: body.removeWorktree === true }));
+      }
     }
   } catch (err) {
     if (err instanceof SessionError) return json({ error: err.message }, err.status);
@@ -1037,21 +1092,48 @@ function staleCleanupRequest(body: Record<string, unknown>): StaleCleanupRequest
   };
 }
 
-/** Cleans up the stale leftovers the user confirmed, each re-checked by the server; the third route that deletes a branch. */
+/**
+ * The ended session a stale cleanup is carried on for in the background (`session` in the body), if one is named: it
+ * must be a worktree session of this very change. Undefined runs the cleanup within the request, as before.
+ */
+function backgroundSession(state: AppState, body: Record<string, unknown>, repoId: string, name: string): string | undefined | Response {
+  if (body.session === undefined) return undefined;
+  const session = typeof body.session === "string" ? state.sessions?.list().find((s) => s.id === body.session) : undefined;
+  if (!session || isChangeless(session) || session.repoId !== repoId || session.change !== name || session.inPlace) {
+    return json({ error: "not a worktree session of this change" }, 400);
+  }
+  return session.id;
+}
+
+/**
+ * Cleans up the stale leftovers the user confirmed, each re-checked by the server; the third route that deletes a
+ * branch. With `session`, it answers once the cleanup is recorded as pending on that ended session and runs on.
+ */
 async function postStaleCleanup(state: AppState, req: Request, repoId: string, name: string): Promise<Response> {
   const target = await staleTarget(state, repoId, name);
   if (target instanceof Response) return target;
   try {
-    const request = staleCleanupRequest(await readJson(req));
+    const body = await readJson(req);
+    const request = staleCleanupRequest(body);
     if (!request) {
       return json({ error: "expected { worktrees: [{ path, branch, commit, uncommitted }], branches: [{ name, commit }], mainCheckout: { files: [{ path, hash }] } | null, acknowledged: boolean }" }, 400);
     }
-    const result = await applyStaleCleanup(target.repo, target.scope, name, request);
-    if (result.items.some((i) => i.outcome !== "kept")) {
-      state.sessions?.forgetWorktrees();
-      state.scanner.trigger();
-    }
-    return json(result);
+    const run = async (): Promise<StaleCleanupResult> => {
+      // Read again when it runs: a background cleanup starts after its session ended, which changes what is running.
+      const current = await staleTarget(state, repoId, name);
+      if (current instanceof Response) return { repoId, name, items: [], refused: ((await current.json()) as { error: string }).error };
+      const result = await applyStaleCleanup(current.repo, current.scope, name, request);
+      if (result.items.some((i) => i.outcome !== "kept")) {
+        state.sessions?.forgetWorktrees();
+        state.scanner.trigger();
+      }
+      return result;
+    };
+    const sessionId = backgroundSession(state, body, repoId, name);
+    if (sessionId instanceof Response) return sessionId;
+    // From the end-session dialog: carried on after the answer, its outcome recorded on the ended session (cleanup-background).
+    if (sessionId !== undefined && state.sessions) return json(await state.sessions.staleCleanupInBackground(sessionId, run), 202);
+    return json(await run());
   } catch (err) {
     if (err instanceof CleanupBusyError) return json({ error: err.message }, 409);
     if (err instanceof StaleCleanupError) return json({ error: err.message }, err.status);
@@ -1132,6 +1214,20 @@ function handOverCompletedQuery(state: AppState, response: PullRequestsResponse)
     void sessions.endMergedAutoMerge(repo.repoId, repo.pullRequests).catch((err) => console.warn("could not end a session whose pull request merged:", err instanceof Error ? err.message : err));
     void sessions.requestReadyMerges(repo.repoId, repo.pullRequests).catch((err) => console.warn("could not hand a ready pull request to its agent:", err instanceof Error ? err.message : err));
   }
+}
+
+export async function refreshRepoPullRequests(state: AppState, repoId: string): Promise<void> {
+  const store = pullRequestStore(state);
+  const targets = pullRequestTargets(state);
+  const resp = await store.refresh(targets, { repoId, force: true });
+  handOverCompletedQuery(state, resp);
+}
+
+export async function listRepoPullRequests(state: AppState, repoId: string): Promise<readonly PullRequest[]> {
+  const store = pullRequestStore(state);
+  const targets = pullRequestTargets(state);
+  const resp = await store.list(targets);
+  return resp.repos.find((r) => r.repoId === repoId)?.pullRequests ?? [];
 }
 
 /** What the Merge action reads its pull request from: the server's last good list, never anything in the request. */
@@ -1416,6 +1512,8 @@ function routeRequest({ state, indexHtml }: AppOptions): (req: Request, url: URL
       if (req.method === "POST" && pathname === "/api/ignore-paths") return tracking(() => postIgnorePath(state, req));
       const enabledMatch = /^\/api\/repos\/([^/]+)\/enabled$/.exec(pathname);
       if (req.method === "POST" && enabledMatch) return tracking(() => postRepoEnabled(state, req, decodeURIComponent(enabledMatch[1])));
+      const changeAgentMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/agent$/.exec(pathname);
+      if (req.method === "POST" && changeAgentMatch) return tracking(() => postChangeAgent(state, req, decodeURIComponent(changeAgentMatch[1]), decodeURIComponent(changeAgentMatch[2])));
       if (req.method === "POST" && pathname === "/api/labels/color") return tracking(() => postLabelColor(state, req));
       if (req.method === "POST" && pathname === "/api/agent-sessions/fast-forward-warning") return tracking(() => postFastForwardWarning(state, req));
       const repoSetting = /^\/api\/repos\/([^/]+)\/(name|agent|labels|pr-title-convention|auto-fetch|forget)$/.exec(pathname);

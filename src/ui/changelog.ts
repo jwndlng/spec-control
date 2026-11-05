@@ -21,6 +21,47 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
     summary: "Ship now shows unfinished checks and lets you ask the agent to finish them or explicitly ship anyway. After an implementation PR merges, use **Finish checks** on its card or Console tab to verify remaining work and prepare a follow-up.",
   },
   {
+    id: "2026-11-04-models-per-phase",
+    date: "2026-11-04",
+    title: "Choose models for each phase",
+    summary:
+      "Set a **Default model** in Settings → Agent sessions, override it per agent, or expand **Phase models** to choose models for drafting, implementation, validation and archiving. New sessions use your choices; running sessions keep their model.",
+  },
+  {
+    id: "2026-11-04-reduce-ship-it-text",
+    date: "2026-11-04",
+    title: "Shorter Ship instructions",
+    summary: "The built-in Ship prompt text is shorter and easier to review. Your custom prompts and additional instructions are unchanged.",
+  },
+  {
+    id: "2026-11-04-update-openspec-settings",
+    date: "2026-11-04",
+    title: "Revisit OpenSpec tool setup",
+    summary:
+      "Open **Update OpenSpec setup** in a project's settings to add tools such as Codex or refresh instructions through its project console. Review and copy the suggested request, then send it when you are ready.",
+  },
+  {
+    id: "2026-11-02-agent-interoperability",
+    date: "2026-11-02",
+    title: "Deterministic Ship, Merge, and zero-token cleanup",
+    summary:
+      "**Ship** and **Merge** now execute directly on the server without typing into an agent or requiring a running session, recording branches in `.openspec.yaml`. Synced changes archive, clean carry-overs cherry-pick, and identical duplicates clean up with zero LLM tokens across all coding agents.",
+  },
+  {
+    id: "2026-11-02-background-worktree-cleanup",
+    date: "2026-11-02",
+    title: "Worktree cleanup continues in the background",
+    summary:
+      "Ending a session now closes the dialog as soon as the agent has ended, so you can continue using the dashboard while confirmed worktree cleanup runs in the background. The cleanup outcome is reported on the card and console once it finishes.",
+  },
+  {
+    id: "2026-10-28-agent-per-change",
+    date: "2026-10-28",
+    title: "Choose an agent for each change",
+    summary:
+      "When several agent profiles are configured, choose which one starts new sessions for a change from its **Console** tab. Other changes keep using the project's agent, and a running session keeps the agent it started with.",
+  },
+  {
     id: "2026-10-28-link-only-own-branch",
     date: "2026-10-28",
     title: "Cards no longer show another change's pull request",
@@ -456,8 +497,7 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
     id: "2026-10-01-pull-request-on-cards",
     date: "2026-10-01",
     title: "Pull requests on cards",
-    summary:
-      "A card shows its change's pull request — `PR #<n>` with its state — and the detail header shows its title, review and checks, linking to GitHub.",
+    summary: "A card shows its change's pull request — `PR #<n>` with its state — and the detail header shows its title, review and checks, linking to GitHub.",
   },
   {
     id: "2026-09-30-pull-requests-view",

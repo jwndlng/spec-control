@@ -53,7 +53,11 @@ export async function confirmIntegration(state: IntegrationState, folder: string
   // Checked again inside the write: a concurrent Enable or an earlier confirmation may have added it meanwhile.
   const { previous, saved } = await updateConfig(state, (current) => {
     if (current.repos.some((r) => canonicalPath(r.path) === path)) return undefined;
-    const repo = newRepoConfig(path, true);
+    const repo = newRepoConfig(
+      path,
+      true,
+      current.repos.map((r) => r.id),
+    );
     const named = { ...repo, name: availableName(repo, current.repos.map((r) => r.name)) };
     return { ...current, repos: [...current.repos, named] };
   });

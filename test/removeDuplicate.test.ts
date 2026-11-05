@@ -9,24 +9,40 @@ import { scanRepo } from "../src/server/scanner.ts";
 import { removeDuplicatePrompt } from "../src/server/sessions/agents.ts";
 import type { SessionManager } from "../src/server/sessions/manager.ts";
 import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, type ChangeSession } from "../src/shared/types.ts";
-import { useTempHome } from "./helpers.ts";
+import { installFakeGh, type GhHarness } from "./ghHelpers.ts";
+import { tempDir, useTempHome } from "./helpers.ts";
 import { git, harness, waitFor, watch } from "./sessionHelpers.ts";
 
 setDefaultTimeout(30_000);
 
 let cleanup: () => Promise<void>;
+let gh: GhHarness;
 const managers: SessionManager[] = [];
 const track = <T extends { manager: SessionManager }>(h: T): T => {
   managers.push(h.manager);
   return h;
 };
+
+async function setupFakeRemote(repoPath: string): Promise<string> {
+  const bare = await tempDir("bare-remote-");
+  git(bare, "init", "--bare", "-q");
+  git(repoPath, "remote", "add", "origin", "https://github.com/acme/demo-ops.git");
+  git(repoPath, "config", "remote.origin.pushurl", bare);
+  return bare;
+}
+
 beforeAll(async () => {
   ({ cleanup } = await useTempHome());
+  gh = await installFakeGh({});
 });
 afterEach(async () => {
   for (const m of managers.splice(0)) await m.shutdown();
+  await gh.forget();
 });
-afterAll(() => cleanup());
+afterAll(async () => {
+  gh.restore();
+  await cleanup();
+});
 
 const CHANGE = "structured-logs";
 const ARCHIVE = `2026-07-01-${CHANGE}`;
@@ -40,8 +56,6 @@ test("the remove-duplicate prompt names the change, the archive, the differing p
   expect(prompt).toContain(`Then delete openspec/changes/${CHANGE}/, commit, push this worktree's branch and open a pull request that changes only files under openspec/.`);
   expect(prompt).toContain("Do not archive the change again.");
   expect(prompt).not.toContain(AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION);
-  expect(removeDuplicatePrompt(CHANGE, duplicate, OPENSPEC_PATHS, "main", { autoMerge: true, record: "RECORD" })).toBe(`${prompt} ${AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION} RECORD`);
-  expect(removeDuplicatePrompt(CHANGE, duplicate, OPENSPEC_PATHS, "main", { record: "RECORD" })).toBe(prompt);
   expect(removeDuplicatePrompt(CHANGE, duplicate, OPENSPEC_PATHS, undefined)).toContain("on the default branch, but");
 });
 
@@ -124,4 +138,42 @@ test("the archived card of a duplicate offers no other session", async () => {
   const h = track(await harness());
   await withDuplicate(h);
   await expect(h.manager.open({ repoId: h.repoId, change: CHANGE, action: "archive" })).rejects.toMatchObject({ status: 404 });
+});
+
+test("Remove duplicate with differingCount === 0 removes duplicate directory and ships without starting an agent", async () => {
+  const h = track(await harness());
+  await setupFakeRemote(h.repoPath);
+  // Create identical duplicate: copy active change to archive without modifying tasks.md
+  const changeDir = join(h.repoPath, OPENSPEC_PATHS.changesDir, CHANGE);
+  const archiveDir = join(h.repoPath, OPENSPEC_PATHS.archiveDir as string, ARCHIVE);
+  await mkdir(archiveDir, { recursive: true });
+  await writeFile(join(changeDir, "tasks.md"), "- [x] Verified before archive\n");
+  await cp(changeDir, archiveDir, { recursive: true });
+  git(h.repoPath, "add", "-A");
+  git(h.repoPath, "commit", "-q", "-m", `chore(openspec): archive ${CHANGE}`);
+  h.snapshot.repos[0] = await scanRepo(h.config.repos[0]);
+
+  const card = h.snapshot.repos[0].changes.find((c) => c.name === CHANGE);
+  expect(card?.duplicate?.differingCount).toBe(0);
+
+  const s = await h.manager.open({ repoId: h.repoId, change: CHANGE, action: "archive", removeDuplicate: true });
+  expect(s.state).toBe("exited");
+  expect(s.exitCode).toBe(0);
+  expect(s.shipped).toBe(true);
+
+  // Active duplicate directory should be deleted
+  const activeExists = await Bun.file(join(s.worktreePath, OPENSPEC_PATHS.changesDir, CHANGE, "proposal.md")).exists();
+  expect(activeExists).toBe(false);
+
+  // Archived copy should still exist
+  const archiveExists = await Bun.file(join(s.worktreePath, OPENSPEC_PATHS.archiveDir as string, ARCHIVE, "proposal.md")).exists();
+  expect(archiveExists).toBe(true);
+
+  // Marker has archive-branch
+  const marker = await Bun.file(join(s.worktreePath, OPENSPEC_PATHS.archiveDir as string, ARCHIVE, ".openspec.yaml")).text();
+  expect(marker).toContain(`archive-branch: chore/archive-${CHANGE}`);
+
+  // PR was created
+  const calls = await gh.calls();
+  expect(calls.some((c) => c.argv.includes("create"))).toBe(true);
 });

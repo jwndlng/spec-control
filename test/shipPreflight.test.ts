@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { readShipTasks, SHIP_TASK_BYTES, tasksSettled } from "../src/server/sessions/taskSummary.ts";
 import { createFetchHandler, type AppState } from "../src/server/api.ts";
 import { mergedImplementation } from "../src/shared/pullRequestLink.ts";
-import type { ChangeSession, RepoPullRequests } from "../src/shared/types.ts";
+import { CONVENTIONAL_COMMITS_SHIP_SENTENCE, type ChangeSession, type RepoPullRequests } from "../src/shared/types.ts";
 import { treeFingerprint, useTempHome } from "./helpers.ts";
 import { harness, waitFor, watch, type Harness } from "./sessionHelpers.ts";
 
@@ -157,7 +157,7 @@ test("Finish checks sends into a running session and resumes an ended one withou
   expect(result).toMatchObject({ id: s.id, submitted: true });
   await waitFor(() => seen.text().includes("never push to the merged branch"), "follow-up prompt");
   expect(seen.text()).toContain("last fetched 2026-11-01");
-  expect(seen.text()).toContain("Title the pull request as a Conventional Commit");
+  expect(seen.text()).toContain(CONVENTIONAL_COMMITS_SHIP_SENTENCE);
   expect(seen.text()).toContain("set branch:");
   expect(await treeFingerprint(s.worktreePath)).toEqual(before);
   expect(h.manager.list().filter((s) => s.state === "running")).toHaveLength(1);
