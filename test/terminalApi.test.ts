@@ -335,3 +335,19 @@ test("the sessions list carries an agent's current waiting report; opening a con
   client.close();
   second.close();
 });
+
+test("custom API starts without a profile prompt, reuses the running session and reports a missing executable", async () => {
+  const h = await harness({ agent: { prompts: {} } });
+  const { http } = await serve(h);
+  const body = { repoId: h.repoId, change: "upgrade-runtime", action: "custom" };
+  const response = await post(`${http}/api/sessions`, body);
+  expect(response.status).toBe(201);
+  const session = await response.json() as Session;
+  expect(session.action).toBe("custom");
+  expect((await (await post(`${http}/api/sessions`, body)).json()).id).toBe(session.id);
+  await h.manager.close(session.id);
+  h.config.agentSessions.agents[0].command = ["missing-custom-agent-executable"];
+  const missing = await post(`${http}/api/sessions`, body);
+  expect(missing.status).toBe(503);
+  expect(await missing.text()).toContain("Fake Agent");
+});

@@ -200,7 +200,7 @@ export function TerminalView({ sessionId, running, onExit }: { sessionId: string
   );
 }
 
-const STEP_LABEL: Record<SessionAction, string> = { draft: "Draft artifacts", fastForward: "Fast-forward", implement: "Implement", validate: "Validate", archive: "Archive" };
+const STEP_LABEL: Record<SessionAction, string> = { draft: "Draft artifacts", fastForward: "Fast-forward", implement: "Implement", validate: "Validate", archive: "Archive", custom: "Custom session" };
 
 /**
  * The change's sessions, in the slot the delta specs use for their file list. Omitted for a single session: there is

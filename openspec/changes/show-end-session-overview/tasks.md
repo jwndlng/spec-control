@@ -12,5 +12,5 @@
 
 ## 3. Verification and changelog
 
-- [x] 3.1 Run `bun run check` and `bun run test` to verify all lint checks, type checks, and tests pass — Verified 2026-11-05 with pinned Bun 1.4.2 after incorporating main’s blocker fixes: full `bun run check` passed (2,256 tests); focused `bun run test` passed (31 tests); binary and demo builds passed.
+- [x] 3.1 Run `bun run check` and `bun run test` to verify all lint checks, type checks, and tests pass — Verified 2026-11-05 with pinned Bun 1.4.2 after incorporating main’s blocker fixes: full `bun run check` passed (2,261 tests, including the latest custom-session merge and the CI version-test isolation fix); focused `bun run test` passed (31 tests); binary and demo builds passed.
 - [x] 3.2 Add a What's new entry at the top of `src/ui/changelog.ts` (see "What's new" in CONTRIBUTING.md) describing that archived changes whose pull request merged offer **End session** directly on the card; verify it appears in the What's new list

@@ -435,7 +435,7 @@ test("while the proposal session runs, the card shows its badge and no starter; 
   const left = { ...proposal, state: "exited" as const, exitCode: 0 };
   const waiting = cardSessionControls(sessionsOn, [left], { ...ready, pullRequest: pr({ number: 90, head: "docs/rotate-keys", checks: "pending" }) });
   expect(waiting.main).toEqual({ kind: "waiting", reason: "checks running" });
-  expect(waiting.menu).toEqual([{ kind: "start", action: "implement" }]);
+  expect(waiting.menu).toEqual([{ kind: "start", action: "implement" }, { kind: "start", action: "custom" }]);
   expect(waitingLabel("checks running", true)).toBe("Waiting: proposal checks running");
   expect(waitingLabel("checks running")).toBe("Waiting: checks running");
   expect(waitingLabel("draft", true)).toBe("Waiting: draft proposal pull request");

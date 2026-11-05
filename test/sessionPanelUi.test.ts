@@ -1,6 +1,6 @@
 // The session panel's header actions run one at a time (fix-form-and-dialog-interactions 3.1): the pure guard, and the
 // panel's source, which uses hooks and so is read rather than rendered.
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { oneAtATime } from "../src/ui/sessionState.ts";
@@ -85,7 +85,6 @@ test("cards show the overriding profile's name with its tooltip and cards withou
 
 
 // Exercise the real buttons and refresh through the session provider without starting an agent or terminal.
-import { afterEach } from "bun:test";
 import { Window } from "happy-dom";
 import { h, render } from "preact";
 import { useState } from "preact/hooks";
@@ -198,4 +197,10 @@ test("pending deletion ignores repeated clicks and failure keeps the selection a
   expect(view.selections).toEqual([]);
   expect(view.root.querySelector("output")!.textContent).toBe("2");
   expect(view.refreshes()).toBe(before);
+});
+
+test("Custom session has a label and no-prompt tooltip and uses the shared starter rendering", () => {
+  expect(sessionsSource).toContain('custom: "Custom session"');
+  expect(sessionsSource).toContain("without an opening prompt");
+  expect(panel).toContain('custom: "Custom session"');
 });
