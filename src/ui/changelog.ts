@@ -15,6 +15,19 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    id: "2026-11-04-models-per-phase",
+    date: "2026-11-04",
+    title: "Choose models for each phase",
+    summary:
+      "Set a **Default model** in Settings → Agent sessions, override it per agent, or expand **Phase models** to choose models for drafting, implementation, validation and archiving. New sessions use your choices; running sessions keep their model.",
+  },
+  {
+    id: "2026-11-04-reduce-ship-it-text",
+    date: "2026-11-04",
+    title: "Shorter Ship instructions",
+    summary: "The built-in Ship prompt text is shorter and easier to review. Your custom prompts and additional instructions are unchanged.",
+  },
+  {
     id: "2026-11-04-update-openspec-settings",
     date: "2026-11-04",
     title: "Revisit OpenSpec tool setup",

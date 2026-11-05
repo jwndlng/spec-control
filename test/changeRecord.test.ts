@@ -125,12 +125,12 @@ test("the record instruction names the key, both paths, the map's shape and the 
   for (const text of [implement, archive]) {
     expect(text).toContain("openspec/changes/rotate-keys/.openspec.yaml");
     expect(text).toContain("openspec/changes/archive/<date>-rotate-keys/.openspec.yaml");
-    expect(text).toContain("under the top-level key spec-control:");
-    expect(text).toContain("indented two spaces");
-    expect(text).toContain("Commit it with your work before you push");
-    expect(text).toContain("add no pull request number and no later commit");
-    expect(text).toContain("Change nothing else in the file.");
-    expect(text).toContain("unless it already says so");
+    expect(text).toContain("under top-level spec-control:");
+    expect(text).toContain("two-space indent");
+    expect(text).toContain("Commit with the work before pushing");
+    expect(text).toContain("no PR number or later record-only commit");
+    expect(text).toContain("preserve all other fields");
+    expect(text).toContain("Leave it if correct");
     expect(text).not.toContain("\n");
     // Short enough to be typed into a terminal after Ship's prompt and the auto-merge instruction (macOS: 1024 bytes a line).
     expect(text.length).toBeLessThan(420);

@@ -115,7 +115,7 @@ export class OpenSpecFramework extends SpecFramework {
   override recordInstruction({ change, archive }: { change: string; archive: boolean }): string {
     if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
     const key = archive ? "archive-branch" : "branch";
-    return `Before you commit, set ${key}: <the branch you push> under the top-level key spec-control: in openspec/changes/${change}/${CHANGE_MARKER} (or openspec/changes/archive/<date>-${change}/${CHANGE_MARKER} if this branch archived it), indented two spaces, unless it already says so. Change nothing else in the file. Commit it with your work before you push; add no pull request number and no later commit.`;
+    return `Before committing, set ${key}: <the branch you push> under top-level spec-control: (two-space indent) in openspec/changes/${change}/${CHANGE_MARKER} (or openspec/changes/archive/<date>-${change}/${CHANGE_MARKER} if archived here). Leave it if correct; preserve all other fields. Commit with the work before pushing; no PR number or later record-only commit.`;
   }
 
   /** `.openspec.yaml` naming the project's schema and today's date, as `openspec new change` writes it. */

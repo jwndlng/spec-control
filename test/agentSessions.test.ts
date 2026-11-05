@@ -1,4 +1,6 @@
 // Tests for deterministic server-side Ship, auto-ship on session exit, and deterministic Merge (Tasks 3.2, 3.3, 3.4)
+import { launchCommand, launchWithoutPrompt, resolveModel, resumeLaunch } from "../src/server/sessions/agents.ts";
+import { defaultConfig } from "../src/server/config.ts";
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,7 +11,7 @@ import { recordBranchInWorktree } from "../src/server/frameworks/worktreeMetadat
 import type { ChangeSession, PullRequest } from "../src/shared/types.ts";
 import { installFakeGh, type GhHarness } from "./ghHelpers.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
-import { git, harness, waitFor, watch, type Harness } from "./sessionHelpers.ts";
+import { fakeProfile, git, harness, waitFor, watch, type Harness } from "./sessionHelpers.ts";
 
 setDefaultTimeout(30_000);
 
@@ -496,4 +498,41 @@ test("Archive falls back to starting agent process when change is not complete (
 
   const seen = await watch(manager, session.id);
   await waitFor(() => seen.text().includes("fake-agent ready"), "agent ready");
+});
+
+test("models cascade by starter; fast-forward and consoles use profile/global defaults", () => {
+  const config = defaultConfig();
+  const agent = fakeProfile({ model: "profile", phaseModels: { draft: "draft-model", implement: "code", validate: "quick", archive: "small" } });
+  config.agentSessions.defaultModel = "global";
+  for (const action of ["draft", "implement", "validate", "archive"] as const) expect(resolveModel(config, agent, action)).toBe(agent.phaseModels![action]);
+  expect(resolveModel(config, agent, "fastForward")).toBe("profile");
+  expect(resolveModel(config, agent)).toBe("profile");
+  expect(resolveModel(config, fakeProfile(), "draft")).toBe("global");
+  delete config.agentSessions.defaultModel;
+  expect(resolveModel(config, fakeProfile(), "draft")).toBeUndefined();
+});
+
+test("models are whole arguments; placeholders replace literally without changing prompt text", () => {
+  const agent = fakeProfile({ command: ["custom", "{prompt}"], launchArgs: ["--verbose"], resumeCommand: ["custom", "resume"] });
+  expect(launchCommand(agent, "ask {model}", "x $&").argv).toEqual(["custom", "--model", "x $&", "--verbose", "ask {model}"]);
+  expect(launchCommand(agent, "ask").argv).toEqual(["custom", "--verbose", "ask"]);
+  expect(resumeLaunch(agent, "small")).toEqual(["custom", "--model", "small", "--verbose", "resume"]);
+  expect(launchWithoutPrompt(agent, "small")).toEqual(["custom", "--model", "small", "--verbose"]);
+  const custom = { ...agent, command: ["custom", "-m={model}", "{prompt}"] };
+  expect(launchCommand(custom, "ask", "$&").argv).toEqual(["custom", "--verbose", "-m=$&", "ask"]);
+  expect(launchCommand(custom, "ask").argv).toEqual(["custom", "--verbose", "-m={model}", "ask"]);
+  expect(launchCommand({ ...agent, launchArgs: ["--select={model}"] }, "ask", "small").argv).toEqual(["custom", "--select=small", "ask"]);
+});
+
+test("session start passes phase model and settings changes leave the running process alone", async () => {
+  const h = await harness({ agent: { model: "profile", phaseModels: { implement: "phase" } } });
+  managers.push(h.manager);
+  h.config.agentSessions.defaultModel = "global";
+  const session = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const terminal = await watch(h.manager, session.id);
+  await waitFor(() => terminal.text().includes("phase"), "model argument");
+  expect(terminal.text()).toContain("--model");
+  h.config.agentSessions.agents[0].phaseModels!.implement = "updated";
+  expect(terminal.text()).not.toContain("updated");
+  terminal.detach();
 });
