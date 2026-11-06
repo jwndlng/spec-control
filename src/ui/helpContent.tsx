@@ -165,7 +165,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             action the change allows, such as <strong>Draft artifacts</strong> for a design on a ready change. A starter
             runs your agent in a git worktree of its own, on its own branch, under <code>~/.spec-control/worktrees/</code>;
             your main checkout is not touched. Once implementation started, <strong>Draft artifacts</strong> is no longer
-            offered.
+            offered. Choose <strong>Custom session</strong> from the menu at any active stage, including while waiting on dependencies, to start without an opening prompt and write your own first instruction.
           </li>
           <li>
             While the change has an open pull request, that pull request decides what is recommended:{" "}
@@ -227,6 +227,10 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             stopping for your review — the pull request is the only review, and it is never merged for you. It asks you
             to confirm first; <strong>Don't show this warning again</strong> skips that, and{" "}
             <AppLink path="/settings" query="?section=agents">Settings → Agent sessions</AppLink> brings it back.
+          </li>
+          <li>
+            In a change's <strong>Console</strong> tab, use the <strong>×</strong> beside an ended session in the session list
+            to remove its record and stored output. Its worktree and branch are kept. Running sessions have no removal control.
           </li>
           <li>
             <strong>Open work</strong> in the top bar lists running agents and worktrees that still hold something.{" "}

@@ -24,6 +24,11 @@ Users often need to talk to their agent in the context of a specific change with
 
 ## Impact
 
+- `src/server/sessions/agents.ts`: Treat Custom session as having no opening prompt.
+- `src/ui/helpContent.tsx`: Explain the Custom session action in built-in Help.
+- `src/ui/demo/transcripts.ts`: Add a change-specific unprompted demo recording.
+- Tests use the existing suites `test/agents.test.ts`, `test/terminalApi.test.ts`, `test/sessionState.test.ts`, `test/nextStep.test.ts`, `test/agentSessions.test.ts`, and `test/demoSessions.test.ts` where proposed test files do not exist.
+
 - `src/shared/types.ts`: Adds `"custom"` to `SessionAction` and `SESSION_ACTIONS`; updates `availableActions` to include `"custom"` for all non-archived changes.
 - `src/shared/nextStep.ts`: Adds `"custom"` to `MENU_ORDER` after `"archive"`.
 - `src/server/sessions/manager.ts`: Updates `openNow` to handle `action === "custom"`, using `launchWithoutPrompt(agent)` and bypassing prompt lookup and blocked/pastDrafting refusals.

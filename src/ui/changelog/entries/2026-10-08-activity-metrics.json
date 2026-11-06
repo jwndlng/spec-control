@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-08-activity-metrics",
+  "date": "2026-10-08",
+  "title": "Activity per day and per project",
+  "summary": "Below its figures, **Activity** now charts the week: events per day, and which projects were busiest, with the changes each touched. Click a project to see only its activity, or **Hide details** to keep just the figures.",
+  "order": 39
+}

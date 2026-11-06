@@ -201,7 +201,7 @@ export function TerminalView({ sessionId, running, onExit }: { sessionId: string
   );
 }
 
-const STEP_LABEL: Record<SessionAction, string> = { draft: "Draft artifacts", fastForward: "Fast-forward", implement: "Implement", validate: "Validate", archive: "Archive" };
+const STEP_LABEL: Record<SessionAction, string> = { draft: "Draft artifacts", fastForward: "Fast-forward", implement: "Implement", validate: "Validate", archive: "Archive", custom: "Custom session" };
 
 /**
  * The change's sessions, in the slot the delta specs use for their file list. Omitted for a single session: there is
@@ -209,24 +209,58 @@ const STEP_LABEL: Record<SessionAction, string> = { draft: "Draft artifacts", fa
  * their output still readable and their worktrees possibly still holding work.
  */
 export function ConsoleSessionList({ sessions, selected, onSelect }: { sessions: ChangeSession[]; selected?: string; onSelect: (id: string) => void }) {
+  const ui = useSessionUi();
+  const inFlight = useRef(false);
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState<string>();
+  const remove = (session: ChangeSession) => oneAtATime(inFlight, setRemoving)(async () => {
+    try {
+      setError(undefined);
+      await api.deleteSession(session.id);
+      if (session.id === selected) {
+        const remaining = sessions.find((s) => s.id !== session.id);
+        if (remaining) onSelect(remaining.id);
+      }
+      await ui.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  });
   if (sessions.length < 2) return null;
   return (
     <nav class="detail-files console-sessions" aria-label="Sessions of this change">
+      {error && <p role="alert">{error}</p>}
       {sessions.map((s) => {
         const badge = sessionBadge(s);
         return (
-          <button
-            key={s.id}
-            type="button"
-            class={`detail-file console-session ${s.id === selected ? "on" : ""}`}
-            aria-current={s.id === selected ? "true" : undefined}
-            title={`${STEP_LABEL[s.action]} · ${s.branch} · ${badge.title}`}
-            onClick={() => onSelect(s.id)}
-          >
-            <span class="console-session-what">{STEP_LABEL[s.action]}</span>
-            <span class="hint mono">{s.branch}</span>
-            <SessionBadgeView badge={badge} />
-          </button>
+          <div key={s.id} class={`detail-file console-session ${s.id === selected ? "on" : ""}`}>
+            <button
+              type="button"
+              class="console-session-select"
+              aria-current={s.id === selected ? "true" : undefined}
+              title={`${STEP_LABEL[s.action]} · ${s.branch} · ${badge.title}`}
+              onClick={() => onSelect(s.id)}
+            >
+              <span class="console-session-what">{STEP_LABEL[s.action]}</span>
+              <span class="hint mono">{s.branch}</span>
+              <SessionBadgeView badge={badge} />
+            </button>
+            {s.state !== "running" && (
+              <button
+                type="button"
+                class="console-session-remove"
+                aria-label="Remove console"
+                title="Delete this session's record and stored output"
+                disabled={removing}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void remove(s);
+                }}
+              >
+                ×
+              </button>
+            )}
+          </div>
         );
       })}
     </nav>

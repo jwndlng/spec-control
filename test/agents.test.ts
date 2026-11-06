@@ -336,7 +336,7 @@ test("additional instructions are an addition, never a prompt: they make no acti
   const repo = newRepoConfig("/w/demo-ops", true);
   const cfg = { ...base, repos: [repo], agentSessions: { ...base.agentSessions, enabled: true, agents: [suffixOnly], defaultAgent: "fake" } };
   const artifacts = [{ id: "a0", status: "done" as const }];
-  expect(startersFor(cfg, { repoId: repo.id, artifacts, stage: "done" })).toEqual([]);
+  expect(startersFor(cfg, { repoId: repo.id, artifacts, stage: "done" })).toEqual(["custom"]);
 });
 
 test("a composed prompt still reaches the agent whole, whatever it contains", () => {
@@ -382,33 +382,33 @@ test("a running session keeps its own next-step prompts after the change overrid
   const cfg = { ...base, repos: [{ ...repo, agent: { enabled: true, changeAgents: { c: "b" } } }], agentSessions: { ...base.agentSessions, enabled: true, agents: [original, next], defaultAgent: "a" } };
   const card = { repoId: repo.id, name: "c", artifacts: [{ id: "design", status: "done" as const }, { id: "tasks", status: "done" as const }], stage: "ready" as const };
   const running = session({ repoId: repo.id, change: "c", agentId: "a", action: "implement" });
-  expect(startersFor(cfg, card)).toEqual([]);
+  expect(startersFor(cfg, card)).toEqual(["custom"]);
   expect(consoleSteps(cfg, [running], card, running)?.into).toContain("implement");
 });
 
 test("starters: a blocked change is not offered Implement, everything else is unchanged", () => {
   const a = (...s: ("done" | "ready" | "blocked")[]) => s.map((status, i) => ({ id: `a${i}`, status }));
-  expect(availableActions({ artifacts: a("done", "done"), stage: "ready", blocked: true })).toEqual([]);
-  expect(availableActions({ artifacts: a("done", "done"), stage: "implementing", blocked: true })).toEqual([]);
-  expect(availableActions({ artifacts: a("done", "ready"), stage: "drafts", blocked: true })).toEqual(["draft"]);
-  expect(availableActions({ artifacts: a("done", "done"), stage: "done", subState: "validate", blocked: true })).toEqual(["validate", "archive"]);
-  expect(availableActions({ artifacts: a("done", "done"), stage: "ready", blocked: false })).toEqual(["implement"]);
+  expect(availableActions({ artifacts: a("done", "done"), stage: "ready", blocked: true })).toEqual(["custom"]);
+  expect(availableActions({ artifacts: a("done", "done"), stage: "implementing", blocked: true })).toEqual(["custom"]);
+  expect(availableActions({ artifacts: a("done", "ready"), stage: "drafts", blocked: true })).toEqual(["draft", "custom"]);
+  expect(availableActions({ artifacts: a("done", "done"), stage: "done", subState: "validate", blocked: true })).toEqual(["validate", "archive", "custom"]);
+  expect(availableActions({ artifacts: a("done", "done"), stage: "ready", blocked: false })).toEqual(["implement", "custom"]);
 });
 
 test("starters: stage decides, narrowed to the prompts the agent has", () => {
   const a = (...s: ("done" | "ready" | "blocked")[]) => s.map((status, i) => ({ id: `a${i}`, status }));
-  expect(availableActions({ artifacts: a("done", "ready"), stage: "drafts" })).toEqual(["draft", "fastForward"]);
-  expect(availableActions({ artifacts: a("done", "done"), stage: "ready" })).toEqual(["implement"]);
-  expect(availableActions({ artifacts: a("done", "done"), stage: "done" })).toEqual(["archive"]);
-  expect(availableActions({ artifacts: a("done", "done"), stage: "done", subState: "complete" })).toEqual(["archive"]);
-  expect(availableActions({ artifacts: a("done", "done"), stage: "implementing" })).toEqual(["implement"]);
+  expect(availableActions({ artifacts: a("done", "ready"), stage: "drafts" })).toEqual(["draft", "fastForward", "custom"]);
+  expect(availableActions({ artifacts: a("done", "done"), stage: "ready" })).toEqual(["implement", "custom"]);
+  expect(availableActions({ artifacts: a("done", "done"), stage: "done" })).toEqual(["archive", "custom"]);
+  expect(availableActions({ artifacts: a("done", "done"), stage: "done", subState: "complete" })).toEqual(["archive", "custom"]);
+  expect(availableActions({ artifacts: a("done", "done"), stage: "implementing" })).toEqual(["implement", "custom"]);
   expect(availableActions({ artifacts: a("done", "done"), stage: "archived", archived: "2026-06-18" })).toEqual([]);
   const repo = newRepoConfig("/w/demo-ops", true);
   const cfg = { ...base, repos: [repo], agentSessions: { ...base.agentSessions, enabled: true, agents: [fakeProfile({ prompts: { implement: "x {change}" } })], defaultAgent: "fake" } };
-  expect(startersFor(cfg, { repoId: repo.id, artifacts: a("done", "done"), stage: "ready" })).toEqual(["implement"]);
-  expect(startersFor(cfg, { repoId: repo.id, artifacts: a("done", "done"), stage: "done" })).toEqual([]); // no archive prompt
+  expect(startersFor(cfg, { repoId: repo.id, artifacts: a("done", "done"), stage: "ready" })).toEqual(["implement", "custom"]);
+  expect(startersFor(cfg, { repoId: repo.id, artifacts: a("done", "done"), stage: "done" })).toEqual(["custom"]); // no archive prompt
   const archiving = { ...cfg, agentSessions: { ...cfg.agentSessions, agents: [fakeProfile({ prompts: { archive: "a {change}" } })] } };
-  for (const stage of ["done"] as const) expect(startersFor(archiving, { repoId: repo.id, artifacts: a("done", "done"), stage })).toEqual(["archive"]);
+  for (const stage of ["done"] as const) expect(startersFor(archiving, { repoId: repo.id, artifacts: a("done", "done"), stage })).toEqual(["archive", "custom"]);
   expect(sessionsEnabledFor(cfg, repo.id)).toBe(true);
   expect(sessionsEnabledFor({ ...cfg, repos: [{ ...repo, agent: { enabled: false } }] }, repo.id)).toBe(false);
   expect(sessionsEnabledFor({ ...cfg, agentSessions: { ...cfg.agentSessions, enabled: false } }, repo.id)).toBe(false);
@@ -423,7 +423,7 @@ test("a card shows the running session's badge instead of a starter, and a faile
   const mine = (patch: Partial<ChangeSession>) => session({ repoId: repo.id, change: "c", ...patch });
 
   // No session: the stage's starter, and nothing to show a badge for.
-  expect(cardSessionControls(cfg, [], card)).toMatchObject({ shown: [], starters: ["implement"], main: { kind: "start", action: "implement" }, menu: [] });
+  expect(cardSessionControls(cfg, [], card)).toMatchObject({ shown: [], starters: ["implement", "custom"], main: { kind: "start", action: "implement" }, menu: [{ kind: "start", action: "custom" }] });
 
   // A running session stands in for the starter, whatever its terminal is doing — the badge's words differ, the rule
   // does not, so no button appears and vanishes as the terminal falls silent.
@@ -437,24 +437,24 @@ test("a card shows the running session's badge instead of a starter, and a faile
   // Failed or badly ended and nothing running: the badge is shown and the starter stays, so a retry is one click away.
   for (const patch of [{ state: "failed" as const, error: "no such file" }, { state: "exited" as const, exitCode: 3 }]) {
     const after = cardSessionControls(cfg, [mine(patch)], card);
-    expect(after.starters).toEqual(["implement"]);
+    expect(after.starters).toEqual(["implement", "custom"]);
     expect(after.shown).toHaveLength(1);
   }
   // A clean exit is not worth a badge, and leaves the starter on its own.
-  expect(cardSessionControls(cfg, [mine({ state: "exited", exitCode: 0 })], card)).toMatchObject({ shown: [], starters: ["implement"], main: { kind: "start", action: "implement" }, menu: [] });
+  expect(cardSessionControls(cfg, [mine({ state: "exited", exitCode: 0 })], card)).toMatchObject({ shown: [], starters: ["implement", "custom"], main: { kind: "start", action: "implement" }, menu: [{ kind: "start", action: "custom" }] });
 
   // An archive session running next to the change's own one still counts as running: no starter.
   expect(cardSessionControls(cfg, [mine({ id: "arch", action: "archive" })], { ...card, stage: "done" }).starters).toEqual([]);
 
   // Another change's session is none of this card's business.
-  expect(cardSessionControls(cfg, [session({ repoId: repo.id, change: "other" })], card)).toMatchObject({ shown: [], starters: ["implement"], main: { kind: "start", action: "implement" }, menu: [] });
+  expect(cardSessionControls(cfg, [session({ repoId: repo.id, change: "other" })], card)).toMatchObject({ shown: [], starters: ["implement", "custom"], main: { kind: "start", action: "implement" }, menu: [{ kind: "start", action: "custom" }] });
 
   // `subState` has to reach `availableActions` through here, or a change awaiting confirmation would never offer
   // Validate on its card. The stock fake agent has no validate prompt, so one that has is what shows the difference.
   const done = { ...card, stage: "done" as const, subState: "validate" as const };
   const validating = { ...cfg, agentSessions: { ...cfg.agentSessions, agents: [fakeProfile({ prompts: { validate: "v {change}", archive: "a {change}" } })] } };
-  expect(cardSessionControls(validating, [], done).starters).toEqual(["validate", "archive"]);
-  expect(cardSessionControls(validating, [], { ...done, subState: undefined }).starters).toEqual(["archive"]);
+  expect(cardSessionControls(validating, [], done).starters).toEqual(["validate", "archive", "custom"]);
+  expect(cardSessionControls(validating, [], { ...done, subState: undefined }).starters).toEqual(["archive", "custom"]);
   // And a running session still takes the starters' place, Validate included.
   expect(cardSessionControls(validating, [mine({})], done).starters).toEqual([]);
 
@@ -595,7 +595,7 @@ test("the Integrate row says why the action is unavailable, and offers it when n
 test("starters: a change awaiting validation offers Validate and Archive, never Implement", () => {
   const a = (...s: ("done" | "ready" | "blocked")[]) => s.map((status, i) => ({ id: `a${i}`, status }));
   const done = a("done", "done");
-  expect(availableActions({ artifacts: done, stage: "done", subState: "validate" })).toEqual(["validate", "archive"]);
+  expect(availableActions({ artifacts: done, stage: "done", subState: "validate" })).toEqual(["validate", "archive", "custom"]);
   expect(availableActions({ artifacts: done, stage: "done", subState: "validate" })).not.toContain("implement");
   // `validate` belongs to `Done` alone; nothing earlier offers it.
   for (const stage of ["backlog", "drafts", "ready", "implementing", "unknown"] as const) {
@@ -604,15 +604,15 @@ test("starters: a change awaiting validation offers Validate and Archive, never 
   // An archived change offers nothing, whatever a leftover sub-state says.
   expect(availableActions({ artifacts: done, stage: "archived", subState: "validate", archived: "2026-06-18" })).toEqual([]);
   // A snapshot cached before sub-states existed reads as `complete`.
-  expect(availableActions({ artifacts: done, stage: "done" })).toEqual(["archive"]);
+  expect(availableActions({ artifacts: done, stage: "done" })).toEqual(["archive", "custom"]);
 
   // Narrowed to the prompts the agent has: without a Validate prompt only Archive is offered.
   const repo = newRepoConfig("/w/demo-ops", true);
   const card = { repoId: repo.id, artifacts: done, stage: "done" as const, subState: "validate" as const };
   const withBoth = { ...base, repos: [repo], agentSessions: { ...base.agentSessions, enabled: true, agents: [fakeProfile({ prompts: { validate: "v {change}", archive: "a {change}" } })], defaultAgent: "fake" } };
-  expect(startersFor(withBoth, card)).toEqual(["validate", "archive"]);
+  expect(startersFor(withBoth, card)).toEqual(["validate", "archive", "custom"]);
   const archiveOnly = { ...withBoth, agentSessions: { ...withBoth.agentSessions, agents: [fakeProfile({ prompts: { archive: "a {change}" } })] } };
-  expect(startersFor(archiveOnly, card)).toEqual(["archive"]);
+  expect(startersFor(archiveOnly, card)).toEqual(["archive", "custom"]);
 });
 
 test("the resolve-conflicts prompt falls back to the agent-neutral default, like Ship", () => {
@@ -671,15 +671,15 @@ test("an agent's waiting report comes first, worded as the agent's report", () =
 test("starters: Draft is decided by stage, and in Ready only for an artifact implementing does not need", () => {
   const optional = (status: "done" | "ready") => [{ id: "proposal", status: "done" as const, required: true }, { id: "tasks", status: "done" as const, required: true }, { id: "design", status, required: false }];
   // Done without a design: only Archive, and Draft is refused as past drafting.
-  expect(availableActions({ artifacts: optional("ready"), stage: "done" })).toEqual(["archive"]);
-  expect(availableActions({ artifacts: optional("ready"), stage: "done", subState: "validate" })).toEqual(["validate", "archive"]);
+  expect(availableActions({ artifacts: optional("ready"), stage: "done" })).toEqual(["archive", "custom"]);
+  expect(availableActions({ artifacts: optional("ready"), stage: "done", subState: "validate" })).toEqual(["validate", "archive", "custom"]);
   expect(pastDraftingReason({ stage: "done" })).toContain("past drafting");
   // Implementing without a design: Implement only.
-  expect(availableActions({ artifacts: optional("ready"), stage: "implementing" })).toEqual(["implement"]);
+  expect(availableActions({ artifacts: optional("ready"), stage: "implementing" })).toEqual(["implement", "custom"]);
   expect(pastDraftingReason({ stage: "implementing" })).toContain("past drafting");
   // Ready may still draft its design; with every artifact written it is Implement only.
-  expect(availableActions({ artifacts: optional("ready"), stage: "ready" })).toEqual(["draft", "implement"]);
-  expect(availableActions({ artifacts: optional("done"), stage: "ready" })).toEqual(["implement"]);
+  expect(availableActions({ artifacts: optional("ready"), stage: "ready" })).toEqual(["draft", "implement", "custom"]);
+  expect(availableActions({ artifacts: optional("done"), stage: "ready" })).toEqual(["implement", "custom"]);
   expect(pastDraftingReason({ stage: "ready" })).toBeUndefined();
   // Before planning, Draft is offered whatever the artifacts say.
   for (const stage of ["unknown", "backlog", "drafts"] as const) expect(availableActions({ artifacts: optional("ready"), stage })).toContain("draft");
@@ -687,19 +687,19 @@ test("starters: Draft is decided by stage, and in Ready only for an artifact imp
 
 test("Fast-forward: offered only while a change is unplanned and not blocked, and only to an agent that can draft and implement", () => {
   const a = (...s: ("done" | "ready" | "blocked")[]) => s.map((status, i) => ({ id: `a${i}`, status }));
-  expect(availableActions({ artifacts: [], stage: "unknown" })).toEqual(["draft", "fastForward"]);
-  expect(availableActions({ artifacts: a("ready", "blocked"), stage: "backlog" })).toEqual(["draft", "fastForward"]);
-  expect(availableActions({ artifacts: a("done", "ready"), stage: "drafts", blocked: true })).toEqual(["draft"]);
+  expect(availableActions({ artifacts: [], stage: "unknown" })).toEqual(["draft", "fastForward", "custom"]);
+  expect(availableActions({ artifacts: a("ready", "blocked"), stage: "backlog" })).toEqual(["draft", "fastForward", "custom"]);
+  expect(availableActions({ artifacts: a("done", "ready"), stage: "drafts", blocked: true })).toEqual(["draft", "custom"]);
   // Ready with an optional design still missing: Draft stays offered, Fast-forward does not.
-  expect(availableActions({ artifacts: [{ id: "tasks", status: "done", required: true }, { id: "design", status: "ready", required: false }], stage: "ready" })).toEqual(["draft", "implement"]);
+  expect(availableActions({ artifacts: [{ id: "tasks", status: "done", required: true }, { id: "design", status: "ready", required: false }], stage: "ready" })).toEqual(["draft", "implement", "custom"]);
   expect(availableActions({ artifacts: a("done", "ready"), stage: "archived", archived: "2026-06-18" })).toEqual([]);
 
   const repo = newRepoConfig("/w/demo-ops", true);
   const withPrompts = (prompts: Record<string, string>) => ({ ...base, repos: [repo], agentSessions: { ...base.agentSessions, enabled: true, agents: [fakeProfile({ prompts })], defaultAgent: "fake" } });
   const card = { repoId: repo.id, artifacts: a("done", "ready"), stage: "drafts" as const };
-  expect(startersFor(withPrompts({ draft: "d {change}", implement: "i {change}" }), card)).toEqual(["draft", "fastForward"]);
-  expect(startersFor(withPrompts({ draft: "d {change}" }), card)).toEqual(["draft"]);
-  expect(startersFor(withPrompts({ implement: "i {change}" }), card)).toEqual([]);
+  expect(startersFor(withPrompts({ draft: "d {change}", implement: "i {change}" }), card)).toEqual(["draft", "fastForward", "custom"]);
+  expect(startersFor(withPrompts({ draft: "d {change}" }), card)).toEqual(["draft", "custom"]);
+  expect(startersFor(withPrompts({ implement: "i {change}" }), card)).toEqual(["custom"]);
 });
 
 test("Fast-forward: Draft, then Implement, each with its additional instructions, without Ship tail", () => {

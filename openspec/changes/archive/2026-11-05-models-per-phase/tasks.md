@@ -17,5 +17,5 @@
 
 ## 4. Documentation and Verification
 
-- [ ] 4.1 Run full suite verification (`bun run check` and `bun run build`) to ensure all tests, linting, type checks, and binary builds pass. Build, lint, typecheck, model-specific tests and compiled PTY/WebSocket smoke test pass. Full-suite completion is blocked by the existing `test/terminalSessions.test.ts` test "an opening prompt typed after start-up is not sent into a dialog", reproduced on untouched HEAD; resolve that failure and rerun `bun run check`. Some existing scanner/API tests also need more than the default five-second timeout on this machine.
+- [x] 4.1 Run full suite verification (`bun run check` and `bun run build`) to ensure all tests, linting, type checks, and binary builds pass. The full check passes all 2,235 tests; `bun run build` passes.
 - [x] 4.2 Add a What's new entry at the top of `src/ui/changelog.ts` describing default model configuration and per-phase model overrides.

@@ -135,11 +135,11 @@ test("the demo shows a change in Done whose tasks need the user, with a Validate
     // Awaiting is never folded into done: the card must not claim a verification nobody did.
     expect(c.tasks!.done + c.tasks!.awaiting!).toBe(c.tasks!.total);
     expect(c.tasks!.done).toBeLessThan(c.tasks!.total);
-    expect(availableActions(c)).toEqual(["validate", "archive"]);
+    expect(availableActions(c)).toEqual(["validate", "archive", "custom"]);
   }
   // The starters are only offered because the demo's agent has a prompt for each.
   expect(DEMO_AGENT.prompts.validate).toBeDefined();
-  expect(startersFor({ ...sample.config, repos: sample.config.repos }, { ...validating[0] })).toEqual(["validate", "archive"]);
+  expect(startersFor({ ...sample.config, repos: sample.config.repos }, { ...validating[0] })).toEqual(["validate", "archive", "custom"]);
   // The card's bar names the count in words, not by colour alone, and the card can say what the user has to do.
   const { done, awaiting, awaitingTasks, total } = validating[0].tasks!;
   expect(meterText(done, total, "tasks", awaiting)).toContain(`${awaiting} need the user`);
@@ -156,7 +156,7 @@ test("the demo shows a change in Ready without a design: the spec-driven schema 
   expect(noDesign.artifacts.find((a) => a.id === "tasks")).toMatchObject({ status: "done", required: true });
   expect(noDesign.column).toBe("Ready");
   // Implement is offered; Draft artifacts too, since the optional design can still be written.
-  expect(availableActions(noDesign)).toEqual(["draft", "implement"]);
+  expect(availableActions(noDesign)).toEqual(["draft", "implement", "custom"]);
 });
 
 test("the demo shows a change in Ready waiting for one in Implementing, and that one lists it as required by", () => {

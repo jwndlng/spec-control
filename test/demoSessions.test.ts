@@ -425,3 +425,14 @@ test("Finish checks reuses the demo's implementation session without claiming ch
   const task = (snapshot: typeof after) => snapshot.repos.flatMap((r) => r.changes).find((c) => c.name === session.change)?.tasks;
   expect(task(after)).toEqual(task(before));
 });
+
+test("custom demo session waits for the visitor and duplicate starts reuse it", async () => {
+  const { api, terminal, advance } = demo();
+  const session = await api.openSession("a71c02e9", "idempotency-keys", "custom");
+  expect(session.action).toBe("custom");
+  const view = terminal(session.id);
+  advance(60_000);
+  expect(view.text()).not.toContain("/opsx:");
+  expect((await api.openSession("a71c02e9", "idempotency-keys", "custom")).id).toBe(session.id);
+  view.connection.close();
+});

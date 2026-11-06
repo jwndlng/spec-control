@@ -15,7 +15,7 @@ export function agentFor(config: Config, repo: RepoConfig, change?: string): Age
 
 /** Phase overrides apply only to their starter; other actions inherit the profile/global model. */
 export function resolveModel(config: Config, agent: AgentProfile, action?: SessionAction): string | undefined {
-  const phase = action && action !== "fastForward" ? agent.phaseModels?.[action] : undefined;
+  const phase = action && action !== "fastForward" && action !== "custom" ? agent.phaseModels?.[action] : undefined;
   return phase ?? agent.model ?? config.agentSessions.defaultModel;
 }
 
@@ -52,6 +52,7 @@ function compose(agent: AgentProfile, key: PromptKey, prompt: string): string {
  * Branch recording, PR creation and docs auto-merge are handled deterministically on the server, so no git or PR suffixes are appended.
  */
 export function openingPrompt(agent: AgentProfile, action: SessionAction, change: string, _options?: unknown): string | undefined {
+  if (action === "custom") return undefined;
   if (action === "fastForward") return fastForwardPrompt(agent, change);
   const template = agent.prompts[action];
   // Checked before the suffix: additional instructions are an addition, never a prompt of their own, so they never make
