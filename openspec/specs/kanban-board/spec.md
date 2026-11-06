@@ -129,6 +129,10 @@ The board SHALL provide filters for repository (multi-select), free-text search 
 - **WHEN** the recent-activity threshold is set to 7 days and a change has no last activity time
 - **THEN** that change is shown
 
+#### Scenario: Custom session offered in the menu
+- **WHEN** a change is in `Backlog` and agent sessions are enabled
+- **THEN** its split button shows **Draft artifacts** as the main part, and its menu includes **Custom session**
+
 #### Scenario: Running session keeps an old change
 - **WHEN** the recent-activity threshold is set to 7 days and `old-idea`, last active 20 days ago, has a running agent session
 - **THEN** `old-idea` is shown, and once that session has ended and the board has the updated session list it is hidden
@@ -1265,7 +1269,7 @@ the split button on a card exactly as it does for the starters today.
 
 #### Scenario: Nothing else available
 - **WHEN** a change in `Done` with the sub-state `complete` has no linked open pull request
-- **THEN** the split button shows **Archive** and no arrow part
+- **THEN** the split button shows **Archive** and its menu offers **Custom session**
 
 #### Scenario: Running session
 - **WHEN** a session of `rotate-keys` is running and `#58` is ready
