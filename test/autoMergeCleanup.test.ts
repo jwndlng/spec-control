@@ -1,7 +1,7 @@
 // A merged auto-merge pull request ends its session (auto-merge-cleanup): the record, the match, the end and the
 // removal, the activity it leaves, and the refresh route that hands a completed query to the session manager.
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { type AppState, createFetchHandler } from "../src/server/api.ts";
 import type { SessionActivity } from "../src/server/activity/events.ts";
@@ -78,6 +78,7 @@ test("the time is recorded and stored when Archive starts with the instruction, 
   expect(Date.parse(s.autoMergeAskedAt as string)).toBeGreaterThan(Date.now() - 60_000);
   const stored = (await new SessionStore().loadAll()).find((x) => x.id === s.id) as ChangeSession;
   expect(stored.autoMergeAskedAt).toBe(s.autoMergeAskedAt);
+  expect(stored.agentStartedAt).toBe(s.agentStartedAt);
   const before = s.autoMergeAskedAt;
   await new Promise((r) => setTimeout(r, 5));
   const again = await manager.open({ repoId: h.repoId, change: CHANGE, action: "archive" });
@@ -90,7 +91,7 @@ test("merged after the ask: the agent is ended, the worktree removed, the branch
   const { h, manager, events } = await project();
   const s = await archiveSession(manager, h);
   const refs = git(h.repoPath, "for-each-ref");
-  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 88, mergedAt: later(s.autoMergeAskedAt) })]);
+  await manager.endMergedSessions(h.repoId, [merged({ number: 88, mergedAt: later(s.autoMergeAskedAt) })]);
   const after = manager.get(s.id) as ChangeSession;
   expect(after.state).toBe("exited");
   expect(after.autoEnded).toMatchObject({ pr: 88, removed: true });
@@ -106,7 +107,7 @@ test("merged after the ask: the agent is ended, the worktree removed, the branch
 
   // Seen again: nothing more is ended, removed or recorded.
   const updatedAt = after.updatedAt;
-  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 88, mergedAt: later(s.autoMergeAskedAt) })]);
+  await manager.endMergedSessions(h.repoId, [merged({ number: 88, mergedAt: later(s.autoMergeAskedAt) })]);
   expect([manager.get(s.id).updatedAt, events.length]).toEqual([updatedAt, 2]);
 });
 
@@ -114,30 +115,77 @@ test("nothing happens without an ask, with the setting off, for an earlier merge
   // An Implement-like session never asked to enable auto-merge.
   {
     const { h, manager } = await project();
+    h.config.agentSessions.endMergedSessions = false;
     const s = await manager.open({ repoId: h.repoId, change: CHANGE, action: "validate" });
     expect((manager.get(s.id) as ChangeSession).autoMergeAskedAt).toBeUndefined();
-    await manager.endMergedAutoMerge(h.repoId, [merged({ number: 1, head: s.branch, mergedAt: new Date(Date.now() + 1000).toISOString() })]);
+    await manager.endMergedSessions(h.repoId, [merged({ number: 1, head: s.branch, mergedAt: new Date(Date.now() + 1000).toISOString() })]);
     expect(manager.get(s.id).state).toBe("running");
   }
   // Switched off since the ask; an earlier merge of the same branch; a different branch.
   const { h, manager } = await project();
   const s = await archiveSession(manager, h);
   h.config.repos[0].agent = { enabled: true, autoMergeDocs: false };
-  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 2, mergedAt: later(s.autoMergeAskedAt) })]);
+  await manager.endMergedSessions(h.repoId, [merged({ number: 2, mergedAt: later(s.autoMergeAskedAt) })]);
   h.config.repos[0].agent = { enabled: true, autoMergeDocs: true };
-  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 3, mergedAt: later(s.autoMergeAskedAt, -30 * 60_000) })]);
-  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 4, head: "feat/other", mergedAt: later(s.autoMergeAskedAt) })]);
-  await manager.endMergedAutoMerge("another-repo", [merged({ number: 5, mergedAt: later(s.autoMergeAskedAt) })]);
-  await manager.endMergedAutoMerge(h.repoId, [{ ...merged({ number: 6, mergedAt: later(s.autoMergeAskedAt) }), state: "open" }]);
+  await manager.endMergedSessions(h.repoId, [merged({ number: 3, mergedAt: later(s.autoMergeAskedAt, -30 * 60_000) })]);
+  await manager.endMergedSessions(h.repoId, [merged({ number: 4, head: "feat/other", mergedAt: later(s.autoMergeAskedAt) })]);
+  await manager.endMergedSessions("another-repo", [merged({ number: 5, mergedAt: later(s.autoMergeAskedAt) })]);
+  await manager.endMergedSessions(h.repoId, [{ ...merged({ number: 6, mergedAt: later(s.autoMergeAskedAt) }), state: "open" }]);
   const after = manager.get(s.id) as ChangeSession;
   expect([after.state, after.autoEnded, await exists(s.worktreePath)]).toEqual(["running", undefined, true]);
+});
+
+test("a clean session ends when its pull request merged after its last start", async () => {
+  const { h, manager, events } = await project(false);
+  h.config.agentSessions.endMergedSessions = undefined;
+  const opened = await manager.open({ repoId: h.repoId, change: CHANGE, action: "validate" });
+  const s = manager.get(opened.id) as ChangeSession;
+  const startedAt = (manager.get(s.id) as ChangeSession).agentStartedAt;
+  expect(startedAt).toBeDefined();
+  const headOid = git(s.worktreePath, "rev-parse", "HEAD").trim();
+  await manager.endMergedSessions(h.repoId, [merged({ number: 97, head: s.branch, headOid, mergedAt: later(startedAt) })]);
+  const after = manager.get(s.id) as ChangeSession;
+  expect(after.state).toBe("exited");
+  expect(after.autoEnded).toMatchObject({ pr: 97, removed: true });
+  expect(await exists(s.worktreePath)).toBe(false);
+  expect(events.filter((e) => e.kind !== "session-started")).toEqual([{ kind: "session-auto-ended", pr: 97, removed: true }]);
+});
+
+test("a dirty or moved-on general session is left untouched", async () => {
+  const { h, manager } = await project(false);
+  const opened = await manager.open({ repoId: h.repoId, change: CHANGE, action: "validate" });
+  const s = manager.get(opened.id) as ChangeSession;
+  const mergedAt = later(s.agentStartedAt);
+  await writeFile(join(s.worktreePath, "notes.md"), "not safe to remove");
+  await manager.endMergedSessions(h.repoId, [merged({ number: 98, head: s.branch, headOid: "0".repeat(40), mergedAt })]);
+  expect([(manager.get(s.id) as ChangeSession).state, (manager.get(s.id) as ChangeSession).autoEnded]).toEqual(["running", undefined]);
+});
+
+test.each([true, false])("resume clears the automatic end and rejects its old merge (docs auto-merge: %s)", async (autoMergeDocs) => {
+  const { h, manager } = await project(autoMergeDocs);
+  const opened = autoMergeDocs ? await archiveSession(manager, h) : await manager.open({ repoId: h.repoId, change: CHANGE, action: "archive" });
+  const s = manager.get(opened.id) as ChangeSession;
+  const headOid = git(s.worktreePath, "rev-parse", "HEAD").trim();
+  const mergedAt = later(new Date(Math.max(Date.parse(s.autoMergeAskedAt ?? s.createdAt), Date.parse(s.agentStartedAt ?? s.createdAt))).toISOString(), 1);
+  await manager.endMergedSessions(h.repoId, [merged({ number: 99, head: s.branch, headOid, mergedAt })]);
+  const ended = manager.get(s.id) as ChangeSession;
+  expect(ended.autoEnded?.pr).toBe(99);
+  const oldStart = ended.agentStartedAt;
+  await manager.resume(s.id);
+  const resumed = manager.get(s.id) as ChangeSession;
+  expect(resumed.state).toBe("running");
+  expect(resumed.autoEnded).toBeUndefined();
+  expect(Date.parse(resumed.agentStartedAt as string)).toBeGreaterThan(Date.parse(oldStart as string));
+  await manager.endMergedSessions(h.repoId, [merged({ number: 99, head: s.branch, headOid, mergedAt })]);
+  expect(manager.get(s.id)).toMatchObject({ state: "running", autoEnded: undefined });
+  expect(await exists(resumed.worktreePath)).toBe(true);
 });
 
 test("uncommitted work: the agent is ended, the worktree kept, and the reason kept", async () => {
   const { h, manager, events } = await project();
   const s = await archiveSession(manager, h);
   await writeFile(join(s.worktreePath, "notes.md"), "left behind");
-  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 89, mergedAt: later(s.autoMergeAskedAt) })]);
+  await manager.endMergedSessions(h.repoId, [merged({ number: 89, mergedAt: later(s.autoMergeAskedAt) })]);
   const after = manager.get(s.id) as ChangeSession;
   expect(after.state).toBe("exited");
   expect(after.autoEnded).toMatchObject({ pr: 89, removed: false, reason: "the worktree has uncommitted changes" });
@@ -151,7 +199,7 @@ test("ended by the user with the worktree kept: only the removal happens; with t
   await manager.close(s.id);
   expect(await exists(s.worktreePath)).toBe(true);
   const ended = events.length;
-  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 90, mergedAt: later(s.autoMergeAskedAt) })]);
+  await manager.endMergedSessions(h.repoId, [merged({ number: 90, mergedAt: later(s.autoMergeAskedAt) })]);
   expect((manager.get(s.id) as ChangeSession).autoEnded).toMatchObject({ pr: 90, removed: true });
   expect(await exists(s.worktreePath)).toBe(false);
   expect(events.slice(ended)).toEqual([{ kind: "session-auto-ended", pr: 90, removed: true }]);
@@ -161,7 +209,7 @@ test("ended by the user with the worktree kept: only the removal happens; with t
   const t = await archiveSession(m2, h2);
   await m2.close(t.id, { removeWorktree: true });
   const count = e2.length;
-  await m2.endMergedAutoMerge(h2.repoId, [merged({ number: 91, mergedAt: later(t.autoMergeAskedAt) })]);
+  await m2.endMergedSessions(h2.repoId, [merged({ number: 91, mergedAt: later(t.autoMergeAskedAt) })]);
   expect([(m2.get(t.id) as ChangeSession).autoEnded, e2.length]).toEqual([undefined, count]);
 });
 
@@ -169,33 +217,41 @@ test("two queries settling at once end the session once", async () => {
   const { h, manager, events } = await project();
   const s = await archiveSession(manager, h);
   const list = [merged({ number: 92, mergedAt: later(s.autoMergeAskedAt) })];
-  await Promise.all([manager.endMergedAutoMerge(h.repoId, list), manager.endMergedAutoMerge(h.repoId, list)]);
+  await Promise.all([manager.endMergedSessions(h.repoId, list), manager.endMergedSessions(h.repoId, list)]);
   expect(events.filter((e) => e.kind === "session-auto-ended")).toHaveLength(1);
   expect(events.filter((e) => e.kind === "session-ended")).toHaveLength(0);
 });
 
 // ---- the refresh route (2.2) ----
 
-test("a refresh that shows the merged pull request ends the session; the only gh calls are pr list and api user", async () => {
-  const { h, manager } = await project();
+test.each([true, false])("a refresh ends its merged session (docs auto-merge: %s); only the expected gh calls run", async (autoMergeDocs) => {
+  const { h, manager } = await project(autoMergeDocs);
   git(h.repoPath, "remote", "add", "origin", "https://github.com/acme/demo-ops.git");
-  const s = await archiveSession(manager, h);
+  const s = await manager.open({ repoId: h.repoId, change: CHANGE, action: "archive" }) as ChangeSession;
   const gh = await installFakeGh({
     login: "demo-user",
-    repos: { "acme/demo-ops": { open: [], closed: [ghPr({ number: 88, headRefName: BRANCH, isCrossRepository: false, state: "MERGED", mergedAt: later(s.autoMergeAskedAt), closedAt: later(s.autoMergeAskedAt) })] } },
+    repos: { "acme/demo-ops": { open: [], closed: [ghPr({ number: 88, headRefName: BRANCH, isCrossRepository: false, state: "MERGED", headRefOid: git(s.worktreePath, "rev-parse", "HEAD"), mergedAt: later(s.agentStartedAt), closedAt: later(s.agentStartedAt) })] } },
   });
   const state: AppState = { config: h.config, scanner: undefined as unknown as Scanner, sessions: manager };
   state.scanner = new Scanner(() => state.config, { persist: false });
   await state.scanner.trigger().done;
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: createFetchHandler({ state, indexHtml: "" }) });
+  const refs = git(h.repoPath, "for-each-ref");
+  const realGit = Bun.which("git");
+  const gitLog = join(gh.bin, "git-calls");
+  await writeFile(gitLog, "");
+  await writeFile(join(gh.bin, "git"), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${gitLog}'\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
   try {
     const res = await fetch(`http://127.0.0.1:${server.port}/api/pull-requests/refresh`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force: true }) });
     expect(res.status).toBe(200);
     await waitFor(() => (manager.get(s.id) as ChangeSession).autoEnded !== undefined, "the automatic end");
     expect((manager.get(s.id) as ChangeSession).autoEnded).toMatchObject({ pr: 88, removed: true });
     expect(await exists(s.worktreePath)).toBe(false);
+    expect(git(h.repoPath, "for-each-ref")).toBe(refs);
+    const invocations = (await readFile(gitLog, "utf8")).trim().split("\n");
+    expect(invocations.some((call) => /\b(fetch|push|branch -[dD])\b/.test(call))).toBe(false);
     const calls = await gh.calls();
-    expect(calls.length).toBeGreaterThan(0);
+    expect(calls).toHaveLength(3);
     for (const call of calls) expect(call.argv.slice(0, 2).join(" ")).toMatch(/^(pr list|api user)$/);
     for (const call of calls) expect(call.cwd.startsWith(dirname(h.repoPath))).toBe(false);
   } finally {
@@ -278,16 +334,17 @@ test("the panel, the card and the feed say why the session ended and what became
 
 // ---- harden-session-lifecycle (2.2, 2.3) ----
 
-test("a merged pull request of an ended session whose worktree a running session reuses: the worktree is kept, the agent untouched", async () => {
-  const { h, manager, events } = await project();
-  const first = await archiveSession(manager, h);
+test.each([true, false])("a reused worktree stays while another session runs (docs auto-merge: %s)", async (autoMergeDocs) => {
+  const { h, manager, events } = await project(autoMergeDocs);
+  const open = async () => autoMergeDocs ? archiveSession(manager, h) : manager.open({ repoId: h.repoId, change: CHANGE, action: "archive" }) as Promise<ChangeSession>;
+  const first = await open();
   await manager.close(first.id); // ended, worktree kept
-  const mergedAt = later(first.autoMergeAskedAt, 10);
+  const mergedAt = later(first.agentStartedAt, 10);
   await new Promise((r) => setTimeout(r, 50)); // so the second session's own ask is later than that merge
-  const second = await archiveSession(manager, h);
+  const second = await open();
   expect([second.id === first.id, await realpath(second.worktreePath)]).toEqual([false, await realpath(first.worktreePath)]);
   const seen = await watch(manager, second.id);
-  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 93, mergedAt })]);
+  await manager.endMergedSessions(h.repoId, [merged({ number: 93, mergedAt, headOid: git(first.worktreePath, "rev-parse", "HEAD") })]);
   expect((manager.get(first.id) as ChangeSession).autoEnded).toMatchObject({ pr: 93, removed: false, reason: "a session is running in this worktree" });
   expect(manager.get(second.id).state).toBe("running");
   expect(await exists(second.worktreePath)).toBe(true);
@@ -295,7 +352,7 @@ test("a merged pull request of an ended session whose worktree a running session
   expect(events.filter((e) => e.kind === "session-auto-ended")).toEqual([{ kind: "session-auto-ended", pr: 93, removed: false, reason: "a session is running in this worktree" }]);
   // Seen again: nothing more.
   const count = events.length;
-  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 93, mergedAt })]);
+  await manager.endMergedSessions(h.repoId, [merged({ number: 93, mergedAt, headOid: git(first.worktreePath, "rev-parse", "HEAD") })]);
   expect([events.length, manager.get(second.id).state]).toEqual([count, "running"]);
 
   // The end dialog of the first session says the same, and removes nothing.
@@ -308,9 +365,9 @@ test("a merged pull request from a fork, of unknown origin, or into another base
   const { h, manager } = await project();
   const s = await archiveSession(manager, h);
   const at = later(s.autoMergeAskedAt);
-  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 94, mergedAt: at, isCrossRepository: true })]);
-  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 95, mergedAt: at, isCrossRepository: undefined })]);
-  await manager.endMergedAutoMerge(h.repoId, [merged({ number: 96, mergedAt: at, base: "release-1" })]);
+  await manager.endMergedSessions(h.repoId, [merged({ number: 94, mergedAt: at, isCrossRepository: true })]);
+  await manager.endMergedSessions(h.repoId, [merged({ number: 95, mergedAt: at, isCrossRepository: undefined })]);
+  await manager.endMergedSessions(h.repoId, [merged({ number: 96, mergedAt: at, base: "release-1" })]);
   const after = manager.get(s.id) as ChangeSession;
   expect([after.state, after.autoEnded, await exists(s.worktreePath)]).toEqual(["running", undefined, true]);
 });
@@ -339,4 +396,61 @@ test("through the refresh route, a fork's merged pull request with the session's
     server.stop(true);
     gh.restore();
   }
+});
+
+
+test("concurrent general-rule queries record one automatic end", async () => {
+  const { h, manager, events } = await project(false);
+  const s = await manager.open({ repoId: h.repoId, change: CHANGE, action: "archive" }) as ChangeSession;
+  const list = [merged({ number: 101, head: s.branch, headOid: git(s.worktreePath, "rev-parse", "HEAD"), mergedAt: later(s.agentStartedAt) })];
+  await Promise.all([manager.endMergedSessions(h.repoId, list), manager.endMergedSessions(h.repoId, list)]);
+  expect(events.filter((e) => e.kind === "session-auto-ended")).toHaveLength(1);
+  expect(events.filter((e) => e.kind === "session-ended")).toHaveLength(0);
+});
+
+test("general rule rejects an old merge, a fork, another base, and disabled settings", async () => {
+  const { h, manager } = await project(false);
+  const s = await manager.open({ repoId: h.repoId, change: CHANGE, action: "archive" }) as ChangeSession;
+  const own = merged({ number: 102, head: s.branch, headOid: git(s.worktreePath, "rev-parse", "HEAD"), mergedAt: later(s.agentStartedAt) });
+  for (const patch of [{ mergedAt: s.agentStartedAt }, { isCrossRepository: true }, { isCrossRepository: undefined }, { base: "release-1" }]) {
+    await manager.endMergedSessions(h.repoId, [{ ...own, ...patch }]);
+    expect(manager.get(s.id)).toMatchObject({ state: "running", autoEnded: undefined });
+  }
+  h.config.agentSessions.endMergedSessions = false;
+  await manager.endMergedSessions(h.repoId, [own]);
+  expect(manager.get(s.id)).toMatchObject({ state: "running", autoEnded: undefined });
+  h.config.agentSessions.endMergedSessions = undefined;
+  // A legacy record falls back to createdAt, and a later query can act after a failed match.
+  (manager.get(s.id) as ChangeSession).agentStartedAt = undefined;
+  await manager.endMergedSessions(h.repoId, [own]);
+  expect(manager.get(s.id)).toMatchObject({ state: "exited", autoEnded: { pr: 102 } });
+});
+
+test("a clean general session with newer work stays running until that work is merged", async () => {
+  const { h, manager } = await project(false);
+  const s = await manager.open({ repoId: h.repoId, change: CHANGE, action: "archive" }) as ChangeSession;
+  const own = merged({ number: 103, head: s.branch, headOid: git(s.worktreePath, "rev-parse", "HEAD"), mergedAt: later(s.agentStartedAt) });
+  await writeFile(join(s.worktreePath, "notes.md"), "new work");
+  git(s.worktreePath, "add", "notes.md");
+  git(s.worktreePath, "commit", "-qm", "new work");
+  await manager.endMergedSessions(h.repoId, [own]);
+  expect(manager.get(s.id)).toMatchObject({ state: "running", autoEnded: undefined });
+  git(h.repoPath, "merge", "--ff-only", s.branch as string);
+  git(h.repoPath, "update-ref", `refs/remotes/origin/${s.branch}`, git(s.worktreePath, "rev-parse", "HEAD"));
+  await manager.endMergedSessions(h.repoId, [{ ...own, headOid: undefined }]);
+  expect(manager.get(s.id)).toMatchObject({ state: "exited", autoEnded: { removed: true } });
+});
+
+test("general rule never touches adopted or in-place sessions", async () => {
+  const { h, manager } = await project(false);
+  const s = await manager.open({ repoId: h.repoId, change: CHANGE, action: "archive" }) as ChangeSession;
+  const own = merged({ number: 104, head: s.branch, headOid: git(s.worktreePath, "rev-parse", "HEAD"), mergedAt: later(s.agentStartedAt) });
+  for (const flag of ["adopted", "inPlace"] as const) {
+    const record = manager.get(s.id) as ChangeSession;
+    record[flag] = true;
+    await manager.endMergedSessions(h.repoId, [own]);
+    expect(record).toMatchObject({ state: "running", autoEnded: undefined });
+    record[flag] = undefined;
+  }
+  expect(await exists(s.worktreePath)).toBe(true);
 });

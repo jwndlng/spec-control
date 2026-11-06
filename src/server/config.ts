@@ -188,6 +188,11 @@ const agentSessionsSchema = z
     shortcuts: z.array(shortcutSchema).default(() => defaultAgentSessions().shortcuts),
     // Absent means Fast-forward asks first; only the user's "don't show this warning again" or Settings makes it false.
     confirmFastForward: z.boolean().optional(),
+    // Absent means sessions whose pull request merged are ended; `true` is saved by leaving the key out.
+    endMergedSessions: z
+      .boolean()
+      .optional()
+      .transform((v) => (v === false ? false : undefined)),
     // Absent means `code` (DEFAULT_EDITOR); Settings stores a cleared field that way.
     editor: editorSchema,
   })
