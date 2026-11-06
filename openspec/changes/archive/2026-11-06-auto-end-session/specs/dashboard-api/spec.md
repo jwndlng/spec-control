@@ -193,3 +193,7 @@ The dashboard MUST NOT write to a tracked repository except in response to an ex
 #### Scenario: Apply leaves no temporary file
 - **WHEN** an apply to `demo-ops` fails after its temporary file was written
 - **THEN** `openspec/` holds exactly the files it held before the apply
+
+#### Scenario: Deterministic Ship leaves the main checkout alone
+- **WHEN** `POST /api/sessions/<id>/ship` commits, pushes, and opens a pull request from a managed session worktree
+- **THEN** the repository's main checkout working tree, index, and checked-out branch are byte-for-byte unchanged
