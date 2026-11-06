@@ -13,7 +13,16 @@ const RECORD_KEY_LINE = /^spec-control:\s*(?:#.*)?$/;
 /** An entry of the map: indented by spaces, `key: value`. */
 const ENTRY_LINE = /^( +)([A-Za-z0-9_-]+):(?:\s+(.*))?$/;
 /** The map's entries Spec Control reads, and the record field each one fills. Every other entry is ignored. */
-const RECORD_KEYS: Record<string, keyof ChangeRecord> = { branch: "branch", "archive-branch": "archiveBranch" };
+const RECORD_KEYS: Record<string, keyof ChangeRecord> = { branch: "branch", "archive-branch": "archiveBranch", "implement-model": "implementModel" };
+
+/** Same bounds and safety checks used for configured model names. */
+export function validModel(value: string): boolean {
+  const hasControlCharacter = [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+  return value.length <= 128 && value.trim() === value && value.length > 0 && !/^[|>][+-]?\d?$/.test(value) && !hasControlCharacter && !/(?:bypassPermissions|dangerously|skip-permissions|--yolo)/i.test(value);
+}
 
 export type RecordedBranchKey = "branch" | "archive-branch";
 
@@ -154,11 +163,11 @@ function parseRecord(text: string): { recorded?: ChangeRecord; warnings: string[
     const value = scalar(entry[3]);
     if (value === undefined) {
       delete recorded[field];
-    } else if (validRecordedBranch(value)) {
+    } else if (field === "implementModel" ? validModel(value) : validRecordedBranch(value)) {
       recorded[field] = value;
     } else {
       delete recorded[field];
-      warnings.push(`spec-control.${entry[2]} in .openspec.yaml is not a valid branch name and is ignored`);
+      warnings.push(`spec-control.${entry[2]} in .openspec.yaml is not a valid ${field === "implementModel" ? "model" : "branch name"} and is ignored`);
     }
   }
   return { ...(Object.keys(recorded).length ? { recorded } : {}), warnings };

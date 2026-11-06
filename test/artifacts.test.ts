@@ -19,6 +19,7 @@ beforeAll(async () => {
   await mkdir(join(changeDir, "specs", "kanban-board"), { recursive: true });
   await mkdir(join(changeDir, "specs", "dashboard-api"), { recursive: true });
   await writeFile(join(changeDir, "proposal.md"), "## Why\n\nBecause.\n");
+  await writeFile(join(changeDir, ".openspec.yaml"), "schema: spec-driven\nspec-control:\n  implement-model: fast-model\n");
   await writeFile(join(changeDir, "specs", "kanban-board", "spec.md"), "## ADDED Requirements\n");
   await writeFile(join(changeDir, "specs", "dashboard-api", "spec.md"), "## ADDED Requirements\n");
   await writeFile(join(root, "secrets.md"), "outside the change\n");
@@ -96,7 +97,7 @@ test("listArtifactFiles: schema order, sorted relative paths with sizes, empty f
   const found = await changeDirFor(temp, "multi-tenant-sync");
   if (!found.ok) throw new Error("fixture change missing");
   const listing = await listArtifactFiles(temp, "r1", found.entry);
-  expect(listing.change).toEqual({ repoId: "r1", name: "multi-tenant-sync", schema: "spec-driven", dir: changeDir, archived: false });
+  expect(listing.change).toEqual({ repoId: "r1", name: "multi-tenant-sync", schema: "spec-driven", dir: changeDir, archived: false, implementModel: "fast-model" });
   expect(listing.artifacts).toEqual([
     { id: "proposal", status: "done", required: false, files: [{ path: "proposal.md", bytes: 17 }] },
     { id: "specs", status: "done", required: false, files: [{ path: "specs/dashboard-api/spec.md", bytes: 22 }, { path: "specs/kanban-board/spec.md", bytes: 22 }] },
