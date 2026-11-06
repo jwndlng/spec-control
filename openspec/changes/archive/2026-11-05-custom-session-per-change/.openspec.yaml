@@ -1,2 +1,4 @@
 schema: spec-driven
 created: 2026-10-29
+spec-control:
+  archive-branch: chore/archive-custom-session-per-change
