@@ -49,10 +49,10 @@ _None._
 
 ## Impact
 
-- `src/server/sessions/manager.ts` (`endMergedAutoMerge` generalised; recording the agent's start time; clearing
+- `src/server/sessions/manager.ts` (`endMergedSessions` generalised; recording the agent's start time; clearing
   `autoEnded` on start), `src/server/api.ts` (calls it after every completed query, as today), `src/server/config.ts`
   (validating the new setting), `src/shared/types.ts` (`agentStartedAt`, `endMergedSessions`).
 - `src/ui/settings*` (the switch in Agent sessions), `src/ui/sessionState.ts` (wording of the ended notice when no
-  auto-merge was involved), `src/ui/changelog.ts`.
+  auto-merge was involved), `src/ui/changelog/entries/2026-11-04-auto-end-session.json`, `src/ui/helpContent.tsx` (explain automatic ending and its setting).
 - `CLAUDE.md` invariant 1 (the automatic removal is no longer tied to Docs auto-merge).
 - Tests: `test/` session manager tests with `fake-gh` scenarios, config validation, settings UI state.

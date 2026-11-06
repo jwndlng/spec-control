@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE } from "../src/shared/agentDefaults.ts";
 import type { AgentAvailability, AgentProfile, AgentSessionsConfig, KeepAwakeStatus, PromptKey } from "../src/shared/types.ts";
 import { defaultConfig, validateConfig } from "../src/server/config.ts";
-import { ModelField, AgentEditor, ArgLinesArea, ArgLinesField, ConsoleAgentPicker, EditorCommandField, KeepAwakeSetting, keepAwakeState, PerProjectNote, PresetPicker, ShortcutEditor, withoutAgent } from "../src/ui/agentSettings.tsx";
+import { ModelField, AgentEditor, ArgLinesArea, ArgLinesField, ConsoleAgentPicker, EditorCommandField, KeepAwakeSetting, keepAwakeState, MergedSessionsSetting, PerProjectNote, PresetPicker, ShortcutEditor, withoutAgent } from "../src/ui/agentSettings.tsx";
 import { argLinesText, argLinesValue } from "../src/ui/sessionState.ts";
 import { byComponent, byTag, elements, textOf } from "./vnode.ts";
 
@@ -21,6 +21,20 @@ function suffixFields(agent: AgentProfile) {
 }
 
 const KEYS: PromptKey[] = ["draft", "implement", "validate", "archive", "ship", "resolveConflicts", "merge", "integrate"];
+
+test("merged-session setting is checked by default, saves false when cleared and omits its key when restored", () => {
+  let value: boolean | undefined;
+  const tree = MergedSessionsSetting({ on: true, onToggle: (on) => (value = on ? undefined : false) });
+  const checkbox = byTag(tree, "input")[0];
+  expect(checkbox.props.checked).toBe(true);
+  expect(textOf(tree)).toContain("End sessions whose pull request merged");
+  expect(textOf(tree)).toContain("Its branch is kept, and you can resume the session.");
+  (checkbox.props.onChange as (e: { currentTarget: { checked: boolean } }) => void)({ currentTarget: { checked: false } });
+  expect(value).toBe(false);
+  const checkedAgain = MergedSessionsSetting({ on: false, onToggle: (on) => (value = on ? undefined : false) });
+  (byTag(checkedAgain, "input")[0].props.onChange as (e: { currentTarget: { checked: boolean } }) => void)({ currentTarget: { checked: true } });
+  expect(value).toBeUndefined();
+});
 
 test("the editor offers additional instructions beside every prompt, and shows what is saved", () => {
   const { fields, tree } = suffixFields(profile({ promptSuffixes: { implement: "Run the linter.", ship: "Add the checklist." } }));

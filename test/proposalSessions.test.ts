@@ -256,7 +256,7 @@ test("the proposal pull request is merged automatically by the server once ready
   expect((manager.get(s.id) as ChangeSession).mergeAsked).toMatchObject({ pr: 90, head, by: "dashboard" });
 
   const mergedAt = new Date(Date.now() + 1000).toISOString();
-  await manager.endMergedAutoMerge(h.repoId, [pr({ head: `docs/${CHANGE}`, headOid: head, state: "merged", mergedAt })]);
+  await manager.endMergedSessions(h.repoId, [pr({ head: `docs/${CHANGE}`, headOid: head, state: "merged", mergedAt })]);
   const ended = manager.get(s.id) as ChangeSession;
   expect(ended.state).not.toBe("running");
   expect(ended.autoEnded).toMatchObject({ pr: 90, removed: true });
@@ -305,7 +305,7 @@ test("Merge on the ended proposal session merges directly on the server", async 
 test("once the proposal pull request merged, its worktree is removed, its branch kept, and Implement keeps running", async () => {
   const { h, manager, draft, impl, tip } = await handedOver();
   const mergedAt = new Date(Date.now() + 1000).toISOString();
-  await manager.endMergedAutoMerge(h.repoId, [pr({ head: `docs/${CHANGE}`, headOid: tip, state: "merged", mergedAt })]);
+  await manager.endMergedSessions(h.repoId, [pr({ head: `docs/${CHANGE}`, headOid: tip, state: "merged", mergedAt })]);
   expect((manager.get(draft.id) as ChangeSession).autoEnded).toMatchObject({ pr: 90, removed: true });
   expect(await stat(draft.worktreePath).catch(() => undefined)).toBeUndefined();
   expect(git(h.repoPath, "rev-parse", `refs/heads/docs/${CHANGE}`)).toBe(tip);

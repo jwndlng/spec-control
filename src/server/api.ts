@@ -1200,7 +1200,7 @@ async function postIssues(state: AppState, repoId: string): Promise<Response> {
 }
 
 /**
- * A completed query is what ends a session whose auto-merge pull request merged (auto-merge-cleanup D2), and what hands
+ * A completed query is what ends an eligible session whose pull request merged (auto-end-session), and what hands
  * a ready docs-only pull request to its agent to merge (agent-merges-docs-prs D4): handed to the session manager after
  * `gh` has finished, never waited for, and never a reason to query. Only lists that are good right now count — a failed
  * one is the last good list, which says nothing new. The two cannot act on one pull request: one needs it merged, the
@@ -1211,7 +1211,7 @@ function handOverCompletedQuery(state: AppState, response: PullRequestsResponse)
   if (!sessions) return;
   for (const repo of response.repos) {
     if (repo.status !== "ok") continue;
-    void sessions.endMergedAutoMerge(repo.repoId, repo.pullRequests).catch((err) => console.warn("could not end a session whose pull request merged:", err instanceof Error ? err.message : err));
+    void sessions.endMergedSessions(repo.repoId, repo.pullRequests).catch((err) => console.warn("could not end a session whose pull request merged:", err instanceof Error ? err.message : err));
     void sessions.requestReadyMerges(repo.repoId, repo.pullRequests).catch((err) => console.warn("could not hand a ready pull request to its agent:", err instanceof Error ? err.message : err));
   }
 }

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import type { ChangeSession, ChangeSnapshot, PullRequest, SessionWorktree } from "../src/shared/types.ts";
-import { cardSessionControls, cleanupNotice, continueArchiveAvailable, consoleSteps, endConfirmable, endProposalConfirmation, handedOverProposal, mergeControl, mergeNotice, pullRequestSession, sessionBadge, sessionsForChange } from "../src/ui/sessionState.ts";
+import { canEndArchivedSession, cardSessionControls, cleanupNotice, continueArchiveAvailable, consoleSteps, endConfirmable, endProposalConfirmation, handedOverProposal, mergeControl, mergeNotice, pullRequestSession, sessionBadge, sessionsForChange } from "../src/ui/sessionState.ts";
 import { fakeProfile } from "./sessionHelpers.ts";
 
 // The split button a card shows (kanban-board: "A change's actions are one split button"), as the pure rule the card
@@ -227,4 +227,23 @@ test("sessionsForChange and endConfirmable respect cleanup states", () => {
   // endConfirmable is disabled while cleanup is pending
   expect(endConfirmable(pendingSession, { removable: true }, false)).toBe(false);
   expect(endConfirmable(baseSession, { removable: true }, false)).toBe(true);
+});
+
+test("only running, manually endable archived sessions with merged work are eligible", () => {
+  const archived = card({ archived: "2026-11-04" });
+  const running = session({ state: "running" });
+  const merged = { repoId: repo.id, name: "rotate-keys", change: "rotate-keys", action: "implement", path: running.worktreePath, work: { state: "merged" } } as SessionWorktree;
+  expect(canEndArchivedSession(archived, running, pr({ state: "merged" }), undefined)).toBe(true);
+  expect(canEndArchivedSession(archived, running, undefined, merged)).toBe(true);
+  expect(canEndArchivedSession(archived, running, pr(), merged)).toBe(true);
+  for (const state of ["open", "closed"] as const) {
+    expect(canEndArchivedSession(archived, running, pr({ state }), undefined)).toBe(false);
+  }
+  expect(canEndArchivedSession(archived, running, undefined, undefined)).toBe(false);
+  expect(canEndArchivedSession(card(), running, pr({ state: "merged" }), merged)).toBe(false);
+  expect(canEndArchivedSession(archived, undefined, pr({ state: "merged" }), merged)).toBe(false);
+  for (const state of ["exited", "failed"] as const) {
+    expect(canEndArchivedSession(archived, session({ state }), pr({ state: "merged" }), merged)).toBe(false);
+  }
+  expect(canEndArchivedSession(archived, { ...running, autoEnded: { pr: 58, at: "2026-11-04", removed: false } }, pr({ state: "merged" }), merged)).toBe(false);
 });

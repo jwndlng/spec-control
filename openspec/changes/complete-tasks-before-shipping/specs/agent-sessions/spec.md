@@ -60,3 +60,7 @@ Automatic implementation and archive Ship and docs-only Merge SHALL require a fr
 #### Scenario: Docs-only work has an old auto-merge record
 - **WHEN** a previously shipped implementation or archive has a ready docs-only PR but unresolved tasks in its checkout
 - **THEN** the dashboard withholds automatic Merge
+
+#### Scenario: Merged-PR cleanup observes a task-only follow-up
+- **WHEN** Finish tasks or Finish checks is active and a refresh observes the session's previously merged pull request
+- **THEN** automatic shipping, merging and merged-PR cleanup remain suppressed until an explicit new workflow choice; the follow-up agent stays available

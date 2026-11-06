@@ -206,3 +206,16 @@ test("an archive branch reads tasks from the moved change, while an active symli
   await symlink(archived, active);
   expect(tasksSettled((await readShipTasks(s.worktreePath, "upgrade-runtime")).summary)).toBe(false);
 });
+
+test("Finish checks keeps a running follow-up agent when merged-PR cleanup observes its old PR", async () => {
+  const { h, s } = await setup();
+  const { git } = await import("./sessionHelpers.ts");
+  const list = merged(h);
+  list.pullRequests[0].mergedAt = new Date(Date.now() + 1000).toISOString();
+  list.pullRequests[0].headOid = git(s.worktreePath, "rev-parse", "HEAD");
+  const result = await h.manager.finishChecks(h.repoId, "upgrade-runtime", list);
+  expect(result.submitted).toBe(true);
+  await h.manager.endMergedSessions(h.repoId, list.pullRequests);
+  expect(h.manager.get(s.id).state).toBe("running");
+  expect((h.manager.get(s.id) as ChangeSession).autoShipSuppressed).toBe(true);
+});

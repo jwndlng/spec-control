@@ -234,13 +234,21 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           </li>
           <li>
             <strong>Open work</strong> in the top bar lists running agents and worktrees that still hold something.{" "}
-            <strong>End session</strong> stops an agent and, by default, pulls the repository and — when nothing would be
+            Archived changes whose pull request or session worktree is merged offer <strong>End session</strong> beside
+            their running session badge on the board; it opens the same confirmation as the Console tab. <strong>End session</strong> stops an agent and, by default, pulls the repository and — when nothing would be
             lost — removes its worktree; clear either box before confirming to skip it. Confirmed worktree cleanup continues
             in the background so you can keep working immediately; while running, the session shows <em>cleaning up…</em>,
             and its completion, kept worktree, or failure is reported on the card and console. Once the change is archived and
             merged, it offers <strong>Clean up leftovers</strong> instead: the session's worktree and whatever else of the
             change is left over go in the same confirmation, after a copy of their uncommitted files is kept. It is selected
             unless a file outside the change would be deleted.
+          </li>
+          <li>
+            Once a session's own pull request is seen merged, its agent ends automatically when its worktree is clean
+            and holds no work beyond that pull request. Its worktree is removed when safe, its branch is kept, and you
+            can resume the session. Switch this off with <strong>End sessions whose pull request merged</strong> in{" "}
+            <AppLink path="/settings" query="?section=agents">Settings → Agent sessions</AppLink>.
+            Docs auto-merge still ends its own merged sessions when this is off.
           </li>
           <li>
             The <strong>Console</strong> button in the top bar opens your agent outside every change, in a console folder of its
