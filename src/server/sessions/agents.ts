@@ -51,7 +51,15 @@ function compose(agent: AgentProfile, key: PromptKey, prompt: string): string {
  * The opening prompt for a starter, or undefined when this agent has none (the starter is then not offered).
  * Branch recording, PR creation and docs auto-merge are handled deterministically on the server, so no git or PR suffixes are appended.
  */
-export function openingPrompt(agent: AgentProfile, action: SessionAction, change: string, _options?: unknown): string | undefined {
+export interface OpeningPromptOptions {
+  /** The two resolved candidates for Draft to classify; absent unless both are distinct and configured. */
+  implementModelCandidates?: { draft: string; implement: string };
+  /** Kept for callers that supply their proposal context. */
+  proposal?: boolean;
+  convention?: PrTitleConvention;
+}
+
+export function openingPrompt(agent: AgentProfile, action: SessionAction, change: string, options?: OpeningPromptOptions): string | undefined {
   if (action === "custom") return undefined;
   if (action === "fastForward") return fastForwardPrompt(agent, change);
   const template = agent.prompts[action];
@@ -59,7 +67,10 @@ export function openingPrompt(agent: AgentProfile, action: SessionAction, change
   // a starter available (agent-sessions spec).
   if (!template) return undefined;
   if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
-  return compose(agent, action, template).replaceAll("{change}", change);
+  const prompt = compose(agent, action, template).replaceAll("{change}", change);
+  const candidates = options?.implementModelCandidates;
+  if (action !== "draft" || !candidates || candidates.draft === candidates.implement) return prompt;
+  return `${prompt} Assess implementation complexity: choose ${candidates.draft} for work needing deeper reasoning or ${candidates.implement} for straightforward work, then record that exact choice as spec-control.implement-model in openspec/changes/${change}/.openspec.yaml without changing any other marker fields.`;
 }
 
 /** The proposal instruction with its title: the project's declared convention decides which, the change name fills it. */

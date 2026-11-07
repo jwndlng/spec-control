@@ -36,6 +36,8 @@ export interface FrameworkChange {
   created?: string;
   /** The branches the change's pull requests were opened from, when the agent recorded them. */
   recorded?: ChangeRecord;
+  /** Valid per-change model choice for Implement, when the framework supports it. */
+  implementModel?: string;
   warnings: string[];
 }
 

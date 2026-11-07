@@ -65,9 +65,10 @@ export class OpenSpecFramework extends SpecFramework {
     const marker = parseMarker(read.ok ? read.text : undefined);
     const created = marker.created;
     const recorded = marker.recorded ? { recorded: marker.recorded } : {};
+    const implementModel = marker.recorded?.implementModel ? { implementModel: marker.recorded.implementModel } : {};
     const warnings = [...(readWarning ? [readWarning] : []), ...marker.warnings];
     // An unknown schema, typically: there is no artifact list to offer.
-    const unknown = (schema: string, warning: string): FrameworkChangeOutputs => ({ schema, artifacts: [], created, ...recorded, outputs: {}, warnings: [...warnings, warning] });
+    const unknown = (schema: string, warning: string): FrameworkChangeOutputs => ({ schema, artifacts: [], created, ...recorded, ...implementModel, outputs: {}, warnings: [...warnings, warning] });
 
     const schemaName = marker.schema ?? project.schema ?? DEFAULT_SCHEMA;
     if (!isPlainSchemaName(schemaName)) return unknown("unknown", `schema name ${JSON.stringify(schemaName)} is not a plain name and is ignored`);
@@ -82,7 +83,7 @@ export class OpenSpecFramework extends SpecFramework {
         skipSpecs: marker.skipSpecs,
         ...(local.ok ? { schemaYaml: local.text } : {}),
       });
-      return { schema: info.schema, artifacts: info.artifacts, tasksPath: info.tasksPath, created, ...recorded, outputs: info.outputs, warnings };
+      return { schema: info.schema, artifacts: info.artifacts, tasksPath: info.tasksPath, created, ...recorded, ...implementModel, outputs: info.outputs, warnings };
     } catch (err) {
       return unknown(schemaName, `could not read artifacts: ${err instanceof Error ? err.message : String(err)}`);
     }

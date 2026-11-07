@@ -188,7 +188,7 @@ function readOwnFile(ctx: RepoContext, entry: ChangeDirEntry, file: string, maxB
 }
 
 async function scanChange(ctx: RepoContext, entry: ChangeDirEntry, withGit: boolean): Promise<ChangeSnapshot> {
-  const { schema, artifacts, tasksPath, created, recorded, warnings } = await ctx.framework.readChange(ctx.source, ctx.project, entry);
+  const { schema, artifacts, tasksPath, created, recorded, implementModel, warnings } = await ctx.framework.readChange(ctx.source, ctx.project, entry);
 
   // A tasks file that is not there means no tasks yet; one that cannot be read is said so.
   const tasksRead = tasksPath ? await ctx.source.readBounded(tasksPath, { within: entry.dir, maxBytes: MAX_REPO_FILE_BYTES }) : undefined;
@@ -259,6 +259,7 @@ async function scanChange(ctx: RepoContext, entry: ChangeDirEntry, withGit: bool
     specsSynced,
     branchMatch: entry.archived ? undefined : await branchMatchFor(ctx, entry, recorded),
     ...(recorded ? { recorded } : {}),
+    ...(implementModel ? { implementModel } : {}),
     stage,
     column,
     subState,

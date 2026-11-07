@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { SessionActivity } from "../src/server/activity/events.ts";
 import type { SessionManager } from "../src/server/sessions/manager.ts";
 import { defaultShipTitle } from "../src/server/sessions/manager.ts";
+import { scanRepo } from "../src/server/scanner.ts";
 import { recordBranchInWorktree } from "../src/server/frameworks/worktreeMetadata.ts";
 import type { ChangeSession, PullRequest } from "../src/shared/types.ts";
 import { installFakeGh, type GhHarness } from "./ghHelpers.ts";
@@ -638,4 +639,48 @@ test("Finish tasks persists a task-only request: completing its Fast-forward tas
   const shipped = await manager.ship(session.id);
   expect(shipped.shipped).toBe(true);
   expect((shipped as ChangeSession).autoShipSuppressed).toBeUndefined();
+});
+
+test("Draft startup adds distinct resolved model candidates after the profile prompt", async () => {
+  const h = await harness({ agent: { promptSuffixes: { draft: "Keep it concise." }, phaseModels: { draft: "reasoning", implement: "fast" } } });
+  managers.push(h.manager);
+  const session = await h.manager.open({ repoId: h.repoId, change: DRAFT, action: "draft" });
+  const terminal = await watch(h.manager, session.id);
+  await waitFor(() => terminal.text().includes("spec-control.implement-model"), "Draft model-choice guidance");
+  expect(terminal.text()).toContain("Keep it concise.");
+  expect(terminal.text()).toContain("reasoning for work needing deeper reasoning or fast for straightforward work");
+  expect(terminal.text()).toContain("without changing any other marker fields");
+  terminal.detach();
+});
+
+test("Implement uses the scanned per-change model before the phase model, and later scans affect only new sessions", async () => {
+  const h = await harness({ agent: { model: "profile", phaseModels: { implement: "phase-model" } } });
+  managers.push(h.manager);
+  const marker = join(h.repoPath, "openspec", "changes", IMPLEMENT, ".openspec.yaml");
+  await writeFile(marker, "schema: spec-driven\ncreated: 2026-11-01\nspec-control:\n  implement-model: recorded-first\n");
+  h.snapshot.repos[0] = await scanRepo(h.config.repos[0]);
+  const first = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const firstTerminal = await watch(h.manager, first.id);
+  await waitFor(() => firstTerminal.text().includes("recorded-first"), "recorded Implement model");
+  expect(firstTerminal.text()).not.toContain("phase-model");
+
+  await writeFile(marker, "schema: spec-driven\ncreated: 2026-11-01\nspec-control:\n  implement-model: recorded-next\n");
+  h.snapshot.repos[0] = await scanRepo(h.config.repos[0]);
+  expect(firstTerminal.text()).not.toContain("recorded-next");
+  await h.manager.close(first.id);
+  firstTerminal.detach();
+
+  const second = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const secondTerminal = await watch(h.manager, second.id);
+  await waitFor(() => secondTerminal.text().includes("recorded-next"), "updated scanned Implement model");
+  expect(secondTerminal.text()).not.toContain("phase-model");
+  secondTerminal.detach();
+  await h.manager.close(second.id);
+
+  await writeFile(marker, "schema: spec-driven\ncreated: 2026-11-01\nspec-control:\n  implement-model: --dangerously-skip-permissions\n");
+  h.snapshot.repos[0] = await scanRepo(h.config.repos[0]);
+  const fallback = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const fallbackTerminal = await watch(h.manager, fallback.id);
+  await waitFor(() => fallbackTerminal.text().includes("phase-model"), "phase model after invalid recorded choice");
+  fallbackTerminal.detach();
 });

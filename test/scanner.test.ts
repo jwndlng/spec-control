@@ -681,9 +681,9 @@ async function recordRepo(): Promise<{ root: string; repo: string; worktree: (br
   const marker = (extra = "") => `schema: spec-driven\ncreated: 2026-10-20\n${extra}`;
   const files: Record<string, string> = {
     "openspec/config.yaml": "schema: spec-driven\n",
-    "openspec/changes/add-validate/.openspec.yaml": marker(),
+    "openspec/changes/add-validate/.openspec.yaml": marker("spec-control:\n  implement-model: --dangerously-skip-permissions\n"),
     "openspec/changes/add-validate/proposal.md": "# Proposal\n",
-    "openspec/changes/rotate-keys/.openspec.yaml": marker("spec-control:\n  branch: fix/rotate-keys\n"),
+    "openspec/changes/rotate-keys/.openspec.yaml": marker("spec-control:\n  branch: fix/rotate-keys\n  implement-model: reasoning-model\n"),
     "openspec/changes/rotate-keys/proposal.md": "# Proposal\n",
     "openspec/changes/archive/2026-10-20-trim-logs/.openspec.yaml": marker("spec-control:\n  branch: feat/trim-logs\n  archive-branch: chore/archive-trim-logs\n"),
     "openspec/changes/archive/2026-10-20-trim-logs/proposal.md": "# Proposal\n",
@@ -705,9 +705,12 @@ test("records: active and archived changes report what their .openspec.yaml reco
   try {
     const snap = await scanRepo(newRepoConfig(repo, true));
     const byName = new Map(snap.changes.map((c) => [c.name, c]));
-    expect(byName.get("rotate-keys")?.recorded).toEqual({ branch: "fix/rotate-keys" });
+    expect(byName.get("rotate-keys")?.recorded).toEqual({ branch: "fix/rotate-keys", implementModel: "reasoning-model" });
+    expect(byName.get("rotate-keys")?.implementModel).toBe("reasoning-model");
     expect(byName.get("trim-logs")?.recorded).toEqual({ branch: "feat/trim-logs", archiveBranch: "chore/archive-trim-logs" });
     expect(byName.get("add-validate")?.recorded).toBeUndefined();
+    expect(byName.get("add-validate")?.implementModel).toBeUndefined();
+    expect(byName.get("add-validate")?.warnings?.some((warning) => warning.includes("implement-model"))).toBe(true);
     expect(byName.get("rotate-keys")?.warnings).toBeUndefined();
   } finally {
     await rm(root, { recursive: true, force: true });

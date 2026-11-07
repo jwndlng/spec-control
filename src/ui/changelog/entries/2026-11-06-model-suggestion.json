@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-06-model-suggestion",
+  "date": "2026-11-06",
+  "title": "Choose an implementation model per change",
+  "summary": "When the Draft and Implement models differ, Draft artifacts can choose the right one for each change. The choice appears in change details and applies to new **Implement** sessions for that change."
+}

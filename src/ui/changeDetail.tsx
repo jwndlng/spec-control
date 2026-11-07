@@ -314,6 +314,7 @@ function ChangeFacts({ change, pullRequest, now = Date.now() }: { change: Change
           {change.column}
         </span>
         {change.tasks && change.tasks.total > 0 && <Meter done={change.tasks.done} total={change.tasks.total} />}
+        {change.implementModel && <span class="badge" title="Recorded model for Implement">Implement model: {change.implementModel}</span>}
         <span class="badge" title={change.lastActivityAt ? `last activity ${change.lastActivityAt}` : "no activity date"}>
           {change.archived ? `archived ${change.archived}` : `updated ${relTime(change.lastActivityAt, now)} ago`}
         </span>

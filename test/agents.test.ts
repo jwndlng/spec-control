@@ -202,6 +202,15 @@ test("additional instructions extend a starter's prompt, and always as one line"
   expect(() => openingPrompt(naming, "implement", "x; rm -rf ~")).toThrow(/invalid change name/);
 });
 
+test("Draft model guidance follows the profile prompt, names distinct candidates, and preserves marker metadata", () => {
+  const profile = fakeProfile({ promptSuffixes: { draft: "Keep the proposal concise." } });
+  const prompt = openingPrompt(profile, "draft", "cache-api-calls", { implementModelCandidates: { draft: "reasoning", implement: "fast" } }) ?? "";
+  expect(prompt).toBe("draft cache-api-calls Keep the proposal concise. Assess implementation complexity: choose reasoning for work needing deeper reasoning or fast for straightforward work, then record that exact choice as spec-control.implement-model in openspec/changes/cache-api-calls/.openspec.yaml without changing any other marker fields.");
+  expect(openingPrompt(profile, "draft", "cache-api-calls", { implementModelCandidates: { draft: "same", implement: "same" } })).toBe("draft cache-api-calls Keep the proposal concise.");
+  expect(openingPrompt(profile, "draft", "cache-api-calls")).toBe("draft cache-api-calls Keep the proposal concise.");
+  expect(openingPrompt(profile, "implement", "cache-api-calls", { implementModelCandidates: { draft: "reasoning", implement: "fast" } })).toBe("implement cache-api-calls");
+});
+
 test("Ship: additional instructions extend the profile's prompt, or the agent-neutral default", () => {
   expect(shipPrompt(fakeProfile(), "cache-api-calls")).toBe(DEFAULT_SHIP_PROMPT);
   // The case the feature exists for: a standing instruction about pull requests, without restating the whole prompt.

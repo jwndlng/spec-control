@@ -369,7 +369,10 @@ export class SessionManager {
     const agent = agentFor(config, repo, change);
     const fixedPrompt = () =>
       stranded ? carryOverPrompt(change, stranded, scanned.defaultBranch) : duplicate && layout ? removeDuplicatePrompt(change, duplicate, layout, scanned.defaultBranch) : undefined;
-    const prompt = followupPrompt ?? fixedPrompt() ?? (agent ? openingPrompt(agent, action, change) : undefined);
+    const draftModel = action === "draft" && agent ? resolveModel(config, agent, "draft") : undefined;
+    const implementModel = action === "draft" && agent ? resolveModel(config, agent, "implement") : undefined;
+    const implementModelCandidates = draftModel && implementModel && draftModel !== implementModel ? { draft: draftModel, implement: implementModel } : undefined;
+    const prompt = followupPrompt ?? fixedPrompt() ?? (agent ? openingPrompt(agent, action, change, { implementModelCandidates }) : undefined);
 
     const isZeroTokenArchive =
       action === "archive" &&
@@ -542,7 +545,7 @@ export class SessionManager {
       session.autoMergeAskedAt = new Date().toISOString();
     }
     // Final only now: refused before the session is registered; a worktree just made stays, as any without a record.
-    const model = resolveModel(config, agent!, action);
+    const model = action === "implement" ? snapshot.implementModel ?? resolveModel(config, agent!, action) : resolveModel(config, agent!, action);
     const launch: Launch = action === "custom"
       ? { argv: launchWithoutPrompt(agent!, model) }
       : checkedLaunch(agent!, prompt!, undefined, model);
@@ -1305,14 +1308,17 @@ export class SessionManager {
     if (heldBack) throw new SessionError(400, heldBack);
     if (!availableActions(change).includes(action)) throw new SessionError(400, `"${action}" is not available for this change in its current stage`);
     const agent = config.agentSessions.agents.find((a) => a.id === session.agentId);
-    if (!agent || !openingPrompt(agent, action, session.change)) throw new SessionError(400, `${session.agentName} has no "${action}" prompt configured`);
+    const draftModel = action === "draft" && agent ? resolveModel(config, agent, "draft") : undefined;
+    const implementModel = action === "draft" && agent ? resolveModel(config, agent, "implement") : undefined;
+    const implementModelCandidates = draftModel && implementModel && draftModel !== implementModel ? { draft: draftModel, implement: implementModel } : undefined;
+    if (!agent || !openingPrompt(agent, action, session.change, { implementModelCandidates })) throw new SessionError(400, `${session.agentName} has no "${action}" prompt configured`);
     // The proposal's session drafts and nothing else: implementing there would put code into the proposal pull request.
     if (action !== "draft" && isProposalSession(session)) throw new SessionError(409, `this session drafts the proposal on ${session.branch}; start "${action}" as a session of its own`);
     // Archive sent here runs where this session runs — often an Implement worktree with code in it, which the check sees.
     const repo = config.repos.find((r) => r.id === session.repoId);
     const autoMerge = repo !== undefined && (await this.docsAutoMerge(repo, session, action));
     // Checked before the action or the auto-merge record changes: a prompt that cannot be typed changes nothing (D1).
-    const text = typable(openingPrompt(agent, action, session.change) as string);
+    const text = typable(openingPrompt(agent, action, session.change, { implementModelCandidates }) as string);
     // The recorded action is what the user asked for, whether or not the agent's terminal echoed the prompt in time.
     session.action = action;
     if (autoMerge) session.autoMergeAskedAt = new Date().toISOString();

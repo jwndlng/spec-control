@@ -41,7 +41,7 @@ export async function listArtifactFiles(source: RepoSource, repoId: string, entr
     files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
     artifacts.push({ ...artifact, files });
   }
-  return { change: { ...change, schema: info.schema }, artifacts };
+  return { change: { ...change, schema: info.schema, ...(info.implementModel ? { implementModel: info.implementModel } : {}) }, artifacts };
 }
 
 export type ArtifactFileResult =
