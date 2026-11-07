@@ -92,3 +92,11 @@ export function linkedPullRequest(
   const candidates = new Set(candidateBranches(change));
   return candidates.size ? bestOn(candidates, change, lists) : undefined;
 }
+
+/** Only a linked implementation PR can offer recovery; cached merge status never verifies a task. */
+export function mergedImplementation(change: ChangeSnapshot, lists: readonly RepoPullRequests[] | undefined): PullRequest | undefined {
+  if (change.archived || !change.tasks || change.tasks.total <= change.tasks.done) return undefined;
+  const pr = linkedPullRequest(change, lists);
+  if (!pr || !Number.isSafeInteger(pr.number) || pr.number <= 0 || pr.state !== "merged" || isProposalPullRequest(change, pr) || pr.head === sessionBranch("archive", change.name) || pr.head === change.recorded?.archiveBranch || pr.isCrossRepository !== false) return undefined;
+  return pr;
+}

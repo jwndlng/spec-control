@@ -195,7 +195,8 @@ test("Ship: refused when there is nothing to ship, otherwise it plays out and th
   expect(await workOf(api, dirty.change)).toEqual({ state: "uncommitted", count: 3 });
   const view = terminal(dirty.id);
   advance(0);
-  expect((await api.shipSession(dirty.id)).state).toBe("running");
+  const preview = await api.shipSession(dirty.id);
+  expect((await api.shipSession(dirty.id, { confirmation: preview.preflight?.token })).state).toBe("running");
   advance(60_000);
   expect(view.text()).toContain("Commit the work for pin-terraform-providers");
   expect(view.text().match(/demo recording/g)).toHaveLength(1); // same terminal, not a new one
@@ -411,6 +412,18 @@ test("the demo reports its editor as found and opens none (editor-launch)", asyn
   expect(await refusal(api.openEditor(session.id))).toBe("503: The demo opens no editor");
   expect(await refusal(api.openWorktreeEditor(session.repoId, listed.worktrees[0].name))).toBe("503: The demo opens no editor");
   expect(JSON.stringify(await api.sessions())).toBe(before);
+});
+
+test("Finish checks reuses the demo's implementation session without claiming checks passed", async () => {
+  const { api } = demo();
+  const session = await byChange(api, "pin-terraform-providers");
+  const before = await api.state();
+  const result = await api.finishChecks(session.repoId, session.change);
+  expect(result.id).toBe(session.id);
+  expect(result.submitted).toBe(true);
+  const after = await api.state();
+  const task = (snapshot: typeof after) => snapshot.repos.flatMap((r) => r.changes).find((c) => c.name === session.change)?.tasks;
+  expect(task(after)).toEqual(task(before));
 });
 
 test("custom demo session waits for the visitor and duplicate starts reuse it", async () => {

@@ -39,7 +39,7 @@ export function FastForwardDialog({ change, agentName, onConfirm, onCancel }: { 
             <strong>Are you sure? </strong>
             {agentName ?? "The agent"} will write this change's artifacts, implement it and open a pull request — without stopping for your review in between.
           </div>
-          <div class="hint">The pull request will be the only review. It is never merged for you.</div>
+          <div class="hint">The pull request will be the only review. It is never merged for you. Completion instructions are included. Automatic shipping waits until every task is marked complete; unresolved tasks need a separate Ship review.</div>
           <label class="check">
             <input type="checkbox" checked={neverAgain} onChange={(e) => setNeverAgain(e.currentTarget.checked)} /> Don't show this warning again
           </label>

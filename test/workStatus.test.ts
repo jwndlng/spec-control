@@ -8,7 +8,9 @@ import { Scanner } from "../src/server/scanner.ts";
 import { resolveConflictsPrompt, shipPrompt } from "../src/server/sessions/agents.ts";
 import { changeOfWorktree, contentIsInBase, readWorkStatus } from "../src/server/sessions/workStatus.ts";
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
-import { CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, type Session, type SessionWorktree } from "../src/shared/types.ts";
+import { CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT as BASE_SHIP_PROMPT, SHIP_COMPLETION_INSTRUCTION, type Session, type SessionWorktree } from "../src/shared/types.ts";
+
+const DEFAULT_SHIP_PROMPT = `${BASE_SHIP_PROMPT} ${SHIP_COMPLETION_INSTRUCTION}`;
 import { tempDir, useTempHome } from "./helpers.ts";
 import { commitFiles, monorepo, squashMerge } from "./monorepoHelpers.ts";
 import { FAKE_AGENT, fakeProfile, git, harness, tempGitRepo, waitFor, watch, type Harness } from "./sessionHelpers.ts";

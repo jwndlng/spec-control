@@ -645,7 +645,8 @@ export type PromptKey = StarterPromptKey | "ship" | "integrate" | "resolveConfli
 export type PromptResult = Session & { submitted: boolean };
 /** What Ship answers: the session, whether it was shipped deterministically, and whether docs auto-merge was asked. */
 export type ShipResult = Session & {
-  shipped: true;
+  shipped: boolean;
+  preflight?: ShipPreflight;
   submitted: boolean;
   autoMerge: boolean;
   autoMergeInstructionIncluded: boolean;
@@ -653,6 +654,26 @@ export type ShipResult = Session & {
   pullRequestNumber?: number;
 };
 export type AutoMergePromptResult = PromptResult & { autoMerge: boolean };
+export interface ShipPreflight {
+  token: string;
+  summary: ShipTaskSummary;
+}
+export interface ShipTaskSummary {
+  verified: boolean;
+  reason?: string;
+  total: number;
+  done: number;
+  open: string[];
+  awaiting: string[];
+  truncated: boolean;
+}
+export interface ShipRequest { title?: string; confirmation?: string; finishTasks?: boolean }
+
+export const TASK_COMPLETION_INSTRUCTION = "Complete and verify every task you can, including automated checks, before shipping. Tick only tasks supported by evidence; report the precise blocker for anything unresolved. Reserve - [~] for work that truly requires the user, complete all automatable parts first, and state exactly what the user must check or do on that task's line.";
+export const SHIP_COMPLETION_INSTRUCTION = `${TASK_COMPLETION_INSTRUCTION} Identify checks that require a PR or its CI, preserve their unresolved markers, and revisit them when evidence is available.`;
+export const FINISH_TASKS_PROMPT = `${TASK_COMPLETION_INSTRUCTION} Finish the remaining tasks in this checkout and report blockers. Do not ship as part of this request.`;
+export const FINISH_CHECKS_PROMPT = `${TASK_COMPLETION_INSTRUCTION} Verify the remaining checks against actual command results and PR check evidence; a merged PR alone proves no task complete. Prepare the verified task update for review in a follow-up PR when needed. Before committing or pushing, create a fresh follow-up branch in this worktree; never push to the merged branch or alter the main checkout. Leave tasks unresolved when evidence is missing.`;
+
 /** What starting a session answers: the session, and whether its opening prompt carried
  *  `AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION` or `AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION`. Always `false` for a session that
  *  was already open and was returned. */
@@ -901,6 +922,8 @@ export interface ChangeSession extends SessionBase {
   pullRequest?: number;
   /** Set when a deterministic Ship (manual or automatic on session exit) failed; cleared when Ship succeeds. */
   shipError?: string;
+  /** Task-only requests suppress automatic shipping, merging and merged-PR cleanup until an explicit workflow choice. Persisted across resume. */
+  autoShipSuppressed?: boolean;
   /**
    * The worktree cleanup the user confirmed when ending this session, carried on in the background once the session
    * had ended (cleanup-background). Stored, so an outcome — or a cleanup a restart interrupted — outlives a reload.

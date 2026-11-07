@@ -147,6 +147,7 @@ test("Remove duplicate with differingCount === 0 removes duplicate directory and
   const changeDir = join(h.repoPath, OPENSPEC_PATHS.changesDir, CHANGE);
   const archiveDir = join(h.repoPath, OPENSPEC_PATHS.archiveDir as string, ARCHIVE);
   await mkdir(archiveDir, { recursive: true });
+  await writeFile(join(changeDir, "tasks.md"), "- [x] Verified before archive\n");
   await cp(changeDir, archiveDir, { recursive: true });
   git(h.repoPath, "add", "-A");
   git(h.repoPath, "commit", "-q", "-m", `chore(openspec): archive ${CHANGE}`);

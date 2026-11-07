@@ -1,5 +1,5 @@
 // Agent profiles (design.md D16): an agent is a command line plus opening prompts. Nothing here knows any vendor.
-import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, PROPOSAL_TITLE_CONVENTIONAL, PROPOSAL_TITLE_PLAIN, CARRY_OVER_ARCHIVE_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, proposalHandoverSentence, REMOVE_DUPLICATE_DIFFERING_SENTENCE, REMOVE_DUPLICATE_IDENTICAL_SENTENCE, REMOVE_DUPLICATE_PROMPT, resolveConflictsTargetSentence, type AgentAvailability, type DuplicateAfterArchive, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type PullRequest, type RepoConfig, type SessionAction, type StrandedArchive } from "../../shared/types.ts";
+import { TASK_COMPLETION_INSTRUCTION, SHIP_COMPLETION_INSTRUCTION, AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, PROPOSAL_TITLE_CONVENTIONAL, PROPOSAL_TITLE_PLAIN, CARRY_OVER_ARCHIVE_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, fastForwardAvailable, mergeTargetSentence, proposalHandoverSentence, REMOVE_DUPLICATE_DIFFERING_SENTENCE, REMOVE_DUPLICATE_IDENTICAL_SENTENCE, REMOVE_DUPLICATE_PROMPT, resolveConflictsTargetSentence, type AgentAvailability, type DuplicateAfterArchive, type AgentProfile, type Config, type PrTitleConvention, type PromptKey, type PullRequest, type RepoConfig, type SessionAction, type StrandedArchive } from "../../shared/types.ts";
 import { AGENT_PRESETS } from "../../shared/agentDefaults.ts";
 import { proposalBranch } from "../../shared/sessionBranch.ts";
 import { whichOnPath } from "../paths.ts";
@@ -138,7 +138,7 @@ export function fastForwardPrompt(agent: AgentProfile, change: string): string |
   if (!fastForwardAvailable(agent)) return undefined;
   const draft = openingPrompt(agent, "draft", change) as string;
   const implement = openingPrompt(agent, "implement", change) as string;
-  return `${draft} ${FAST_FORWARD_CONTINUE_SENTENCE} ${implement}`;
+  return `${draft} ${FAST_FORWARD_CONTINUE_SENTENCE} ${implement} ${TASK_COMPLETION_INSTRUCTION}`;
 }
 
 /**
@@ -146,7 +146,7 @@ export function fastForwardPrompt(agent: AgentProfile, change: string): string |
  */
 export function shipPrompt(agent: AgentProfile, change: string, { autoMerge = false, convention }: { autoMerge?: boolean; convention?: PrTitleConvention; record?: unknown } = {}): string {
   if (!CHANGE_NAME.test(change)) throw new Error("invalid change name");
-  const base = agent.prompts.ship ?? DEFAULT_SHIP_PROMPT;
+  const base = `${agent.prompts.ship ?? DEFAULT_SHIP_PROMPT} ${SHIP_COMPLETION_INSTRUCTION}`;
   const titled = convention === "conventional-commits" ? `${base} ${CONVENTIONAL_COMMITS_SHIP_SENTENCE}` : base;
   const prompt = compose(agent, "ship", titled).replaceAll("{change}", change);
   return autoMerge ? `${prompt} ${AUTO_MERGE_DOCS_INSTRUCTION}` : prompt;

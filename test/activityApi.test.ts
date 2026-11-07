@@ -1,3 +1,4 @@
+import { shipAnyway } from "./shipTaskHelpers.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -134,7 +135,7 @@ test("the session manager reports started, shipped and ended — and nothing dec
   try {
     const s = await manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
     await writeFile(join(s.worktreePath, "work.txt"), "x");
-    await manager.ship(s.id);
+    await shipAnyway(manager, s.id);
     manager.write(s.id, "crash\r");
     await waitFor(() => manager.get(s.id).state === "exited", "exit");
     await waitFor(() => reported.length === 3, "three reports");

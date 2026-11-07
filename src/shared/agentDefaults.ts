@@ -1,3 +1,4 @@
+import { TASK_COMPLETION_INSTRUCTION } from "./types.ts";
 import type { AgentProfile, AgentSessionsConfig, InstructionStep, PromptKey, Shortcut } from "./types.ts";
 
 // Each prompt is one line: it may be typed into a terminal (`submit.ts`). Together they carry the meaning of the
@@ -9,8 +10,10 @@ import type { AgentProfile, AgentSessionsConfig, InstructionStep, PromptKey, Sho
  * leaving it open, which would keep the change in `Implementing` with nothing left for the agent — and says on the
  * task's own line what the user has to do, which the card then shows.
  */
-const IMPLEMENT_TAIL =
+const FORMER_IMPLEMENT_TAIL =
   "when a task can only be verified or carried out by me (a secret to enter, an account to sign in to, a check on a real device), do every part of it you can, then leave it as `- [~]` instead of `- [x]` or `- [ ]`, and add to its line what exactly I have to check or do.";
+
+const IMPLEMENT_TAIL = `${TASK_COMPLETION_INSTRUCTION} ${FORMER_IMPLEMENT_TAIL}`;
 
 /** Walks the user through the `- [~]` tasks; what the user does not confirm stays as it is. */
 const VALIDATE_TAIL =
@@ -119,7 +122,7 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
   {
     profile: CLAUDE_PROFILE,
     formerPrompts: {
-      implement: ["/opsx:apply {change}", `/opsx:apply {change} — ${PREVIOUS_IMPLEMENT_TAIL}`],
+      implement: ["/opsx:apply {change}", `/opsx:apply {change} — ${PREVIOUS_IMPLEMENT_TAIL}`, `/opsx:apply {change} — ${FORMER_IMPLEMENT_TAIL}`],
       validate: [`/opsx:apply {change} — ${PREVIOUS_VALIDATE_TAIL}`],
       archive: [
         "/opsx:archive {change}",
@@ -132,7 +135,7 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
   {
     profile: CODEX_PROFILE,
     formerPrompts: {
-      implement: [`Use the openspec-apply-change skill on the OpenSpec change {change} — ${PREVIOUS_IMPLEMENT_TAIL}`],
+      implement: [`Use the openspec-apply-change skill on the OpenSpec change {change} — ${PREVIOUS_IMPLEMENT_TAIL}`, `Use the openspec-apply-change skill on the OpenSpec change {change} — ${FORMER_IMPLEMENT_TAIL}`],
       validate: [`Use the openspec-apply-change skill on the OpenSpec change {change} — ${PREVIOUS_VALIDATE_TAIL}`],
       archive: [
         `Use the openspec-archive-change skill to archive the OpenSpec change {change} — ${PREVIOUS_ARCHIVE_TAIL_WITH_COMMIT}`,
@@ -144,7 +147,7 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
   {
     profile: ANTIGRAVITY_PROFILE,
     formerPrompts: {
-      implement: [`/opsx-apply {change} — ${PREVIOUS_IMPLEMENT_TAIL}`],
+      implement: [`/opsx-apply {change} — ${PREVIOUS_IMPLEMENT_TAIL}`, `/opsx-apply {change} — ${FORMER_IMPLEMENT_TAIL}`],
       validate: [`/opsx-apply {change} — ${PREVIOUS_VALIDATE_TAIL}`],
       archive: [
         `/opsx-archive {change} — ${PREVIOUS_ARCHIVE_TAIL_WITH_COMMIT}`,

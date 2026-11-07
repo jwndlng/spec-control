@@ -1,3 +1,4 @@
+import { FinishChecks } from "./finishChecks.tsx";
 // The console: the agent's own terminal, streamed from the dashboard server, shown in the Console tab of its change's
 // detail view. The dashboard adds nothing to what the agent shows and interprets none of it; keystrokes go straight to
 // the agent, exactly as in a terminal window.
@@ -400,6 +401,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
           )}
         </div>
         <div class="row">
+          {card && <FinishChecks card={card} />}
           {shippable && session && (
             <button
               type="button"
@@ -408,7 +410,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
               title="Commits, pushes and opens a pull request deterministically on the server without an agent"
               onClick={() =>
                 act(async () => {
-                  reportShip(ui, session.id, await api.shipSession(session.id));
+                  await ui.ship(session.id);
                 })
               }
             >

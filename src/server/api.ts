@@ -600,6 +600,10 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
       }
       if (req.method === "POST") {
         const body = await readJson(req);
+        if (body.finishChecks === true) {
+          if (typeof body.repoId !== "string" || typeof body.change !== "string") return json({ error: "invalid repository or change" }, 400);
+          return json(await sessions.finishChecks(body.repoId, body.change, await cachedPullRequests(state, body.repoId)));
+        }
         // Ending the proposal session first is an explicit yes or no, never something merely truthy.
         if (body.endProposal !== undefined && typeof body.endProposal !== "boolean") return json({ error: "endProposal must be a boolean" }, 400);
         // Resolve conflicts reads the repository's cached pull-request list — never a query — and nothing else does.
@@ -624,9 +628,11 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
       if (sub === "resume") return json(await sessions.resume(id));
       if (sub === "editor") return json(await sessions.openEditor(id));
       if (sub === "ship") {
-        const body = (await readJson(req).catch(() => ({}))) as Record<string, unknown>;
+        const body = req.body ? await readJson(req) : {};
+        if (body.finishTasks !== undefined && typeof body.finishTasks !== "boolean") return json({ error: "finishTasks must be a boolean" }, 400);
+        if (body.confirmation !== undefined && typeof body.confirmation !== "string") return json({ error: "confirmation must be a preview token" }, 400);
         const title = typeof body.title === "string" && body.title.trim() ? body.title.trim() : undefined;
-        return json(await sessions.ship(id, { title }));
+        return json(await sessions.ship(id, { ...body, title }));
       }
       if (sub === "resolve-conflicts") return json(await sessions.resolveConflicts(id, await cachedPullRequests(state, sessions.get(id).repoId)));
       if (sub === "merge") {

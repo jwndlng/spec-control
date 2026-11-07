@@ -1,3 +1,5 @@
+import { readShipTasks, tasksSettled } from "./taskSummary.ts";
+import { FINISH_TASKS_PROMPT, FINISH_CHECKS_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, type ShipRequest } from "../../shared/types.ts";
 // Session manager (design.md D15–D17). A session is an agent CLI running in a terminal inside the change's own git
 // worktree. The manager creates the worktree, starts the process, keeps a scrollback for late or returning viewers,
 // fans output out to attached terminals and takes their input. It does not interpret what the agent prints.
@@ -25,7 +27,7 @@ import { baseRef, headCommit, listWorktrees, readWorkStatus, shipsOnlyOpenSpec, 
 import { currentBranch, defaultBranch, hasLocalBranch, originUrl, worktrees as listCheckouts } from "../git.ts";
 import { frameworkById } from "../frameworks/registry.ts";
 import { conflictSignal } from "../../shared/conflictSignal.ts";
-import { linkedPullRequest } from "../../shared/pullRequestLink.ts";
+import { mergedImplementation, linkedPullRequest } from "../../shared/pullRequestLink.ts";
 import { mergeReady, pullRequestReadiness, readinessDetail } from "../../shared/pullRequestReadiness.ts";
 import { BackgroundCleanups, removalOutcome, staleOutcome } from "./backgroundCleanup.ts";
 import { checkWorktreeRemovable, copyChangeIfMissing, ensureWorktree, implementStartPoint, linkedWorktreeOf, NoCommitError, removeWorktree, UnknownBranchError, WorktreeMismatchError, type Removable } from "./worktree.ts";
@@ -289,7 +291,7 @@ export class SessionManager {
     return session && !isChangeless(session) ? this.withChangeLock(session.repoId, session.change, run) : run();
   }
 
-  private async openNow(input: { repoId?: unknown; change?: unknown; action?: unknown; carryOver?: unknown; removeDuplicate?: unknown; resolveConflicts?: unknown; endProposal?: unknown }, pullRequests?: RepoPullRequests): Promise<StartResult> {
+  private async openNow(input: { repoId?: unknown; change?: unknown; action?: unknown; carryOver?: unknown; removeDuplicate?: unknown; resolveConflicts?: unknown; endProposal?: unknown }, pullRequests?: RepoPullRequests, followupPrompt?: string): Promise<StartResult> {
     const config = this.deps.getConfig();
     if (!config.agentSessions.enabled) throw new SessionError(403, "agent sessions are disabled");
     if (typeof input.change !== "string" || !CHANGE_NAME.test(input.change)) throw new SessionError(400, "invalid change name");
@@ -330,7 +332,7 @@ export class SessionManager {
     const heldBack = action === "implement" ? blockedReason(snapshot) : action === "fastForward" ? blockedReason(snapshot, "Fast-forward") : action === "draft" && !stranded ? pastDraftingReason(snapshot) : undefined;
     if (heldBack) throw new SessionError(400, heldBack);
     // A stranded archive exists whatever the change's stage on the main checkout; that is the whole point of carrying it over.
-    if (!stranded && !duplicate && !availableActions(snapshot).includes(action)) throw new SessionError(400, `"${action}" is not available for this change in its current stage`);
+    if (!followupPrompt && !stranded && !duplicate && !availableActions(snapshot).includes(action)) throw new SessionError(400, `"${action}" is not available for this change in its current stage`);
 
     // One open session per change, whatever the action: a change never has two consoles, and Archive is no exception.
     // Nothing is typed here — a starter for a change whose agent is up goes through `prompt`, which reports whether
@@ -370,7 +372,7 @@ export class SessionManager {
     const draftModel = action === "draft" && agent ? resolveModel(config, agent, "draft") : undefined;
     const implementModel = action === "draft" && agent ? resolveModel(config, agent, "implement") : undefined;
     const implementModelCandidates = draftModel && implementModel && draftModel !== implementModel ? { draft: draftModel, implement: implementModel } : undefined;
-    const prompt = fixedPrompt() ?? (agent ? openingPrompt(agent, action, change, { implementModelCandidates }) : undefined);
+    const prompt = followupPrompt ?? fixedPrompt() ?? (agent ? openingPrompt(agent, action, change, { implementModelCandidates }) : undefined);
 
     const isZeroTokenArchive =
       action === "archive" &&
@@ -414,6 +416,7 @@ export class SessionManager {
       repoId: repo.id,
       change,
       action,
+      ...(followupPrompt ? { autoShipSuppressed: true } : {}),
       agentId: agent?.id ?? "server",
       agentName: agent?.name ?? "Server",
       state: "running",
@@ -459,7 +462,7 @@ export class SessionManager {
           this.sessions.set(session.id, session);
           await this.store.saveMeta(session);
 
-          await this.shipNow(session.id);
+          await this.shipNow(session.id, undefined, true);
 
           session.state = "exited";
           session.exitCode = 0;
@@ -485,7 +488,7 @@ export class SessionManager {
           this.sessions.set(session.id, session);
           await this.store.saveMeta(session);
 
-          await this.shipNow(session.id);
+          await this.shipNow(session.id, undefined, true);
 
           session.state = "exited";
           session.exitCode = 0;
@@ -513,7 +516,7 @@ export class SessionManager {
               this.sessions.set(session.id, session);
               await this.store.saveMeta(session);
 
-              await this.shipNow(session.id);
+              await this.shipNow(session.id, undefined, true);
 
               session.state = "exited";
               session.exitCode = 0;
@@ -867,20 +870,81 @@ export class SessionManager {
     if (session.state === "running" && !isChangeless(session)) this.report(session, { kind: "session-started", action: session.action, agentName: session.agentName, resumed: true });
   }
 
+  /** Uses only the cached PR list. The agent, never the dashboard, verifies the checks or edits tasks. */
+  finishChecks(repoId: string, changeName: string, list?: RepoPullRequests): Promise<PromptResult> {
+    return this.withChangeLock(repoId, changeName, async () => {
+      if (!CHANGE_NAME.test(changeName)) throw new SessionError(400, "invalid change name");
+      const config = this.deps.getConfig();
+      const repoConfig = config.repos.find((r) => r.id === repoId);
+      if (!config.agentSessions.enabled || !repoConfig || !repoConfig.enabled || !repoAgentEnabled(repoConfig)) throw new SessionError(403, "agent sessions are switched off for this repository");
+      const scanned = this.deps.getSnapshot().repos.find((r) => r.id === repoId);
+      if (scanned?.isGit === false || scanned?.noCommit) throw new SessionError(409, "Finish checks needs a git worktree with a commit to branch from");
+      const change = scanned?.changes.find((c) => c.name === changeName && !c.archived);
+      const pr = change && mergedImplementation(change, list ? [list] : []);
+      if (!change || !pr || !scanned?.ok || pr.base !== scanned.defaultBranch) throw new SessionError(409, "No linked merged implementation with unresolved tasks is known. Refresh pull requests and scan the project.");
+      const title = repoConfig.prTitleConvention === "conventional-commits" ? ` ${CONVENTIONAL_COMMITS_SHIP_SENTENCE}` : "";
+      const record = this.recordInstruction(repoId, changeName, "implement");
+      const prompt = `Finish checks for ${changeName}, whose cached implementation PR is #${pr.number} (last fetched ${list?.fetchedAt ?? "at an unknown time"}). Verify the current PR and evidence yourself. ${FINISH_CHECKS_PROMPT}${title}${record ? ` ${record}` : ""}`;
+      const candidates = changeSessions(this.list()).filter((s) => s.repoId === repoId && s.change === changeName && !isProposalSession(s) && s.action !== "archive" && !s.inPlace);
+      const session = candidates.find((s) => s.state === "running") ?? candidates[0];
+      if (!session) {
+        if (changeSessions(this.list()).some((s) => s.repoId === repoId && s.change === changeName && s.state === "running")) throw new SessionError(409, "a proposal or archive session is running; end it before finishing implementation checks");
+        const opened = await this.openNow({ repoId, change: changeName, action: "implement" }, undefined, prompt);
+        return { ...opened, submitted: true };
+      }
+      const { agent, repo } = await this.prepareRestart(session);
+      session.autoShipSuppressed = true;
+      await this.touch(session);
+      if (session.state === "running" && this.live.get(session.id)?.proc) {
+        const { submitted } = await this.submit(session.id, typable(prompt));
+        return { ...session, submitted };
+      }
+      const model = resolveModel(this.deps.getConfig(), agent, session.action);
+      const launch = checkedLaunch(agent, prompt, resumeLaunch(agent, model), model);
+      if (!Bun.which(launch.argv[0])) throw new SessionError(503, `${agent.name} was not found (${launch.argv[0]})`);
+      await this.restart(session, repo.path, launch.argv, agentEnv(agent, process.env), launch.typed);
+      return { ...session, submitted: true };
+    });
+  }
+
+  private readonly shipPreviews = new Map<string, { token: string; fingerprint: string; at: number }>();
+
+  private sessionTasks(session: ChangeSession) {
+    const scanned = this.deps.getSnapshot().repos.find((r) => r.id === session.repoId);
+    return readShipTasks(session.worktreePath, session.change, scanned?.framework);
+  }
+
+  private async finishTasksNow(session: ChangeSession): Promise<ShipResult> {
+    const { agent, repo } = await this.prepareRestart(session);
+    session.autoShipSuppressed = true;
+    await this.touch(session);
+    let submitted: boolean;
+    if (session.state === "running" && this.live.get(session.id)?.proc) {
+      ({ submitted } = await this.submit(session.id, typable(FINISH_TASKS_PROMPT)));
+    } else {
+      const model = resolveModel(this.deps.getConfig(), agent, session.action);
+      const launch = checkedLaunch(agent, FINISH_TASKS_PROMPT, resumeLaunch(agent, model), model);
+      if (!Bun.which(launch.argv[0])) throw new SessionError(503, `${agent.name} was not found (${launch.argv[0]})`);
+      await this.restart(session, repo.path, launch.argv, agentEnv(agent, process.env), launch.typed);
+      submitted = true;
+    }
+    return { ...session, shipped: false, submitted, autoMerge: false, autoMergeInstructionIncluded: false };
+  }
+
   /**
    * Deterministically commits any uncommitted changes in the session's worktree, pushes the branch to origin,
    * creates or reuses an open pull request on GitHub, and records autoMergeAskedAt when docs-only auto-merge applies.
    * Runs server-side without starting, resuming, or typing into an agent process.
    */
-  shipSession(id: string, options?: { title?: string }): Promise<ShipResult> {
+  shipSession(id: string, options?: ShipRequest): Promise<ShipResult> {
     return this.ship(id, options);
   }
 
-  ship(id: string, options?: { title?: string }): Promise<ShipResult> {
+  ship(id: string, options?: ShipRequest): Promise<ShipResult> {
     return this.lockedFor(id, () => this.shipNow(id, options));
   }
 
-  private async shipNow(id: string, options?: { title?: string }): Promise<ShipResult> {
+  private async shipNow(id: string, options?: ShipRequest, automatic = false): Promise<ShipResult> {
     const session = this.get(id);
     if (isChangeless(session)) throw new SessionError(409, notAChange(session));
     if (session.inPlace) throw new SessionError(409, "this session runs in a folder that is not a git repository — there is no branch to commit or push");
@@ -894,6 +958,21 @@ export class SessionManager {
     const { work } = await readWorkStatus(repo.path, session.worktreePath);
     if (!SHIPPABLE_WORK.includes(work.state)) throw new SessionError(409, `there is nothing to ship (${work.state})`);
 
+    if (options?.finishTasks) return this.finishTasksNow(session);
+    const { summary, fingerprint } = await this.sessionTasks(session);
+    const unresolved = !tasksSettled(summary);
+    const proposalAutoShip = automatic && isProposalSession(session);
+    if (unresolved && !proposalAutoShip) {
+      if (automatic) throw new SessionError(409, "Tasks are unresolved or unverified. Use Ship to review them, or Finish tasks first.");
+      const preview = this.shipPreviews.get(id);
+      if (!preview || options?.confirmation !== preview.token || fingerprint !== preview.fingerprint || Date.now() - preview.at > 5 * 60_000) {
+        const token = randomUUID();
+        this.shipPreviews.set(id, { token, fingerprint, at: Date.now() });
+        return { ...session, shipped: false, submitted: false, autoMerge: false, autoMergeInstructionIncluded: false, preflight: { token, summary } };
+      }
+    }
+    this.shipPreviews.delete(id);
+    session.autoShipSuppressed = undefined;
     const branch = session.branch as string;
 
     // 1. Ensure .openspec.yaml records branch (or archive-branch)
@@ -1002,6 +1081,7 @@ export class SessionManager {
 
     // 6. Check docs-only auto-merge
     const autoMerge =
+      (!unresolved || proposalAutoShip) &&
       session.action !== "fastForward" &&
       repo.agent?.autoMergeDocs === true &&
       (await shipsOnlyOpenSpec(session.worktreePath, base));
@@ -1244,6 +1324,10 @@ export class SessionManager {
     if (autoMerge) session.autoMergeAskedAt = new Date().toISOString();
     this.touchLater(session);
     const { submitted } = await this.submit(id, text);
+    if (submitted) {
+      session.autoShipSuppressed = undefined;
+      this.touchLater(session);
+    }
     return { ...session, submitted, autoMerge };
   }
 
@@ -1266,7 +1350,7 @@ export class SessionManager {
     const repo = config.repos.find((r) => r.id === repoId);
     if (!repo) return;
     const autoMergeEnabled = repo.agent?.autoMergeDocs === true;
-    const candidate = (session: ChangeSession) => session.repoId === repoId && !session.inPlace && !session.adopted && !session.autoEnded && !this.autoEnding.has(session.id) && (session.autoMergeAskedAt !== undefined && autoMergeEnabled || config.agentSessions.endMergedSessions !== false);
+    const candidate = (session: ChangeSession) => session.repoId === repoId && !session.inPlace && !session.adopted && !session.autoShipSuppressed && !session.autoEnded && !this.autoEnding.has(session.id) && (session.autoMergeAskedAt !== undefined && autoMergeEnabled || config.agentSessions.endMergedSessions !== false);
     if (!changeSessions(this.list()).some(candidate)) return;
     // Only the session's own pull request: not from a fork — an unknown answer counts as one — and into the default
     // branch as known locally, read once per call (D6), as the ready-merge and Resolve conflicts already require.
@@ -1371,6 +1455,7 @@ export class SessionManager {
         session.inPlace ||
         session.adopted ||
         !session.autoMergeAskedAt ||
+        session.autoShipSuppressed ||
         session.autoEnded ||
         session.action === "fastForward"
       ) {
@@ -1387,6 +1472,7 @@ export class SessionManager {
         if (pr.base !== defBranch) continue;
         if ((await headCommit(session.worktreePath)) !== pr.headOid) continue;
         if (!(await shipsOnlyOpenSpec(session.worktreePath, await baseRef(repo.path)))) continue;
+        if (!isProposalSession(session) && !tasksSettled((await this.sessionTasks(session)).summary)) continue;
         if (askedFor(session, pr)) continue;
 
         const asked: MergeAsked = { pr: pr.number, head: pr.headOid as string, at: new Date().toISOString(), by: "dashboard", submitted: true };
@@ -1574,7 +1660,7 @@ export class SessionManager {
   }
 
   private async shouldAutoShipOnExit(session: ChangeSession): Promise<boolean> {
-    if (session.inPlace || session.adopted || isChangeless(session)) return false;
+    if (session.inPlace || session.adopted || session.autoShipSuppressed || isChangeless(session)) return false;
     const repo = this.deps.getConfig().repos.find((r) => r.id === session.repoId);
     if (!repo) return false;
 
@@ -1601,11 +1687,7 @@ export class SessionManager {
     }
 
     if (session.action === "fastForward") {
-      const tasksPath = join(session.worktreePath, "openspec/changes", session.change, "tasks.md");
-      const text = await readFile(tasksPath, "utf8").catch(() => undefined);
-      if (!text) return false;
-      const progress = openSpec.parseTasks(text);
-      return progress.total > 0 && progress.done + (progress.awaiting ?? 0) === progress.total;
+      return tasksSettled((await this.sessionTasks(session)).summary);
     }
 
     return false;
@@ -1641,7 +1723,7 @@ export class SessionManager {
       const changeSession = session as ChangeSession;
       if (await this.shouldAutoShipOnExit(changeSession).catch(() => false)) {
         try {
-          await this.ship(session.id);
+          await this.lockedFor(session.id, () => this.shipNow(session.id, undefined, true));
         } catch (err) {
           changeSession.shipError = err instanceof Error ? err.message : String(err);
           await this.touch(changeSession);
