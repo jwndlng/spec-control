@@ -68,6 +68,8 @@ export interface ChangeSnapshot {
    * (OpenSpec: the `spec-control:` map of `.openspec.yaml`). An input to the pull-request link and `branchMatch` only.
    */
   recorded?: ChangeRecord;
+  /** Valid model selected during Draft for this change's Implement sessions. */
+  implementModel?: string;
   /**
    * The checkout this change's data comes from: the leading copy among all checkouts holding the change. Absent in
    * snapshots cached by older versions and for non-git repositories.
@@ -135,6 +137,8 @@ export interface ChangeRecord {
   branch?: string;
   /** Head branch of the pull request that archives the change. */
   archiveBranch?: string;
+  /** Model selected for Implement; validated before it is exposed or launched. */
+  implementModel?: string;
 }
 
 /** An archive commit that never reached the default branch. */
@@ -1267,6 +1271,8 @@ export interface ChangeArtifacts {
     /** Absolute change directory; for archived changes the dated directory under `archive/`. */
     dir: string;
     archived: boolean;
+    /** Recorded implementation model choice, when present. */
+    implementModel?: string;
   };
   /** In schema order. */
   artifacts: ChangeArtifactEntry[];

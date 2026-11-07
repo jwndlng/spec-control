@@ -73,6 +73,10 @@ test("ids and change names are unique where the UI relies on it", () => {
   }
 });
 
+test("a demo change carries an implementation model choice for its detail view", () => {
+  expect(changes.find((change) => change.name === "structured-error-codes")?.implementModel).toBe("fast-model");
+});
+
 test("dates move with now, so ages never grow", () => {
   const later = buildSample(NOW + 180 * 24 * 3_600_000);
   const age = (s: typeof sample, now: number) => now - Date.parse(s.snapshot.repos[0].changes[1].lastActivityAt ?? "");

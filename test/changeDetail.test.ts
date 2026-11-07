@@ -93,6 +93,12 @@ test("header: repository link, change name, close control, warnings — and the 
   expect(classed(DetailHeader({ repo, change: { name: "gone" }, onClose: noop }), "detail-facts")).toEqual([]);
 });
 
+test("detail header labels a recorded implementation model only when present", () => {
+  const withChoice = DetailHeader({ repo, change: { ...change, implementModel: "reasoning-model" }, onClose: noop });
+  expect(textOf(withChoice)).toContain("Implement model: reasoning-model");
+  expect(textOf(DetailHeader({ repo, change, onClose: noop }))).not.toContain("Implement model:");
+});
+
 test("the detail view shows the prompt as plain text, without the form's heading", () => {
   const prompted = { ...change, prompt: "# Prompt\n\nLog every mutation <b>now</b>\n" };
   const note = classed(DetailHeader({ repo, change: prompted, onClose: noop }), "detail-prompt")[0];
