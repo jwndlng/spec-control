@@ -20,5 +20,5 @@
 
 ## 4. Integration
 
-- [ ] 4.1 Run `bun run check` and verify the full suite passes; build and exercise the compiled binary for changed agent-session behavior.
+- [x] 4.1 Run `bun run check` and verify the full suite passes; build and exercise the compiled binary for changed agent-session behavior.
 - [x] 4.2 Add a What's new entry under `src/ui/changelog/entries/` and verify the changelog tests pass.
