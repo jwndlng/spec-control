@@ -5,7 +5,7 @@ import { FINISH_TASKS_PROMPT, FINISH_CHECKS_PROMPT, CONVENTIONAL_COMMITS_SHIP_SE
 // fans output out to attached terminals and takes their input. It does not interpret what the agent prints.
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
-import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { blockedReason } from "../../shared/dependencies.ts";
 import { availableActions, changeSessions, pastDraftingReason, isChangeless, isConsole, isIntegration, isProjectConsole, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type MergeResult, type PrTitleConvention, type ProjectConsoleLike, type ProjectConsoleSession, type ChangeSnapshot, type RepoPullRequests, type RepoSnapshot, type Session, type SessionAction, type SessionWorktree, type Snapshot, type WorkStatus, type MergeAsked, type PromptResult, type PullRequest, type RepoConfig, type ShipResult, type AutoMergePromptResult, type StartResult, type SessionCleanup, type StaleCleanupResult } from "../../shared/types.ts";
@@ -50,6 +50,22 @@ export const ECHO_WINDOW_MS = 2000;
 const WORKTREES_TTL_MS = 15_000;
 /** How long shutdown waits for an agent it sent `SIGKILL` before reporting it and going on. */
 const FORCED_EXIT_WAIT_MS = 1000;
+/** Read only a regular description artifact in this session's own checkout. */
+async function shipDescription(session: ChangeSession): Promise<string> {
+  const fallback = `Review the OpenSpec artifacts for ${session.change}.`;
+  if (!session.change || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(session.change)) return fallback;
+  const path = join(session.worktreePath, "openspec", "changes", session.change, "pull-request.md");
+  try {
+    for (const directory of [session.worktreePath, join(session.worktreePath, "openspec"), join(session.worktreePath, "openspec", "changes"), join(session.worktreePath, "openspec", "changes", session.change)]) {
+      if (!(await lstat(directory)).isDirectory()) return fallback;
+    }
+    if (!(await lstat(path)).isFile()) return fallback;
+    const description = (await readFile(path, "utf8")).trim();
+    return description || fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export class SessionError extends Error {
   constructor(
@@ -1073,7 +1089,7 @@ export class SessionManager {
           head: branch,
           base: defBranch,
           title,
-          body: "",
+          body: await shipDescription(session),
         });
         if (prRes.ok) {
           pullRequestUrl = prRes.url;

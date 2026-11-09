@@ -2,7 +2,7 @@
 import { launchCommand, launchWithoutPrompt, resolveModel, resumeLaunch, withPermissionArgs } from "../src/server/sessions/agents.ts";
 import { defaultConfig } from "../src/server/config.ts";
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionActivity } from "../src/server/activity/events.ts";
 import type { SessionManager } from "../src/server/sessions/manager.ts";
@@ -147,6 +147,7 @@ test("Ship commits uncommitted changes, pushes branch to origin, and opens PR vi
 
   const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
   await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified check\n");
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/pull-request.md`, "  ## Summary\n\nPrepared body.  \n");
   expect(session.branch).toBe(`feat/${IMPLEMENT}`);
 
   // Add an uncommitted file to the worktree
@@ -174,9 +175,46 @@ test("Ship commits uncommitted changes, pushes branch to origin, and opens PR vi
   expect(prCreate?.argv).toContain("acme/demo-ops");
   expect(prCreate?.argv).toContain("--head");
   expect(prCreate?.argv).toContain(`feat/${IMPLEMENT}`);
+  expect(prCreate?.argv.slice(prCreate.argv.indexOf("--body") + 1)[0]).toBe("## Summary\n\nPrepared body.");
 
   // Verify activity event was reported
   expect(events.some((e) => e.kind === "session-shipped")).toBe(true);
+});
+
+test("Ship uses a non-empty fallback for blank and unsafe description artifacts", async () => {
+  for (const mode of ["blank", "symlink", "directory"] as const) {
+    const h = await harness();
+    await setupFakeRemote(h.repoPath);
+    const manager = h.newManager();
+    managers.push(manager);
+    const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+    await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified check\n");
+    const description = join(session.worktreePath, `openspec/changes/${IMPLEMENT}/pull-request.md`);
+    if (mode === "blank") await writeFile(description, " \n\t");
+    if (mode === "symlink") await symlink("../../../../outside.md", description);
+    if (mode === "directory") await mkdir(description);
+    await putFile(session.worktreePath, "src/keys.ts", "export const v = 3;\n");
+    const result = await manager.ship(session.id);
+    expect(result.shipped).toBe(true);
+    const create = (await gh.calls()).find((call) => call.argv.includes("create"));
+    const bodyIndex = create?.argv.indexOf("--body") ?? -1;
+    expect(bodyIndex).toBeGreaterThanOrEqual(0);
+    expect(create?.argv[bodyIndex + 1]).toBe(`Review the OpenSpec artifacts for ${IMPLEMENT}.`);
+  }
+});
+
+test("Ship uses the fallback when the description artifact is absent", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  const manager = h.newManager();
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified check\n");
+  await putFile(session.worktreePath, "src/keys.ts", "export const v = 4;\n");
+  await manager.ship(session.id);
+  const create = (await gh.calls()).find((call) => call.argv.includes("create"));
+  const bodyIndex = create?.argv.indexOf("--body") ?? -1;
+  expect(create?.argv[bodyIndex + 1]).toBe(`Review the OpenSpec artifacts for ${IMPLEMENT}.`);
 });
 
 test("Ship on clean unpushed worktree creates no extra commit and pushes existing commit", async () => {
