@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-11-09
+spec-control:
+  branch: docs/ship-button-has-no-description
