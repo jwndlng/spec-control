@@ -63,8 +63,8 @@ export class SessionError extends Error {
  * So does a Draft session that ships its proposal (`proposal`), so that Implement, which reuses a worktree by name, never
  * lands on the proposal's branch.
  */
-export function worktreeName(action: SessionAction, change: string, { proposal = false }: { proposal?: boolean } = {}): string {
-  if (action === "archive") return `archive-${change}`;
+export function worktreeName(action: SessionAction, change: string, { proposal = false, removeDuplicate = false }: { proposal?: boolean; removeDuplicate?: boolean } = {}): string {
+  if (action === "archive") return removeDuplicate ? `remove-duplicate-${change}` : `archive-${change}`;
   return action === "draft" && proposal ? `docs-${change}` : change;
 }
 
@@ -361,9 +361,15 @@ export class SessionManager {
     }
 
     const layout = frameworkById(scanned.framework)?.layout;
+    const originalArchiveBranch = sessionBranch("archive", change);
+    const duplicateBranch = duplicate?.archiveBranch || duplicate?.removeDuplicateBranch ? `chore/remove-duplicate-${change}` : originalArchiveBranch;
+    const duplicateBranchExists = duplicateBranch !== originalArchiveBranch && (
+      await hasLocalBranch(repo.path, duplicateBranch) ||
+      (await listCheckouts(repo.path)).some((w) => w.branch === duplicateBranch)
+    );
     if (duplicate) {
       if (inPlace || !layout) throw new SessionError(409, "a duplicate after archive is removed on a branch of its own");
-      await this.refuseOldArchiveBranch(repo.path, change);
+      if (duplicateBranchExists || duplicate.removeDuplicateBranch) throw new SessionError(409, `the remove-duplicate branch ${duplicateBranch} already exists; Clean up leftovers… removes it once it is merged`);
     }
 
     const agent = agentFor(config, repo, change);
@@ -420,8 +426,8 @@ export class SessionManager {
       agentId: agent?.id ?? "server",
       agentName: agent?.name ?? "Server",
       state: "running",
-      worktreePath: inPlace ? repo.path : join(worktreesDir(), repo.id, worktreeName(action, change, { proposal })),
-      ...(inPlace ? { inPlace: true } : { branch: sessionBranch(action, change, { proposal }) }),
+      worktreePath: inPlace ? repo.path : join(worktreesDir(), repo.id, worktreeName(action, change, { proposal, removeDuplicate: duplicateBranch !== originalArchiveBranch })),
+      ...(inPlace ? { inPlace: true } : { branch: duplicate ? duplicateBranch : sessionBranch(action, change, { proposal }) }),
       createdAt: now,
       updatedAt: now,
       resumable: agent?.resumeCommand !== undefined,
@@ -568,18 +574,6 @@ export class SessionManager {
     if (!endProposal) throw new SessionError(409, `the proposal of ${change} is being drafted on ${proposal.branch} in a running session; end it first, or start "${action}" from its console`);
     await this.close(proposal.id);
     if (this.get(proposal.id).state === "running") throw new SessionError(409, `the proposal session on ${proposal.branch} did not end; nothing was started`);
-  }
-
-  /**
-   * A remove-duplicate session needs a fresh `chore/archive-<name>` from the default branch: an existing one, usually the
-   * merged branch of the original archive, would be checked out as it is (remove-duplicate-archived-changes D3).
-   */
-  private async refuseOldArchiveBranch(repoPath: string, change: string): Promise<void> {
-    const branch = sessionBranch("archive", change);
-    const onIt = (await listCheckouts(repoPath)).some((w) => w.branch === branch);
-    if (onIt || (await hasLocalBranch(repoPath, branch))) {
-      throw new SessionError(409, `the branch ${branch} still exists; Clean up leftovers… removes it once it is merged`);
-    }
   }
 
   /**

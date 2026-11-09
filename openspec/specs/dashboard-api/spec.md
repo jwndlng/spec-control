@@ -1518,8 +1518,10 @@ sessions being enabled.
 The session start request SHALL accept `removeDuplicate: true` together with `action: "archive"`, a tracked repository
 and a validated change name, and nothing else describing the duplicate. The server SHALL refuse it with a 4xx status and
 the reason when the action is not `archive`, when its own last scan reports no duplicate after archive for that change,
-when a local branch `chore/archive-<name>` exists or a worktree is on it, or when a session for the change is running;
-otherwise it SHALL either remove the identical duplicate and ship the archive branch deterministically when
+when the separate `chore/remove-duplicate-<name>` branch exists or a worktree is on it, or when a session for the change
+is running. If the original `chore/archive-<name>` branch exists or is checked out, the server SHALL use the separate
+remove-duplicate branch and worktree while preserving the original. Otherwise it SHALL use `chore/archive-<name>`. It
+SHALL either remove the identical duplicate and ship the branch deterministically when
 `differingCount === 0` or start the session with the archive directory and differing paths of that scan when
 `differingCount > 0`. The request passes the same-origin guard of every mutating route.
 
