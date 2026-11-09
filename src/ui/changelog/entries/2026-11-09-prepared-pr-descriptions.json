@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-09-prepared-pr-descriptions",
+  "date": "2026-11-09",
+  "title": "Ship prepared pull request descriptions",
+  "summary": "Draft and Implement keep a reviewer-facing pull request description with the change. Ship uses it when opening a new pull request; find it at `openspec/changes/<change>/pull-request.md`."
+}
