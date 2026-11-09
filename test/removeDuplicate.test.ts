@@ -116,20 +116,19 @@ test("with docs auto-merge on, the session carries the auto-merge record", async
   expect((h.manager.get(s.id) as ChangeSession).autoMergeAskedAt).toBeDefined();
 });
 
-test("Remove duplicate is refused for another action, without a duplicate, with an old archive branch or a running session", async () => {
+test("Remove duplicate is refused for another action, without a duplicate, with an occupied cleanup branch or a running session", async () => {
   const h = track(await harness());
   // No duplicate in the last scan.
   await expect(h.manager.open({ repoId: h.repoId, change: CHANGE, action: "archive", removeDuplicate: true })).rejects.toMatchObject({ status: 409 });
   await withDuplicate(h);
   await expect(h.manager.open({ repoId: h.repoId, change: CHANGE, action: "implement", removeDuplicate: true })).rejects.toMatchObject({ status: 400 });
   await expect(h.manager.open({ repoId: h.repoId, change: CHANGE, action: "archive", removeDuplicate: true, carryOver: true })).rejects.toMatchObject({ status: 400 });
-  // The original archive's branch still exists.
+  // Keep the original archive branch; the duplicate cleanup gets a separate branch.
   git(h.repoPath, "branch", "-q", `chore/archive-${CHANGE}`);
-  await expect(h.manager.open({ repoId: h.repoId, change: CHANGE, action: "archive", removeDuplicate: true })).rejects.toMatchObject({ status: 409, message: expect.stringContaining("Clean up leftovers") });
-  expect(h.manager.list()).toEqual([]);
-  git(h.repoPath, "branch", "-q", "-D", `chore/archive-${CHANGE}`);
-
+  h.snapshot.repos[0] = await scanRepo(h.config.repos[0]);
   const s = await h.manager.open({ repoId: h.repoId, change: CHANGE, action: "archive", removeDuplicate: true });
+  expect(s).toMatchObject({ branch: `chore/remove-duplicate-${CHANGE}` });
+  expect(git(h.repoPath, "branch", "--list", `chore/archive-${CHANGE}`).trim()).toBe(`chore/archive-${CHANGE}`);
   await expect(h.manager.open({ repoId: h.repoId, change: CHANGE, action: "archive", removeDuplicate: true })).rejects.toMatchObject({ status: 409 });
   expect(h.manager.list().map((x) => x.id)).toEqual([s.id]);
 });

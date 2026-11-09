@@ -314,9 +314,11 @@ probably uncommitted. When the main checkout has not pulled the default branch's
 Pull brings it.
 
 The change detail SHALL show a notice for a duplicate with the archive directory, the differing paths and one action.
-**Remove duplicate** SHALL be offered where agent sessions are enabled for the repository, no session for the change is
-running, and no local branch `chore/archive-<name>` exists and no worktree is on it; otherwise the notice SHALL say why it
-is not offered — for an existing archive branch, that **Clean up leftovers…** removes it when it is merged.
+**Remove duplicate** SHALL be offered where agent sessions are enabled for the repository and no session for the change is
+running. When the original local branch `chore/archive-<name>` exists or a worktree is on it, removal SHALL use a separate
+branch `chore/remove-duplicate-<name>` and its own worktree, preserving the original branch and worktree. If that
+remove-duplicate branch already exists or is checked out, the server SHALL refuse to start and the notice SHALL say that
+**Clean up leftovers…** can remove it once merged.
 - When `differingCount === 0` (the active copy on the default branch is byte-for-byte identical to the archived copy),
   **Remove duplicate** SHALL create the worktree on `chore/archive-<name>` from the default branch, delete
   `openspec/changes/<name>/` (verifying with `lstat` that no segment is a symbolic link), record
@@ -334,7 +336,7 @@ committed to the default branch.
 
 The server SHALL run Remove duplicate only when its own last scan reports a duplicate for that change and SHALL take the
 archive directory and the differing paths from that scan, never from the request; a request for a change without one, or
-while the archive branch exists, is refused with the reason and starts nothing. The main checkout's working tree and
+while the separate remove-duplicate branch exists or is checked out, is refused with the reason and starts nothing. The main checkout's working tree and
 index MUST NOT be modified.
 
 #### Scenario: The card stays archived
@@ -355,8 +357,12 @@ index MUST NOT be modified.
 
 #### Scenario: An old archive branch still exists
 - **WHEN** the local branch `chore/archive-rotate-keys` from the original archive still exists
-- **THEN** Remove duplicate is not offered, the notice says Clean up leftovers… removes that branch once merged, and a
-  request for it is refused
+- **THEN** Remove duplicate starts on `chore/remove-duplicate-rotate-keys` in its own worktree, leaving the original
+  branch and any worktree on it untouched
+
+#### Scenario: The remove-duplicate branch already exists
+- **WHEN** `chore/remove-duplicate-rotate-keys` already exists or is checked out
+- **THEN** the server refuses to start a session and the notice says Clean up leftovers… can remove that branch once merged
 
 #### Scenario: Request without a duplicate
 - **WHEN** a request to remove the duplicate names a change whose last scan reports none

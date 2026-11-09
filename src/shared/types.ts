@@ -156,8 +156,10 @@ export interface DuplicateAfterArchive {
   differingCount: number;
   /** Whether the main checkout holds that archive already; when not, Pull brings the state the report describes. */
   pulled: boolean;
-  /** Set when a local branch `chore/archive-<name>` exists or a worktree is on it: Remove duplicate is withheld then. */
+  /** Set when the original local archive branch exists; Remove duplicate then uses a separate branch. */
   archiveBranch?: string;
+  /** Set when that separate cleanup branch already exists or is checked out. */
+  removeDuplicateBranch?: string;
 }
 
 /** How many differing paths a duplicate report lists. */
