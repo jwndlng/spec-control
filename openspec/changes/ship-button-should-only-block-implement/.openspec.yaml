@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-11-10
+spec-control:
+  branch: docs/ship-button-should-only-block-implement
