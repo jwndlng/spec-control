@@ -5,16 +5,16 @@ import { FINISH_TASKS_PROMPT, FINISH_CHECKS_PROMPT, CONVENTIONAL_COMMITS_SHIP_SE
 // fans output out to attached terminals and takes their input. It does not interpret what the agent prints.
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
-import { mkdir, readdir, readFile, realpath, rename, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { blockedReason } from "../../shared/dependencies.ts";
 import { availableActions, changeSessions, pastDraftingReason, isChangeless, isConsole, isIntegration, isProjectConsole, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, SESSION_ACTIONS, SHIPPABLE_WORK, type AgentAvailability, type AgentProfile, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type MergeResult, type PrTitleConvention, type ProjectConsoleLike, type ProjectConsoleSession, type ChangeSnapshot, type RepoPullRequests, type RepoSnapshot, type Session, type SessionAction, type SessionWorktree, type Snapshot, type WorkStatus, type MergeAsked, type PromptResult, type PullRequest, type RepoConfig, type ShipResult, type AutoMergePromptResult, type StartResult, type SessionCleanup, type StaleCleanupResult } from "../../shared/types.ts";
 import { isEndedProposalSession, isProposalSession, proposalBranch, receivingSession, runningProposalSession, sessionBranch } from "../../shared/sessionBranch.ts";
 import { isBranchName, isCleaningUp } from "../cleanup.ts";
 import { isDismissing } from "../dismissChange.ts";
-import { canonicalPath, worktreesDir } from "../paths.ts";
+import { canonicalPath, dashboardHome, worktreesDir } from "../paths.ts";
 import { CHANGE_NAME, LocalRepoSource } from "../source.ts";
-import { resolveModel, agentEnv, agentFor, availability, carryOverPrompt, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, removeDuplicatePrompt, resolveConflictsPrompt, resumeLaunch, shipPrompt, typedForm, type Launch } from "./agents.ts";
+import { resolveModel, agentEnv, agentFor, availability, carryOverPrompt, consoleAgentOf, defaultAgentOf, presetAvailability, integratePrompt, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, removeDuplicatePrompt, resolveConflictsPrompt, resumeLaunch, shipPrompt, typedForm, withPermissionArgs, type Launch } from "./agents.ts";
 import { consoleFolderProblem, prepareConsoleFolder } from "./consoleFolder.ts";
 import { editorArgv, EditorError, editorCommand, editorFound, openEditor } from "./editor.ts";
 import type { SessionActivity } from "../activity/events.ts";
@@ -36,6 +36,8 @@ import { abortWorktreeCherryPick, cherryPickWorktreeCommit, commitWorktreeAll, p
 import { createPullRequest, githubRepoFromRemote, mergePullRequest } from "../gh.ts";
 import { openSpec } from "../frameworks/openspec/index.ts";
 import { DEFAULT_SCHEMA } from "../frameworks/openspec/adapter.ts";
+import { resolvePermissionPolicy } from "./permissionResolver.ts";
+import { permissionAdapters } from "./permissionAdapters.ts";
 
 export const SCROLLBACK_BYTES = 1024 * 1024;
 const TYPE_PROMPT_DELAY_MS = 1500;
@@ -96,8 +98,12 @@ function typable(prompt: string): string {
 }
 
 /** How a prompt reaches the agent — as an argument, or typed after start-up through `resume` or a command without `{prompt}`. */
-function checkedLaunch(agent: AgentProfile, prompt: string, resume?: string[], model?: string): Launch {
+function checkedLaunch(agent: AgentProfile, prompt: string, resume?: string[], model?: string, policy?: import("../../shared/types.ts").AgentPermissionPolicy, extraPermissionArgs: string[] = []): Launch {
   const launch = resume ? { argv: resume, typed: prompt } : launchCommand(agent, prompt, model);
+  if (policy) {
+    const adapterArgs = permissionAdapters.resolve(agent.id).preview(agent, policy).args;
+    launch.argv = withPermissionArgs(agent, launch.argv, [...adapterArgs, ...extraPermissionArgs]);
+  }
   return launch.typed === undefined ? launch : { ...launch, typed: typable(launch.typed) };
 }
 
@@ -209,6 +215,18 @@ export class SessionManager {
   private ending = new Map<string, Promise<void>>();
   private readonly store: SessionStore;
   private worktreeCache?: { at: number; list: Promise<SessionWorktree[]> };
+
+  private async permissionLaunch(session: ChangeSession, agent: AgentProfile, prompt: string, resume?: string[], model?: string, rawArgv?: string[]): Promise<Launch> {
+    if (!Bun.which(agent.command[0])) throw new SessionError(503, `${agent.name} was not found (${agent.command[0]}); install it or change its command in Settings`);
+    const config = this.deps.getConfig();
+    const policy = resolvePermissionPolicy(config, session.repoId, session.change);
+    const profile = session.permissionProfile ?? policy.profile;
+    session.permissionProfile ??= profile;
+    const resolvedPolicy = { ...policy, profile };
+    const adapter = permissionAdapters.resolve(agent.id).preview(agent, resolvedPolicy);
+    if (rawArgv || (resume && prompt === "")) return { argv: withPermissionArgs(agent, rawArgv ?? resume!, adapter.args), ...(prompt ? { typed: typable(prompt) } : {}) };
+    return checkedLaunch(agent, prompt, resume, model, resolvedPolicy);
+  }
   /** Sessions being ended because their auto-merge pull request merged: their end is reported once, as that. */
   private autoEnding = new Set<string>();
   /** Sessions the automatic Merge is deciding about: taken before the first await, so two queries send once (D4). */
@@ -425,6 +443,7 @@ export class SessionManager {
       ...(followupPrompt ? { autoShipSuppressed: true } : {}),
       agentId: agent?.id ?? "server",
       agentName: agent?.name ?? "Server",
+      ...(agent ? { permissionProfile: resolvePermissionPolicy(config, repo.id, change).profile } : {}),
       state: "running",
       worktreePath: inPlace ? repo.path : join(worktreesDir(), repo.id, worktreeName(action, change, { proposal, removeDuplicate: duplicateBranch !== originalArchiveBranch })),
       ...(inPlace ? { inPlace: true } : { branch: duplicate ? duplicateBranch : sessionBranch(action, change, { proposal }) }),
@@ -553,8 +572,8 @@ export class SessionManager {
     // Final only now: refused before the session is registered; a worktree just made stays, as any without a record.
     const model = action === "implement" ? snapshot.implementModel ?? resolveModel(config, agent!, action) : resolveModel(config, agent!, action);
     const launch: Launch = action === "custom"
-      ? { argv: launchWithoutPrompt(agent!, model) }
-      : checkedLaunch(agent!, prompt!, undefined, model);
+      ? await this.permissionLaunch(session, agent!, "", undefined, model, launchWithoutPrompt(agent!, model))
+      : await this.permissionLaunch(session, agent!, prompt!, undefined, model);
     this.sessions.set(session.id, session);
     await this.store.saveMeta(session);
     this.start(session, launch.argv, agentEnv(agent!, process.env), launch.typed);
@@ -894,7 +913,7 @@ export class SessionManager {
         return { ...session, submitted };
       }
       const model = resolveModel(this.deps.getConfig(), agent, session.action);
-      const launch = checkedLaunch(agent, prompt, resumeLaunch(agent, model), model);
+      const launch = await this.permissionLaunch(session, agent, prompt, resumeLaunch(agent, model), model);
       if (!Bun.which(launch.argv[0])) throw new SessionError(503, `${agent.name} was not found (${launch.argv[0]})`);
       await this.restart(session, repo.path, launch.argv, agentEnv(agent, process.env), launch.typed);
       return { ...session, submitted: true };
@@ -917,7 +936,7 @@ export class SessionManager {
       ({ submitted } = await this.submit(session.id, typable(FINISH_TASKS_PROMPT)));
     } else {
       const model = resolveModel(this.deps.getConfig(), agent, session.action);
-      const launch = checkedLaunch(agent, FINISH_TASKS_PROMPT, resumeLaunch(agent, model), model);
+      const launch = await this.permissionLaunch(session, agent, FINISH_TASKS_PROMPT, resumeLaunch(agent, model), model);
       if (!Bun.which(launch.argv[0])) throw new SessionError(503, `${agent.name} was not found (${launch.argv[0]})`);
       await this.restart(session, repo.path, launch.argv, agentEnv(agent, process.env), launch.typed);
       submitted = true;
@@ -1132,7 +1151,7 @@ export class SessionManager {
       return { ...session, submitted };
     }
     const model = resolveModel(this.deps.getConfig(), agent, session.action);
-    const launch = checkedLaunch(agent, prompt, resumeLaunch(agent, model), model);
+    const launch = await this.permissionLaunch(session, agent, prompt, resumeLaunch(agent, model), model);
     if (!Bun.which(launch.argv[0])) throw new SessionError(503, `${agent.name} was not found (${launch.argv[0]})`);
     await this.restart(session, repo.path, launch.argv, agentEnv(agent, process.env), launch.typed);
     this.report(session, { kind: "session-conflicts-resolve", submitted: true });
@@ -1227,7 +1246,6 @@ export class SessionManager {
     const config = this.deps.getConfig();
     const agent = agentFor(config, repo, change);
     if (!agent) throw new SessionError(503, "no agent is configured");
-    const launch = checkedLaunch(agent, resolveConflictsPrompt(agent, change, pr), undefined, resolveModel(config, agent));
     if (!Bun.which(agent.command[0])) throw new SessionError(503, `${agent.name} was not found (${agent.command[0]}); install it or change its command in Settings`);
 
     const now = new Date().toISOString();
@@ -1238,6 +1256,7 @@ export class SessionManager {
       action,
       agentId: agent.id,
       agentName: agent.name,
+      permissionProfile: resolvePermissionPolicy(config, repo.id, change).profile,
       state: "running",
       worktreePath: path,
       branch: head,
@@ -1261,6 +1280,7 @@ export class SessionManager {
       if (err instanceof SessionError) throw err;
       throw new SessionError(err instanceof NoCommitError || err instanceof UnknownBranchError || err instanceof WorktreeMismatchError ? 409 : 500, err instanceof Error ? err.message : String(err));
     }
+    const launch = await this.permissionLaunch(session, agent, resolveConflictsPrompt(agent, change, pr), undefined, resolveModel(config, agent));
     this.sessions.set(session.id, session);
     await this.store.saveMeta(session);
     this.start(session, launch.argv, agentEnv(agent, process.env), launch.typed);
@@ -1564,7 +1584,10 @@ export class SessionManager {
     const resume = resumeLaunch(agent, resolveModel(this.deps.getConfig(), agent, isChangeless(session) ? undefined : session.action));
     if (!resume) throw new SessionError(400, "this agent has no resume command configured");
     if (!Bun.which(resume[0])) throw new SessionError(503, `${agent.name} was not found (${resume[0]})`);
-    await this.restart(session, repoPath, resume, agentEnv(agent, process.env));
+    if (!isChangeless(session)) {
+      const launch = await this.permissionLaunch(session, agent, "", resume, resolveModel(this.deps.getConfig(), agent, session.action));
+      await this.restart(session, repoPath, launch.argv, agentEnv(agent, process.env), launch.typed);
+    } else await this.restart(session, repoPath, resume, agentEnv(agent, process.env));
     return session;
   }
 

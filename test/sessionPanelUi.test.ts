@@ -7,6 +7,8 @@ import { oneAtATime } from "../src/ui/sessionState.ts";
 
 const panel = readFileSync(join(import.meta.dir, "..", "src", "ui", "sessionPanel.tsx"), "utf8");
 const sessionsSource = readFileSync(join(import.meta.dir, "..", "src", "ui", "sessions.tsx"), "utf8");
+const detailSource = readFileSync(join(import.meta.dir, "..", "src", "ui", "changeDetail.tsx"), "utf8");
+const projectSettingsSource = readFileSync(join(import.meta.dir, "..", "src", "ui", "projectSettings.tsx"), "utf8");
 
 const controls = readFileSync(join(import.meta.dir, "..", "src", "ui", "sessions.tsx"), "utf8");
 
@@ -73,6 +75,19 @@ test("the agent picker in the console pane renders when multiple agents exist, a
   expect(panel).toContain("ui.config.agentSessions.agents.length > 1");
   expect(panel).toContain("setChangeAgent(repoId, change, agentId || null)");
   expect(panel).toContain("This session uses {session.agentName}; the next session starts {nextAgent.name}.");
+});
+
+test("the change console offers a permission profile override selector and calls the scoped API", () => {
+  expect(panel).toContain('aria-label="Change permission profile"');
+  expect(panel).toContain("api.setChangePermissionProfile(repoId, change");
+  expect(panel).toContain("repo.agentOverrides?.[change ?? \"\"]?.permissionProfile");
+});
+
+test("change detail and project settings expose inherited permission profile selectors", () => {
+  expect(detailSource).toContain('aria-label="Change permission profile"');
+  expect(detailSource).toContain("api.setChangePermissionProfile(repoId, changeName");
+  expect(projectSettingsSource).toContain("PermissionProfilePicker({ repo, config, tracking })");
+  expect(projectSettingsSource).toContain('aria-label={`Permission profile for ${repo.name}`}');
 });
 
 test("cards show the overriding profile's name with its tooltip and cards without an override show no agent name", () => {

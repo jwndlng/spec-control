@@ -37,6 +37,9 @@ import type { KeepAwake } from "./keepAwake.ts";
 import type { UpdateChecker } from "./updateCheck.ts";
 import { VERSION } from "./version.ts";
 import { canonicalPath, gitExecutable } from "./paths.ts";
+import { resolvePermissionPolicy } from "./sessions/permissionResolver.ts";
+import { permissionAdapters } from "./sessions/permissionAdapters.ts";
+import { PROTECTED_COMMANDS } from "./sessions/protectedCommands.ts";
 
 export interface AppState {
   config: Config;
@@ -267,14 +270,15 @@ async function postRepoName(state: AppState, req: Request, id: string): Promise<
  */
 async function postRepoAgent(state: AppState, req: Request, id: string): Promise<Response> {
   const body = await readJson(req);
-  const { enabled, agentId, autoMergeDocs } = body;
-  if (enabled === undefined && agentId === undefined && autoMergeDocs === undefined) return json({ error: "send enabled, agentId or autoMergeDocs" }, 400);
+  const { enabled, agentId, autoMergeDocs, permissionProfile } = body;
+  if (enabled === undefined && agentId === undefined && autoMergeDocs === undefined && permissionProfile === undefined) return json({ error: "send enabled, agentId, autoMergeDocs or permissionProfile" }, 400);
   if (enabled !== undefined && typeof enabled !== "boolean") return json({ error: "enabled must be true or false" }, 400);
   if (agentId !== undefined && agentId !== null && typeof agentId !== "string") return json({ error: "agentId must be an agent id or null" }, 400);
   if (autoMergeDocs !== undefined && typeof autoMergeDocs !== "boolean") return json({ error: "autoMergeDocs must be true or false" }, 400);
+  if (permissionProfile !== undefined && permissionProfile !== null && (typeof permissionProfile !== "string" || !["minimum", "less-friction", "full-automation"].includes(permissionProfile))) return json({ error: "permissionProfile must be a valid profile or null" }, 400);
   return updateRepo(state, id, (repo) => {
     if (typeof agentId === "string" && !state.config.agentSessions.agents.some((a) => a.id === agentId)) throw new TrackingError(400, `unknown agent ${agentId}`);
-    return withRepoAgent(repo, { enabled, agentId, autoMergeDocs });
+    return withRepoAgent(repo, { enabled, agentId, autoMergeDocs, permissionProfile: permissionProfile as import("../shared/types.ts").AgentPermissionProfileId | null | undefined });
   });
 }
 
@@ -306,6 +310,44 @@ async function postChangeAgent(state: AppState, req: Request, id: string, change
     repos[index] = { ...repo, agent };
     return { ...current, repos };
   });
+  return configJson(saved);
+}
+
+async function getAgentPermissions(state: AppState, id: string, url: URL): Promise<Response> {
+  const repo = state.config.repos.find((item) => item.id === id);
+  if (!repo) return json({ error: "repository not found" }, 404);
+  if (!state.config.agentSessions.enabled || !repoAgentEnabled(repo)) return json({ error: "agent sessions are disabled for this repository" }, 403);
+  const change = url.searchParams.get("change") ?? undefined;
+  if (change && !state.scanner.snapshot.repos.find((item) => item.id === id)?.changes.some((item) => item.name === change && !item.archived)) return json({ error: "change not found" }, 404);
+  const policy = resolvePermissionPolicy(state.config, id, change);
+  const agents = state.config.agentSessions.agents;
+  const requestedAgent = url.searchParams.get("agent");
+  const selected = requestedAgent ? agents.filter((agent) => agent.id === requestedAgent) : agents;
+  if (requestedAgent && !selected.length) return json({ error: "agent not found" }, 404);
+  const capabilityMatrix = [
+    { agentId: "claude", toolFiltering: "Command pattern allow/deny", workspaceIsolation: "Worktree directory", remoteGit: "Command allowlist", unattended: "Permission mode" },
+    { agentId: "codex", toolFiltering: "Workspace-level sandbox", workspaceIsolation: "Workspace sandbox", remoteGit: "Approval gated", unattended: "Approval mode" },
+    { agentId: "agy", toolFiltering: "Session settings", workspaceIsolation: "Worktree directory", remoteGit: "Session tool permissions", unattended: "Mode setting" },
+  ];
+  return json({ effectiveProfile: policy.profile, effectivePolicy: policy, agentPreview: Object.fromEntries(selected.map((agent) => [agent.id, permissionAdapters.resolve(agent.id).preview(agent, policy)])), protectedCommands: PROTECTED_COMMANDS, capabilityMatrix, limitations: [...new Set(selected.flatMap((agent) => permissionAdapters.resolve(agent.id).preview(agent, policy).limitations))], securityNotice: "Running tests, linters, and build scripts executes repository code." });
+}
+
+async function postChangePermissionProfile(state: AppState, req: Request, id: string, change: string): Promise<Response> {
+  if (!CHANGE_NAME.test(change)) return json({ error: "invalid change name" }, 400);
+  const repo = state.config.repos.find((item) => item.id === id);
+  if (!repo) return json({ error: "repository not found" }, 404);
+  if (!state.config.agentSessions.enabled || !repoAgentEnabled(repo)) return json({ error: "agent sessions are disabled for this repository" }, 403);
+  if (!state.scanner.snapshot.repos.find((item) => item.id === id)?.changes.some((item) => item.name === change && !item.archived)) return json({ error: "active change not found" }, 404);
+  const body = await readJson(req);
+  const value = body.permissionProfile;
+  if (!Object.hasOwn(body, "permissionProfile") || (value !== null && (typeof value !== "string" || !["minimum", "less-friction", "full-automation"].includes(value)))) return json({ error: "permissionProfile must be a valid profile or null" }, 400);
+  const { saved } = await updateConfig(state, (current) => ({ ...current, repos: current.repos.map((item) => {
+    if (item.id !== id) return item;
+    const overrides = { ...(item.agentOverrides ?? {}) };
+    if (value === null) { if (overrides[change]) { const { permissionProfile: _profile, ...rest } = overrides[change]; if (Object.keys(rest).length) overrides[change] = rest; else delete overrides[change]; } }
+    else overrides[change] = { ...overrides[change], permissionProfile: value as import("../shared/types.ts").AgentPermissionProfileId };
+    return { ...item, ...(Object.keys(overrides).length ? { agentOverrides: overrides } : { agentOverrides: undefined }) };
+  }) }));
   return configJson(saved);
 }
 
@@ -1506,6 +1548,8 @@ function routeRequest({ state, indexHtml }: AppOptions): (req: Request, url: URL
       if (req.method === "POST" && pathname === "/api/github/clones/cancel") return postGithubCloneCancel(state, req);
       if (req.method === "POST" && pathname === "/api/github/clones/dismiss") return postGithubCloneDismiss(state, req);
       if (req.method === "GET" && pathname === "/api/config") return configJson(state.config);
+      const permissionMatch = /^\/api\/repos\/([^/]+)\/agent-permissions$/.exec(pathname);
+      if (req.method === "GET" && permissionMatch) return getAgentPermissions(state, decodeURIComponent(permissionMatch[1]), url);
       if (req.method === "PUT" && pathname === "/api/config") return putConfig(state, req);
       if (req.method === "POST" && pathname === "/api/discover") return postDiscover(state, req);
       if (req.method === "POST" && pathname === "/api/repos/track") return tracking(() => postTrackRepo(state, req));
@@ -1514,6 +1558,8 @@ function routeRequest({ state, indexHtml }: AppOptions): (req: Request, url: URL
       if (req.method === "POST" && enabledMatch) return tracking(() => postRepoEnabled(state, req, decodeURIComponent(enabledMatch[1])));
       const changeAgentMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/agent$/.exec(pathname);
       if (req.method === "POST" && changeAgentMatch) return tracking(() => postChangeAgent(state, req, decodeURIComponent(changeAgentMatch[1]), decodeURIComponent(changeAgentMatch[2])));
+      const changePermissionMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/permission-profile$/.exec(pathname);
+      if (req.method === "POST" && changePermissionMatch) return tracking(() => postChangePermissionProfile(state, req, decodeURIComponent(changePermissionMatch[1]), decodeURIComponent(changePermissionMatch[2])));
       if (req.method === "POST" && pathname === "/api/labels/color") return tracking(() => postLabelColor(state, req));
       if (req.method === "POST" && pathname === "/api/agent-sessions/fast-forward-warning") return tracking(() => postFastForwardWarning(state, req));
       const repoSetting = /^\/api\/repos\/([^/]+)\/(name|agent|labels|pr-title-convention|auto-fetch|forget)$/.exec(pathname);

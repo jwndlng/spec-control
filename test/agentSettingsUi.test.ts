@@ -273,6 +273,19 @@ test("the Console group offers the agent picker after the folder and says which 
   expect(body).not.toContain("opens your default agent");
 });
 
+test("agent permission controls show opt-ins, capability differences, protected commands and a live CLI preview", async () => {
+  const source = await Bun.file(new URL("../src/ui/agentSettings.tsx", import.meta.url)).text();
+  const body = source.slice(source.indexOf("export function AgentSettings"));
+  expect(body).toContain("Default permission profile");
+  expect(body).toContain('option value="less-friction">Less friction (recommended)</option>');
+  expect(body).toContain("Autonomous pull request merge");
+  expect(body).toContain("Autonomous worktree and branch cleanup");
+  expect(body).toContain("running tests, linters, and build scripts executes code from the repository");
+  expect(body).toContain("OpenAI Codex</th><td>Workspace sandbox");
+  expect(body).toContain("git push --force");
+  expect(body).toContain("CLI argument preview:");
+});
+
 const keepAwake = (patch: Partial<KeepAwakeStatus> = {}): KeepAwakeStatus => ({ available: true, enabled: true, active: false, sessions: 0, ...patch });
 
 test("the keep-awake hint says what the server is doing right now, and nothing without a status", () => {

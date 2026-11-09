@@ -375,6 +375,8 @@ test("the overview's per-project settings change the in-memory config at once, w
   await expect(api.renameRepo(first.id, " ")).rejects.toMatchObject({ status: 400 });
 
   expect((await api.setRepoAgent(first.id, { enabled: false })).repos[0].agent).toEqual({ enabled: false });
+  expect((await api.setRepoAgent(first.id, { permissionProfile: "less-friction" })).repos[0].agent?.permissionProfile).toBe("less-friction");
+  expect((await api.setRepoAgent(first.id, { permissionProfile: null })).repos[0].agent?.permissionProfile).toBeUndefined();
   await expect(api.setRepoAgent(first.id, { agentId: "nope" })).rejects.toMatchObject({ status: 400 });
   await expect(api.setRepoAgent(first.id, {})).rejects.toMatchObject({ status: 400 });
 
@@ -410,6 +412,18 @@ test("the overview's per-project settings change the in-memory config at once, w
 
   // What a reload does: a fresh instance has the original sample again.
   expect((await demo().api.config()).repos[0]).toEqual(first);
+});
+
+test("change permission profile overrides work in the demo and can be cleared", async () => {
+  const { api } = demo();
+  const config = await api.config();
+  const repo = config.repos.find((item) => item.enabled)!;
+  const change = (await api.state()).repos.find((item) => item.id === repo.id)?.changes.find((item) => !item.archived);
+  expect(change).toBeDefined();
+  const set = await api.setChangePermissionProfile(repo.id, change!.name, "less-friction");
+  expect(set.repos.find((item) => item.id === repo.id)?.agentOverrides?.[change!.name]?.permissionProfile).toBe("less-friction");
+  const cleared = await api.setChangePermissionProfile(repo.id, change!.name, null);
+  expect(cleared.repos.find((item) => item.id === repo.id)?.agentOverrides).toBeUndefined();
 });
 
 test("the demo's activity carries metrics in the visitor's time zone: several projects and busy days", async () => {

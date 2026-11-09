@@ -1,6 +1,6 @@
 import type { ActivityQuery } from "../shared/activity.ts";
 import type { RepoAgentPatch } from "../shared/repoSettings.ts";
-import type { EditorAvailability, EditorStarted, GithubClone, GithubClonesResponse, GithubRepoList, KeepAwakeStatus } from "../shared/types.ts";
+import type { AgentPermissionProfileId, EditorAvailability, EditorStarted, GithubClone, GithubClonesResponse, GithubRepoList, KeepAwakeStatus } from "../shared/types.ts";
 import type { ActivityPage, AutoMergePromptResult, BranchDeletePreview, BranchDeleteRequest, BranchDeleteResult, ConsoleSession, ProjectConsoleLike, CleanupPreview, CleanupResult, CleanupSelection, ChangeIssueRef, CreateChangeResponse, DismissPreview, DismissResult, EnvironmentReport, EnvironmentView, FolderPickResult, PromptResult, PullRequestsResponse, PullResolve, PullResult, RepoIssues, SessionCleanup, SetupState, ShipRequest, ShipResult, StaleCleanupPreview, StaleCleanupRequest, StaleCleanupResult, StartResult, UpdateStatus, WorkStatus } from "../shared/types.ts";
 import type { AgentAvailability, AutoFetchSeconds, ArtifactFileContent, ChangeArtifacts, Config, CreateProjectResponse, DiscoverResult, IntegrationSession, PrTitleConvention, RepoConfig, ScanTriggerResult, Session, SessionAction, SessionWorktree, SharedConfig, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Snapshot } from "../shared/types.ts";
 import { socketOrigin } from "./url.ts";
@@ -104,6 +104,7 @@ export interface Api {
   /** A project's agent-session toggle and agent picker, saved at once; `agentId: null` means the default agent. */
   setRepoAgent(repoId: string, patch: RepoAgentPatch): Promise<Config>;
   setChangeAgent(repoId: string, change: string, agentId: string | null): Promise<Config>;
+  setChangePermissionProfile(repoId: string, change: string, permissionProfile: AgentPermissionProfileId | null): Promise<Config>;
   /** A project's labels dialog, saved at once: either list replaced, an empty one removed. */
   setRepoLabels(repoId: string, patch: Pick<RepoConfig, "labels" | "hiddenLabels">): Promise<Config>;
   /** A project's PR titles picker, saved at once; `null` means no convention. */
@@ -334,6 +335,7 @@ export const httpApi: Api = {
   renameRepo: (repoId, name) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/name`, { method: "POST", body: JSON.stringify({ name }) }),
   setRepoAgent: (repoId, patch) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/agent`, { method: "POST", body: JSON.stringify(patch) }),
   setChangeAgent: (repoId, change, agentId) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/agent`, { method: "POST", body: JSON.stringify({ agentId }) }),
+  setChangePermissionProfile: (repoId, change, permissionProfile) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/permission-profile`, { method: "POST", body: JSON.stringify({ permissionProfile }) }),
   // An absent list is sent as an empty one: the route removes the key, which is what "no labels left" means.
   setRepoLabels: (repoId, patch) => callConfig(`/api/repos/${encodeURIComponent(repoId)}/labels`, { method: "POST", body: JSON.stringify(labelLists(patch)) }),
   setRepoPrTitleConvention: (repoId, convention) =>
@@ -454,6 +456,7 @@ export const api: Api = {
   renameRepo: (...args) => current.renameRepo(...args),
   setRepoAgent: (...args) => current.setRepoAgent(...args),
   setChangeAgent: (...args) => current.setChangeAgent(...args),
+  setChangePermissionProfile: (...args) => current.setChangePermissionProfile(...args),
   setRepoLabels: (...args) => current.setRepoLabels(...args),
   setRepoPrTitleConvention: (...args) => current.setRepoPrTitleConvention(...args),
   setRepoAutoFetch: (...args) => current.setRepoAutoFetch(...args),

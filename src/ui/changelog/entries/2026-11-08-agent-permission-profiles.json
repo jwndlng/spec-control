@@ -1,0 +1,7 @@
+{
+  "id": "2026-11-08-agent-permission-profiles",
+  "date": "2026-11-08",
+  "title": "Choose agent permission profiles",
+  "summary": "Set a default permission profile for agent sessions in Settings → Agent sessions. Review each agent's capability differences and CLI preview, and see which commands always require your confirmation.",
+  "order": 1
+}

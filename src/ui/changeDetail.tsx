@@ -3,7 +3,7 @@
 // dismissing the change, and only after the user confirmed it in its own dialog.
 import type { ComponentChildren, RefObject } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, DismissPreview, DismissResult, RepoSnapshot, Snapshot, TaskProgress } from "../shared/types.ts";
+import type { AgentPermissionProfileId, ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, DismissPreview, DismissResult, RepoSnapshot, Snapshot, TaskProgress } from "../shared/types.ts";
 import { ApiError, api } from "./api.ts";
 import { CopyButton, CopyRefButton, Meter } from "./kanban.tsx";
 import { type LinkResolver, renderMarkdown } from "./markdown.tsx";
@@ -602,6 +602,8 @@ export function ChangeDetail({
   // Cached only: the board this view opens over already refreshed a stale cache when it opened.
   const pullRequests = usePullRequests();
   const [dismissing, setDismissing] = useState(false);
+  const [savingPermission, setSavingPermission] = useState(false);
+  const [permissionError, setPermissionError] = useState<string>();
   const [query, setQueryState] = useState<DetailQuery>(() => parseDetailQuery(currentQuery()));
   const [listing, setListing] = useState<ChangeArtifacts | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -617,6 +619,15 @@ export function ChangeDetail({
   const repo = snapshot?.repos.find((r) => r.id === repoId);
   const change = repo?.changes.find((c) => c.name === changeName);
   const known = change !== undefined;
+  const repoConfig = ui.config?.repos.find((r) => r.id === repoId);
+  const savePermission = async (value: string) => {
+    if (savingPermission) return;
+    setSavingPermission(true);
+    setPermissionError(undefined);
+    try { ui.saveConfig(await api.setChangePermissionProfile(repoId, changeName, value ? value as AgentPermissionProfileId : null)); }
+    catch (err) { setPermissionError(err instanceof Error ? err.message : String(err)); }
+    finally { setSavingPermission(false); }
+  };
 
   // The console's own inputs. A worktree outlives its change, so a change the snapshot no longer carries can still
   // have one — that is what keeps an interrupted archive session reachable once its change is gone from the board.
@@ -755,6 +766,10 @@ export function ChangeDetail({
         onDismiss={onDismissed ? () => setDismissing(true) : undefined}
         pullRequest={detailPullRequest(change, pullRequests.data)}
       />
+      {!change.archived && repoConfig && ui.config?.agentSessions.enabled && <div class="detail-permission-picker"><label>Permission profile for this change <select aria-label="Change permission profile" value={repoConfig.agentOverrides?.[changeName]?.permissionProfile ?? ""} disabled={savingPermission} onChange={(event) => void savePermission(event.currentTarget.value)}>
+        <option value="">Inherit ({repoConfig.agent?.permissionProfile ?? ui.config.agentSessions.defaultPermissionProfile ?? "minimum"})</option>
+        <option value="minimum">Minimum</option><option value="less-friction">Less friction</option><option value="full-automation">Full automation</option>
+      </select></label>{permissionError && <span class="notice danger" role="alert">{permissionError}</span>}</div>}
       <StaleNotice repo={repo} change={change} />
       {(listing || hasConsole) && (
         <ArtifactTabs artifacts={listing?.artifacts ?? []} selected={selection.artifactId} onSelect={(id) => setQuery({ artifact: id, file: undefined })} console={hasConsole} />

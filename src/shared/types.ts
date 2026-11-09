@@ -425,6 +425,8 @@ export interface RepoConfig {
   /** Per-repository agent-session settings. Absent means "included": once sessions are enabled globally they apply to
    *  every tracked repository unless it is switched off here. */
   agent?: RepoAgentConfig;
+  /** Permission overrides scoped to active changes. */
+  agentOverrides?: Record<string, ChangeAgentOverride>;
   /** The user's own labels, in the order given. Absent when there are none. */
   labels?: string[];
   /** Detected labels the user hid for this repository (compared ignoring case). Absent when there are none. */
@@ -476,7 +478,24 @@ export interface RepoAgentConfig {
   /** Docs auto-merge: Ship and Archive leave a docs-only pull request open and Spec Control asks the agent to merge it once
    *  it is ready (agent-merges-docs-prs). The name predates that and is kept for compatibility. Absent means off. */
   autoMergeDocs?: boolean;
+  permissionProfile?: AgentPermissionProfileId;
 }
+
+export type AgentPermissionProfileId = "minimum" | "less-friction" | "full-automation";
+export interface AgentPermissionPolicy {
+  profile: AgentPermissionProfileId;
+  allowFileEdits: boolean;
+  allowValidation: boolean;
+  allowGitWrite: boolean;
+  allowPullRequests: boolean;
+  allowMerge: boolean;
+  allowCleanup: boolean;
+  optInMerge: boolean;
+  optInCleanup: boolean;
+}
+export interface AdapterResult { args: string[]; settings?: Record<string, unknown>; limitations: string[] }
+export interface AgentCapabilityMatrix { agentId: string; toolFiltering: string; workspaceIsolation: string; remoteGit: string; unattended: string }
+export interface ChangeAgentOverride { agentId?: string; permissionProfile?: AgentPermissionProfileId }
 
 /**
  * One agent CLI the dashboard can start in a terminal. Nothing here is specific to a vendor: a profile is a command
@@ -518,6 +537,9 @@ export interface Shortcut {
 }
 
 export interface AgentSessionsConfig {
+  defaultPermissionProfile?: AgentPermissionProfileId;
+  optInMerge?: boolean;
+  optInCleanup?: boolean;
   defaultModel?: string;
   enabled: boolean;
   agents: AgentProfile[];
@@ -884,6 +906,7 @@ interface SessionBase {
   waitingReportedAt?: string;
   /** True once the agent has a conversation that `resumeCommand` can continue. */
   resumable: boolean;
+  permissionProfile?: AgentPermissionProfileId;
 }
 
 /** A session started for one change of one repository, from a card's starter. */
