@@ -175,6 +175,9 @@ export { defaultAgentSessions };
 
 const agentSessionsSchema = z
   .object({
+    defaultPermissionProfile: z.enum(["minimum", "less-friction", "full-automation"]).default("minimum"),
+    optInMerge: z.boolean().default(false),
+    optInCleanup: z.boolean().default(false),
     enabled: z.boolean().default(false),
     defaultModel: modelSchema.optional(),
     agents: z.array(agentProfileSchema).min(1).default(() => defaultAgentSessions().agents),
@@ -237,7 +240,8 @@ const repoSchema = z.object({
   path: absolutePath,
   name: z.string().trim().min(1),
   enabled: z.boolean(),
-  agent: z.object({ enabled: z.boolean(), agentId: z.string().optional(), changeAgents: z.record(z.string().regex(CHANGE_NAME_PATTERN), z.string()).optional(), autoMergeDocs: z.boolean().optional() }).optional(),
+  agent: z.object({ enabled: z.boolean(), agentId: z.string().optional(), changeAgents: z.record(z.string().regex(CHANGE_NAME_PATTERN), z.string()).optional(), autoMergeDocs: z.boolean().optional(), permissionProfile: z.enum(["minimum", "less-friction", "full-automation"]).optional() }).optional(),
+  agentOverrides: z.record(z.string().regex(CHANGE_NAME_PATTERN), z.object({ agentId: z.string().optional(), permissionProfile: z.enum(["minimum", "less-friction", "full-automation"]).optional() })).optional(),
   labels: labelsSchema,
   hiddenLabels: labelsSchema,
   prTitleConvention: z.literal("conventional-commits").optional(),

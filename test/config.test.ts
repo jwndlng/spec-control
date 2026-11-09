@@ -54,6 +54,12 @@ test("invalid config is rejected with messages", () => {
   expect(() => validateConfig({ ...defaultConfig(), repos: [{ ...repo, id: "not-an-id" }] })).toThrow(/repos\.0\.id/);
 });
 
+test("permission profile config defaults to minimum and rejects invalid profiles", () => {
+  expect(defaultConfig().agentSessions.defaultPermissionProfile).toBe("minimum");
+  expect(() => validateConfig({ ...defaultConfig(), agentSessions: { ...defaultAgentSessions(), defaultPermissionProfile: "unrestricted" } })).toThrow(/defaultPermissionProfile/);
+  expect(() => validateConfig({ ...defaultConfig(), agentSessions: { ...defaultAgentSessions(), agents: [{ ...CLAUDE_PROFILE, launchArgs: ["--dangerously-bypass-approvals-and-sandbox"] }] } })).toThrow(/bypass/);
+});
+
 test("rename keeps id; id derives from path", () => {
   const repo = newRepoConfig("/tmp/x/my-repo");
   expect(repo.id).toBe(repoId("/tmp/x/my-repo"));

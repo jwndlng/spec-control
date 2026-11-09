@@ -5,7 +5,7 @@
 // tile. Hook-free, so tests can walk them; the state lives in `useTracking`. Every control stops the click, so a row or
 // tile that holds one never opens the repository's board because of it.
 import type { ComponentChildren } from "preact";
-import { AUTO_FETCH_SECONDS, type AutoFetchSeconds, autoFetchInterval, CONVENTIONAL_COMMITS_SHIP_SENTENCE, repoAgentEnabled, type Config, type DetectedLabel, type PrTitleConvention, type RepoConfig } from "../shared/types.ts";
+import { AUTO_FETCH_SECONDS, type AgentPermissionProfileId, type AutoFetchSeconds, autoFetchInterval, CONVENTIONAL_COMMITS_SHIP_SENTENCE, repoAgentEnabled, type Config, type DetectedLabel, type PrTitleConvention, type RepoConfig } from "../shared/types.ts";
 import { settingApplies } from "../shared/repoSettings.ts";
 import { IconPencil, IconSettings, IconTag } from "./icons.tsx";
 import { labelSuggestions, RepoLabelsEditor } from "./labels.tsx";
@@ -191,6 +191,14 @@ export function AgentPicker({ repo, config, tracking }: { repo: RepoConfig; conf
   );
 }
 
+export function PermissionProfilePicker({ repo, config, tracking }: { repo: RepoConfig; config: Config; tracking: Tracking }) {
+  if (!config.agentSessions.enabled || !repoAgentEnabled(repo)) return null;
+  return <select class="input" aria-label={`Permission profile for ${repo.name}`} value={repo.agent?.permissionProfile ?? ""} disabled={tracking.busy[repo.id] !== undefined} onClick={stop} onChange={(event) => tracking.setAgent(repo.id, { permissionProfile: (event.currentTarget.value || null) as AgentPermissionProfileId | null })}>
+    <option value="">Default ({config.agentSessions.defaultPermissionProfile ?? "minimum"})</option>
+    <option value="minimum">Minimum</option><option value="less-friction">Less friction</option><option value="full-automation">Full automation</option>
+  </select>;
+}
+
 export const PR_TITLES_TITLE = `PR titles: how Ship asks the agent to title this project's pull requests, saved at once. Conventional Commits adds: "${CONVENTIONAL_COMMITS_SHIP_SENTENCE}"`;
 
 /**
@@ -357,6 +365,7 @@ export function ProjectSettingsDialog({ repo, config, isGit, tracking }: { repo:
       <div class="project-settings">
         <SettingLine label="Agent sessions">{AgentToggle({ repo, config, tracking })}</SettingLine>
         <SettingLine label="Agent">{AgentPicker({ repo, config, tracking })}</SettingLine>
+        <SettingLine label="Permission profile">{PermissionProfilePicker({ repo, config, tracking })}</SettingLine>
         <SettingLine label="PR titles">{PrTitlesPicker({ repo, isGit, tracking })}</SettingLine>
         <SettingLine label="Docs auto-merge">{AutoMergeToggle({ repo, config, isGit, tracking, short: true })}</SettingLine>
         <SettingLine label="Auto fetch">{AutoFetchPicker({ repo, isGit, tracking })}</SettingLine>

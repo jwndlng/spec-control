@@ -229,6 +229,14 @@ export function withLaunchArgs(agent: AgentProfile, argv: readonly string[], mod
   return [executable, "--model", model, ...args.slice(1)];
 }
 
+/** Inserts adapter options after the user's launch options and before the agent command tail. */
+export function withPermissionArgs(agent: AgentProfile, argv: readonly string[], permissionArgs: readonly string[]): string[] {
+  if (permissionArgs.length === 0) return [...argv];
+  const [executable, ...rest] = argv;
+  const launchArgCount = agent.launchArgs?.length ?? 0;
+  return [executable, ...rest.slice(0, launchArgCount), ...permissionArgs, ...rest.slice(launchArgCount)];
+}
+
 /** The resume command with the launch arguments, or undefined when the profile has none. */
 export function resumeLaunch(agent: AgentProfile, model?: string): string[] | undefined {
   return agent.resumeCommand && withLaunchArgs(agent, agent.resumeCommand, model);

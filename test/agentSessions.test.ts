@@ -1,5 +1,5 @@
 // Tests for deterministic server-side Ship, auto-ship on session exit, and deterministic Merge (Tasks 3.2, 3.3, 3.4)
-import { launchCommand, launchWithoutPrompt, resolveModel, resumeLaunch } from "../src/server/sessions/agents.ts";
+import { launchCommand, launchWithoutPrompt, resolveModel, resumeLaunch, withPermissionArgs } from "../src/server/sessions/agents.ts";
 import { defaultConfig } from "../src/server/config.ts";
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -15,6 +15,28 @@ import { tempDir, useTempHome } from "./helpers.ts";
 import { fakeProfile, git, harness, waitFor, watch, type Harness } from "./sessionHelpers.ts";
 
 setDefaultTimeout(30_000);
+
+test("permission arguments follow configured launch args and precede the prompt command tail", () => {
+  const agent = { id: "codex", name: "Codex", command: ["codex", "exec", "{prompt}"], launchArgs: ["--profile", "work"], prompts: {} };
+  const launched = launchCommand(agent, "implement change");
+  expect(withPermissionArgs(agent, launched.argv, ["--sandbox", "workspace-write"])).toEqual(["codex", "--profile", "work", "--sandbox", "workspace-write", "exec", "implement change"]);
+});
+
+test("Antigravity receives supported mode and sandbox flags without an undocumented settings flag", async () => {
+  const h = await harness({ agent: { id: "agy" } });
+  managers.push(h.manager);
+  h.config.agentSessions.defaultAgent = "agy";
+  h.config.agentSessions.defaultPermissionProfile = "less-friction";
+  const session = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const terminal = await watch(h.manager, session.id);
+  await waitFor(() => terminal.text().includes("--mode"), "Antigravity mode flag");
+  const args = JSON.parse(/args=(\[[^\n]+?\])/.exec(terminal.text())?.[1] ?? "[]") as string[];
+  expect(args).toContain("--sandbox");
+  expect(args).not.toContain("--settings");
+  await h.manager.submit(session.id, "exit");
+  await waitFor(() => h.manager.list().find((item) => item.id === session.id)?.state === "exited", "agent process exit");
+  terminal.detach();
+});
 
 let cleanup: () => Promise<void>;
 let gh: GhHarness;

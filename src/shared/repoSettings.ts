@@ -1,13 +1,14 @@
 // How a project's own settings are stored (project-overview: "Each managed project carries its own settings"), and
 // which of them apply to a project. Shared by the server's per-setting routes and the setup wizard's Project settings
 // step, so a value is stored the same way whichever of them saved it: a default is the absence of its key.
-import { type AutoFetchSeconds, type Config, DEFAULT_AUTO_FETCH_SECONDS, type PrTitleConvention, type RepoConfig, repoAgentEnabled } from "./types.ts";
+import { type AgentPermissionProfileId, type AutoFetchSeconds, type Config, DEFAULT_AUTO_FETCH_SECONDS, type PrTitleConvention, type RepoConfig, repoAgentEnabled } from "./types.ts";
 
 /** A change to a project's agent settings; `agentId: null` means the default agent. */
 export interface RepoAgentPatch {
   enabled?: boolean;
   agentId?: string | null;
   autoMergeDocs?: boolean;
+  permissionProfile?: AgentPermissionProfileId | null;
 }
 
 /** A repository without agent settings is included (`repoAgentEnabled`), so the first change starts from `{ enabled: true }`. */
@@ -19,6 +20,8 @@ export function withRepoAgent(repo: RepoConfig, patch: RepoAgentPatch): RepoConf
   // Off is the absence of the key, so a configuration never carries `autoMergeDocs: false`.
   if (patch.autoMergeDocs === true) agent.autoMergeDocs = true;
   else if (patch.autoMergeDocs === false) delete agent.autoMergeDocs;
+  if (patch.permissionProfile === null) delete agent.permissionProfile;
+  else if (patch.permissionProfile !== undefined) agent.permissionProfile = patch.permissionProfile;
   return { ...repo, agent };
 }
 

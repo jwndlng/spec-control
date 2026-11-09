@@ -129,7 +129,7 @@ test("configs from the transcript-based version load: their keys are dropped, de
   const old = { ...base, agentSessions: { enabled: true, maxRunning: 2, idleMinutes: 30, claudePath: "claude", passApiKeyEnv: false, commands: { draft: "/opsx:ff {change}" } }, repos: [{ ...newRepoConfig("/w/demo-ops", true), agent: { enabled: true, allowedTools: ["Bash(x)"] } }] };
   const cfg = validateConfig(old);
   // No `shortcuts` key at all: such a config carries the shipped ones, so nobody's console loses its buttons.
-  expect(cfg.agentSessions).toEqual({ enabled: true, agents: defaultAgentSessions().agents, defaultAgent: "claude", shortcuts: [...DEFAULT_SHORTCUTS] });
+  expect(cfg.agentSessions).toEqual({ defaultPermissionProfile: "minimum", optInMerge: false, optInCleanup: false, enabled: true, agents: defaultAgentSessions().agents, defaultAgent: "claude", shortcuts: [...DEFAULT_SHORTCUTS] });
   expect(cfg.repos[0].agent).toEqual({ enabled: true });
   const { agentSessions: _drop, ...older } = base;
   expect(validateConfig(older).agentSessions.enabled).toBe(false);

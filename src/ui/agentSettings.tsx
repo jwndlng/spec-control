@@ -496,6 +496,25 @@ export function AgentSettings({ draft, update }: Props) {
       </div>
 
       <fieldset class="agent-fields" disabled={!settings.enabled}>
+        <h3>Agent permissions</h3>
+        <label class="agent-tools"><span>Default permission profile</span>
+          <select value={settings.defaultPermissionProfile ?? "minimum"} onChange={(e) => set({ defaultPermissionProfile: e.currentTarget.value as AgentSessionsConfig["defaultPermissionProfile"] })}>
+            <option value="minimum">Minimum</option><option value="less-friction">Less friction (recommended)</option><option value="full-automation">Full automation</option>
+          </select>
+        </label>
+        {settings.defaultPermissionProfile === "full-automation" && <>
+          <label class="check"><input type="checkbox" checked={settings.optInMerge === true} onChange={(e) => set({ optInMerge: e.currentTarget.checked })} />Autonomous pull request merge</label>
+          <label class="check"><input type="checkbox" checked={settings.optInCleanup === true} onChange={(e) => set({ optInCleanup: e.currentTarget.checked })} />Autonomous worktree and branch cleanup</label>
+        </>}
+        <p class="hint"><strong>Repository code execution:</strong> running tests, linters, and build scripts executes code from the repository. Agent permissions never disable protected-command confirmation.</p>
+        <h4>Agent capability matrix</h4>
+        <table><thead><tr><th>Agent</th><th>Command filtering</th><th>Filesystem scope</th><th>Remote Git</th><th>Unattended</th></tr></thead><tbody>
+          <tr><th>Claude Code</th><td>Tool patterns</td><td>Worktree</td><td>Allowed tools</td><td>Profile dependent</td></tr>
+          <tr><th>OpenAI Codex</th><td>Workspace sandbox</td><td>Workspace</td><td>Approval gated</td><td>Profile dependent</td></tr>
+          <tr><th>Antigravity</th><td>Session settings</td><td>Worktree</td><td>Session tools</td><td>Profile dependent</td></tr>
+        </tbody></table>
+        <p class="hint">Protected commands always require confirmation: <code>rm -rf</code>, <code>git push --force</code>, <code>git reset --hard</code>, <code>sudo</code>, and remote script pipes.</p>
+        <p class="hint">CLI argument preview: {settings.agents.map((agent) => <span key={agent.id}><strong>{agent.name}</strong>: <code>{agent.id === "claude" ? `--permission-mode ${settings.defaultPermissionProfile === "minimum" ? "plan" : settings.defaultPermissionProfile === "full-automation" ? "auto" : "acceptEdits"}` : agent.id === "codex" ? `--sandbox ${settings.defaultPermissionProfile === "minimum" ? "read-only" : "workspace-write"} --ask-for-approval on-request` : agent.id === "agy" ? `--mode ${settings.defaultPermissionProfile === "minimum" ? "plan" : settings.defaultPermissionProfile === "full-automation" ? "auto" : "accept-edits"} --sandbox (per-session permission rules unavailable)` : "(no permission flags)"}</code>{" "}</span>)}</p>
         <ModelField label="Default model" value={settings.defaultModel} onChange={(defaultModel) => set({ defaultModel })} />
         <p class="hint">
           New sessions inherit this model unless a profile or phase overrides it. Empty uses the CLI default. Custom commands can place <code>{"{model}"}</code>{" "}

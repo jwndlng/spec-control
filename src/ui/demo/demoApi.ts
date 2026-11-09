@@ -556,15 +556,17 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
         if (!name.trim()) throw new ApiError(400, "name must not be empty");
         return updateRepo(repoId, (r) => ({ ...r, name: name.trim() }));
       }),
-    setRepoAgent: (repoId, { enabled, agentId }) =>
+    setRepoAgent: (repoId, { enabled, agentId, permissionProfile }) =>
       failing(() => {
-        if (enabled === undefined && agentId === undefined) throw new ApiError(400, "send enabled or agentId");
+        if (enabled === undefined && agentId === undefined && permissionProfile === undefined) throw new ApiError(400, "send enabled, agentId or permissionProfile");
         if (typeof agentId === "string" && !config.agentSessions.agents.some((a) => a.id === agentId)) throw new ApiError(400, `unknown agent ${agentId}`);
         return updateRepo(repoId, (r) => {
           const agent: NonNullable<RepoConfig["agent"]> = { enabled: true, ...r.agent };
           if (enabled !== undefined) agent.enabled = enabled;
           if (agentId === null) delete agent.agentId;
           else if (agentId !== undefined) agent.agentId = agentId;
+          if (permissionProfile === null) delete agent.permissionProfile;
+          else if (permissionProfile !== undefined) agent.permissionProfile = permissionProfile;
           return { ...r, agent };
         });
       }),
@@ -581,6 +583,24 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
         const agent = { enabled: true, ...repo.agent };
         if (Object.keys(changeAgents).length) agent.changeAgents = changeAgents; else delete agent.changeAgents;
         config = { ...config, repos: config.repos.map((item) => item.id === repoId ? { ...item, agent } : item) };
+        return config;
+      }),
+    setChangePermissionProfile: (repoId, change, permissionProfile) =>
+      failing(() => {
+        if (!config.agentSessions.enabled) throw new ApiError(403, "agent sessions are disabled");
+        const repo = config.repos.find((item) => item.id === repoId);
+        const card = repo && snapshot().repos.find((item) => item.id === repoId)?.changes.find((item) => item.name === change && !item.archived);
+        if (!repo) throw new ApiError(404, "repository not found");
+        if (!card) throw new ApiError(404, "active change not found");
+        const overrides = { ...(repo.agentOverrides ?? {}) };
+        if (permissionProfile === null) {
+          const existing = overrides[change];
+          if (existing) {
+            const { permissionProfile: _profile, ...rest } = existing;
+            if (Object.keys(rest).length) overrides[change] = rest; else delete overrides[change];
+          }
+        } else overrides[change] = { ...overrides[change], permissionProfile };
+        config = { ...config, repos: config.repos.map((item) => item.id === repoId ? { ...item, ...(Object.keys(overrides).length ? { agentOverrides: overrides } : { agentOverrides: undefined }) } : item) };
         return config;
       }),
     setRepoLabels: (repoId, patch) =>

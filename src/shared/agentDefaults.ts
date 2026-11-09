@@ -183,5 +183,5 @@ export const DEFAULT_SHORTCUTS: readonly Shortcut[] = [
 
 /** Agent sessions ship disabled; nothing starts an agent until the user turns them on. */
 export function defaultAgentSessions(): AgentSessionsConfig {
-  return { enabled: false, agents: [structuredClone(CLAUDE_PROFILE)], defaultAgent: CLAUDE_PROFILE.id, shortcuts: structuredClone(DEFAULT_SHORTCUTS) as Shortcut[] };
+  return { enabled: false, defaultPermissionProfile: "minimum", optInMerge: false, optInCleanup: false, agents: [structuredClone(CLAUDE_PROFILE)], defaultAgent: CLAUDE_PROFILE.id, shortcuts: structuredClone(DEFAULT_SHORTCUTS) as Shortcut[] };
 }
