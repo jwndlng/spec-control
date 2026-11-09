@@ -15,6 +15,17 @@ test("a full record: the branch is read, schema and creation date as before", ()
   expect(marker).toEqual({ schema: "spec-driven", created: "2026-10-24", skipSpecs: false, recorded: { branch: "fix/rotate-keys" }, warnings: [] });
 });
 
+test("the optional implementation model is validated independently of unrelated metadata", () => {
+  expect(parseMarker(`${BASE}goal: keep this\nspec-control:\n  implement-model: reasoning-model\n  reviewer: someone\n`).recorded).toEqual({ implementModel: "reasoning-model" });
+  expect(parseMarker(`${BASE}spec-control:\n  implement-model: \n`).recorded).toBeUndefined();
+  expect(parseMarker(`${BASE}spec-control:\n  implement-model: |\n    multi-line value\n`).recorded).toBeUndefined();
+  for (const bad of ["   padded", "x".repeat(129), "--dangerously-skip-permissions", "bad\u0001other"]) {
+    const marker = parseMarker(`${BASE}spec-control:\n  implement-model: "${bad}"\n`);
+    expect(marker.recorded?.implementModel).toBeUndefined();
+  }
+  expect(parseMarker(`${BASE}spec-control:\n  branch: feat/a\n  implement-model: fast-model\n`).recorded).toEqual({ branch: "feat/a", implementModel: "fast-model" });
+});
+
 test("both branches, quotes, comments and the end of the block", () => {
   const text = [
     "schema: spec-driven",

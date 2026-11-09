@@ -196,10 +196,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             PATH</strong> from VS Code's command palette. The editor is yours: the dashboard only starts it.
           </li>
           <li>
-            <strong>Ship</strong> asks the agent to commit, push and open a pull request, and to record the branch it pushes
-            in the change's <code>.openspec.yaml</code>, under <code>spec-control:</code>, in the same commit;{" "}
-            <strong>Resolve conflicts</strong> asks it to bring a branch that no longer merges up to date. The dashboard
-            itself commits, merges and pushes nothing.
+            Ship first reads tasks from the session checkout. Unfinished or unreadable tasks offer <strong>Finish tasks</strong>, <strong>Ship anyway</strong> and Cancel.
+            Finish tasks does not ship. Ship anyway keeps unresolved markers for PR-dependent checks and withholds docs auto-merge. Automatic merging of implementation and archive PRs waits until every task is marked complete; proposal PRs can still merge before implementation.
+            After a linked implementation PR merges, <strong>Finish checks</strong> on the card and Console tab asks the agent to verify actual evidence and prepare a follow-up PR; cached merge status never completes a task.
+            Fast-forward includes the same completion instructions and automatically ships only when every task is marked complete.
+            <strong>Ship</strong> commits, pushes and opens the pull request on the server, after the task review. <strong>Finish tasks</strong> and <strong>Finish checks</strong> send requests to the agent; they do not ship.
+            <strong>Resolve conflicts</strong> asks the agent to bring the branch up to date.
             An archived card whose work is still pending offers <strong>Continue archive</strong> to open its console:
             resume its session to review unfinished tasks, or use <strong>Ship</strong> to ask the agent to open a pull request.
           </li>
@@ -240,6 +242,13 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             merged, it offers <strong>Clean up leftovers</strong> instead: the session's worktree and whatever else of the
             change is left over go in the same confirmation, after a copy of their uncommitted files is kept. It is selected
             unless a file outside the change would be deleted.
+          </li>
+          <li>
+            Once a session's own pull request is seen merged, its agent ends automatically when its worktree is clean
+            and holds no work beyond that pull request. Its worktree is removed when safe, its branch is kept, and you
+            can resume the session. Switch this off with <strong>End sessions whose pull request merged</strong> in{" "}
+            <AppLink path="/settings" query="?section=agents">Settings → Agent sessions</AppLink>.
+            Docs auto-merge still ends its own merged sessions when this is off.
           </li>
           <li>
             The <strong>Console</strong> button in the top bar opens your agent outside every change, in a console folder of its

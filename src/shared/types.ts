@@ -68,6 +68,8 @@ export interface ChangeSnapshot {
    * (OpenSpec: the `spec-control:` map of `.openspec.yaml`). An input to the pull-request link and `branchMatch` only.
    */
   recorded?: ChangeRecord;
+  /** Valid model selected during Draft for this change's Implement sessions. */
+  implementModel?: string;
   /**
    * The checkout this change's data comes from: the leading copy among all checkouts holding the change. Absent in
    * snapshots cached by older versions and for non-git repositories.
@@ -135,6 +137,8 @@ export interface ChangeRecord {
   branch?: string;
   /** Head branch of the pull request that archives the change. */
   archiveBranch?: string;
+  /** Model selected for Implement; validated before it is exposed or launched. */
+  implementModel?: string;
 }
 
 /** An archive commit that never reached the default branch. */
@@ -527,6 +531,11 @@ export interface AgentSessionsConfig {
   /** Whether Fast-forward asks for confirmation first; absent means it does. */
   confirmFastForward?: boolean;
   /**
+   * Whether a session whose own pull request merged is ended and its worktree removed when nothing in it would be lost
+   * (auto-end-session); absent means it is. Saved only as `false`.
+   */
+  endMergedSessions?: boolean;
+  /**
    * The editor Open in editor starts (openspec/specs/editor-launch): an argument list, never shell text, whose `{path}`
    * is replaced by the folder; without `{path}` the folder is the last argument. Absent means `DEFAULT_EDITOR`.
    */
@@ -638,7 +647,8 @@ export type PromptKey = StarterPromptKey | "ship" | "integrate" | "resolveConfli
 export type PromptResult = Session & { submitted: boolean };
 /** What Ship answers: the session, whether it was shipped deterministically, and whether docs auto-merge was asked. */
 export type ShipResult = Session & {
-  shipped: true;
+  shipped: boolean;
+  preflight?: ShipPreflight;
   submitted: boolean;
   autoMerge: boolean;
   autoMergeInstructionIncluded: boolean;
@@ -646,6 +656,26 @@ export type ShipResult = Session & {
   pullRequestNumber?: number;
 };
 export type AutoMergePromptResult = PromptResult & { autoMerge: boolean };
+export interface ShipPreflight {
+  token: string;
+  summary: ShipTaskSummary;
+}
+export interface ShipTaskSummary {
+  verified: boolean;
+  reason?: string;
+  total: number;
+  done: number;
+  open: string[];
+  awaiting: string[];
+  truncated: boolean;
+}
+export interface ShipRequest { title?: string; confirmation?: string; finishTasks?: boolean }
+
+export const TASK_COMPLETION_INSTRUCTION = "Complete and verify every task you can, including automated checks, before shipping. Tick only tasks supported by evidence; report the precise blocker for anything unresolved. Reserve - [~] for work that truly requires the user, complete all automatable parts first, and state exactly what the user must check or do on that task's line.";
+export const SHIP_COMPLETION_INSTRUCTION = `${TASK_COMPLETION_INSTRUCTION} Identify checks that require a PR or its CI, preserve their unresolved markers, and revisit them when evidence is available.`;
+export const FINISH_TASKS_PROMPT = `${TASK_COMPLETION_INSTRUCTION} Finish the remaining tasks in this checkout and report blockers. Do not ship as part of this request.`;
+export const FINISH_CHECKS_PROMPT = `${TASK_COMPLETION_INSTRUCTION} Verify the remaining checks against actual command results and PR check evidence; a merged PR alone proves no task complete. Prepare the verified task update for review in a follow-up PR when needed. Before committing or pushing, create a fresh follow-up branch in this worktree; never push to the merged branch or alter the main checkout. Leave tasks unresolved when evidence is missing.`;
+
 /** What starting a session answers: the session, and whether its opening prompt carried
  *  `AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION` or `AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION`. Always `false` for a session that
  *  was already open and was returned. */
@@ -871,7 +901,15 @@ export interface ChangeSession extends SessionBase {
    * a Merge prompt on its own (agent-merges-docs-prs).
    */
   autoMergeAskedAt?: string;
-  /** Set once the dashboard ended this session because its auto-merge pull request merged; it is never ended twice. */
+  /**
+   * When the session's agent was last started — opened, resumed, or started again for Ship or Resolve conflicts. A
+   * record without it reads `createdAt`. Only a pull request merged after it can end the session (auto-end-session D2).
+   */
+  agentStartedAt?: string;
+  /**
+   * Set once the dashboard ended this session because its pull request merged; it is never ended twice between starts,
+   * and starting its agent again clears it (auto-end-session D4).
+   */
   autoEnded?: AutoEnded;
   /**
    * The last Merge prompt sent to this session, by the dashboard or the user: written before anything is typed, so a
@@ -886,6 +924,8 @@ export interface ChangeSession extends SessionBase {
   pullRequest?: number;
   /** Set when a deterministic Ship (manual or automatic on session exit) failed; cleared when Ship succeeds. */
   shipError?: string;
+  /** Task-only requests suppress automatic shipping, merging and merged-PR cleanup until an explicit workflow choice. Persisted across resume. */
+  autoShipSuppressed?: boolean;
   /**
    * The worktree cleanup the user confirmed when ending this session, carried on in the background once the session
    * had ended (cleanup-background). Stored, so an outcome — or a cleanup a restart interrupted — outlives a reload.
@@ -1256,6 +1296,8 @@ export interface ChangeArtifacts {
     /** Absolute change directory; for archived changes the dated directory under `archive/`. */
     dir: string;
     archived: boolean;
+    /** Recorded implementation model choice, when present. */
+    implementModel?: string;
   };
   /** In schema order. */
   artifacts: ChangeArtifactEntry[];

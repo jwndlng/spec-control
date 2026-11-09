@@ -430,6 +430,20 @@ export function PerProjectNote() {
 /** How often Settings asks again whether the machine is being kept awake, while it is open. */
 const KEEP_AWAKE_POLL_MS = 15_000;
 
+export function MergedSessionsSetting({ on, onToggle }: { on: boolean; onToggle: (on: boolean) => void }) {
+  return (
+    <>
+      <label class="check" title="Once a session’s own pull request is seen merged, its agent ends and its worktree is removed when nothing would be lost. Its branch is kept, and you can resume the session.">
+        <input type="checkbox" checked={on} onChange={(e) => onToggle(e.currentTarget.checked)} />
+        End sessions whose pull request merged
+      </label>
+      <p class="hint">
+        When a session's own pull request is seen as merged, the dashboard ends its agent and removes its worktree when nothing in it would be lost. Its branch is kept, and you can resume the session.
+      </p>
+    </>
+  );
+}
+
 export function AgentSettings({ draft, update }: Props) {
   const [found, setFound] = useState<AgentAvailability[]>([]);
   const [presets, setPresets] = useState<AgentAvailability[] | undefined>(undefined);
@@ -529,6 +543,12 @@ export function AgentSettings({ draft, update }: Props) {
           <strong>Fast-forward</strong>, in a card's menu, has the agent write a change's artifacts, implement it and open a pull request without stopping for your review — the pull request is
           the only review. With this on, it asks first.
         </p>
+
+        <h3>Pull requests</h3>
+        <MergedSessionsSetting
+          on={settings.endMergedSessions !== false}
+          onToggle={(on) => set({ endMergedSessions: on ? undefined : false })}
+        />
 
         <h3>Console</h3>
         <label class="agent-tools">

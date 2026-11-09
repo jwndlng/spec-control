@@ -600,6 +600,10 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
       }
       if (req.method === "POST") {
         const body = await readJson(req);
+        if (body.finishChecks === true) {
+          if (typeof body.repoId !== "string" || typeof body.change !== "string") return json({ error: "invalid repository or change" }, 400);
+          return json(await sessions.finishChecks(body.repoId, body.change, await cachedPullRequests(state, body.repoId)));
+        }
         // Ending the proposal session first is an explicit yes or no, never something merely truthy.
         if (body.endProposal !== undefined && typeof body.endProposal !== "boolean") return json({ error: "endProposal must be a boolean" }, 400);
         // Resolve conflicts reads the repository's cached pull-request list — never a query — and nothing else does.
@@ -624,9 +628,11 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
       if (sub === "resume") return json(await sessions.resume(id));
       if (sub === "editor") return json(await sessions.openEditor(id));
       if (sub === "ship") {
-        const body = (await readJson(req).catch(() => ({}))) as Record<string, unknown>;
+        const body = req.body ? await readJson(req) : {};
+        if (body.finishTasks !== undefined && typeof body.finishTasks !== "boolean") return json({ error: "finishTasks must be a boolean" }, 400);
+        if (body.confirmation !== undefined && typeof body.confirmation !== "string") return json({ error: "confirmation must be a preview token" }, 400);
         const title = typeof body.title === "string" && body.title.trim() ? body.title.trim() : undefined;
-        return json(await sessions.ship(id, { title }));
+        return json(await sessions.ship(id, { ...body, title }));
       }
       if (sub === "resolve-conflicts") return json(await sessions.resolveConflicts(id, await cachedPullRequests(state, sessions.get(id).repoId)));
       if (sub === "merge") {
@@ -1194,7 +1200,7 @@ async function postIssues(state: AppState, repoId: string): Promise<Response> {
 }
 
 /**
- * A completed query is what ends a session whose auto-merge pull request merged (auto-merge-cleanup D2), and what hands
+ * A completed query is what ends an eligible session whose pull request merged (auto-end-session), and what hands
  * a ready docs-only pull request to its agent to merge (agent-merges-docs-prs D4): handed to the session manager after
  * `gh` has finished, never waited for, and never a reason to query. Only lists that are good right now count — a failed
  * one is the last good list, which says nothing new. The two cannot act on one pull request: one needs it merged, the
@@ -1205,7 +1211,7 @@ function handOverCompletedQuery(state: AppState, response: PullRequestsResponse)
   if (!sessions) return;
   for (const repo of response.repos) {
     if (repo.status !== "ok") continue;
-    void sessions.endMergedAutoMerge(repo.repoId, repo.pullRequests).catch((err) => console.warn("could not end a session whose pull request merged:", err instanceof Error ? err.message : err));
+    void sessions.endMergedSessions(repo.repoId, repo.pullRequests).catch((err) => console.warn("could not end a session whose pull request merged:", err instanceof Error ? err.message : err));
     void sessions.requestReadyMerges(repo.repoId, repo.pullRequests).catch((err) => console.warn("could not hand a ready pull request to its agent:", err instanceof Error ? err.message : err));
   }
 }

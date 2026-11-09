@@ -2,7 +2,7 @@
 
 ## Context
 
-`SessionManager.endMergedAutoMerge` (`src/server/sessions/manager.ts`) already ends a session and removes its
+`SessionManager.endMergedSessions` (`src/server/sessions/manager.ts`) already ends a session and removes its
 worktree when a completed pull-request query lists its branch's pull request merged. `src/server/api.ts` calls it
 after every completed query for a repository. It only considers sessions with `autoMergeAskedAt` in a project with
 `agent.autoMergeDocs`, anchors on `autoMergeAskedAt`, and uses `close(id, { removeWorktree: true })`, whose checks are
@@ -24,9 +24,11 @@ which re-creates a missing worktree with `ensureWorktree` on the kept branch, bu
 
 ## Decisions
 
-**D1 — Generalise `endMergedAutoMerge` rather than add a second pass.** Rename it `endMergedSessions(repoId, prs)`.
+**D1 — Generalise the existing end pass rather than add a second pass.** Use `endMergedSessions(repoId, prs)`.
 Per session it picks the rule: the auto-merge rule when the session carries `autoMergeAskedAt` and the project has
-`autoMergeDocs` (unchanged anchor and conditions), else the general rule when `endMergedSessions !== false`. The
+`autoMergeDocs` (its existing ask anchor and conditions), else the general rule when `endMergedSessions !== false`.
+Both rules also require the merge to follow the latest agent start: a resumed Docs auto-merge session must not be
+ended again by the old merge merely because its earlier ask record remains. The
 shared pieces — the `autoEnding` guard, the fork/base filter with one `defaultBranch` read per call, `close` with
 `removeWorktree: true`, recording `autoEnded`, the activity event — stay as they are. Alternative: a separate method
 called beside it; rejected because both would race over the same session and the same `autoEnding` set.

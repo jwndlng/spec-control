@@ -214,6 +214,20 @@ test("the Fast-forward warning: absent loads as absent, a boolean is kept, anyth
   expect(() => validateConfig({ ...config, agentSessions: { ...config.agentSessions, confirmFastForward: "no" } })).toThrow(ConfigValidationError);
 });
 
+test("merged-session ending defaults on, stores only false, and rejects non-booleans", () => {
+  const config = defaultConfig();
+  expect(validateConfig(config).agentSessions.endMergedSessions).toBeUndefined();
+  expect(validateConfig({ ...config, agentSessions: { ...config.agentSessions, endMergedSessions: false } }).agentSessions.endMergedSessions).toBe(false);
+  expect(validateConfig({ ...config, agentSessions: { ...config.agentSessions, endMergedSessions: true } }).agentSessions.endMergedSessions).toBeUndefined();
+  expect(() => validateConfig({ ...config, agentSessions: { ...config.agentSessions, endMergedSessions: "yes" } })).toThrow(/endMergedSessions/);
+});
+
+test("saving the merged-session setting on omits its key", async () => {
+  const saved = await saveConfig({ ...defaultConfig(), agentSessions: { ...defaultAgentSessions(), endMergedSessions: true } });
+  expect(saved.agentSessions.endMergedSessions).toBeUndefined();
+  expect(JSON.parse(await readFile(join(home, "config.json"), "utf8")).agentSessions.endMergedSessions).toBeUndefined();
+});
+
 test("a saved shortcut list is carried through unchanged: no default is ever added back", () => {
   const mine = [
     { id: "ship", title: "Ship it", prompt: "Commit the work, push the branch and open a pull request; ask me before force-pushing." },

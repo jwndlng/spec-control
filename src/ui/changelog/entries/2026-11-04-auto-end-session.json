@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-04-auto-end-session",
+  "date": "2026-11-04",
+  "title": "Merged sessions end on their own",
+  "summary": "When a session's own pull request is seen as merged and nothing in its worktree would be lost, its agent ends and its worktree is removed while its branch is kept. Switch this off in Settings → Agent sessions under **End sessions whose pull request merged**; you can resume an ended session."
+}

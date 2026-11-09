@@ -3,7 +3,9 @@ import { defaultAgentSessions, defaultConfig, newRepoConfig, validateConfig } fr
 import { agentEnv, agentFor, carryOverPrompt, fastForwardPrompt, integratePrompt, proposalInstruction, launchCommand, launchWithoutPrompt, mergePrompt, openingPrompt, resolveConflictsPrompt, resumeLaunch, shipPrompt, typedForm } from "../src/server/sessions/agents.ts";
 import { Scrollback, sessionBranch, worktreeName } from "../src/server/sessions/manager.ts";
 import { AGENT_PRESETS, ANTIGRAVITY_PROFILE, CLAUDE_PROFILE, CODEX_PROFILE, DEFAULT_SHORTCUTS, FORMER_PROMPTS } from "../src/shared/agentDefaults.ts";
-import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, availableActions, pastDraftingReason, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, mergeTargetSentence, proposalHandoverSentence, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
+import { AUTO_MERGE_DOCS_ARCHIVE_INSTRUCTION, AUTO_MERGE_DOCS_INSTRUCTION, AUTO_MERGE_DOCS_PROPOSAL_INSTRUCTION, availableActions, pastDraftingReason, CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_INTEGRATE_PROMPT, DEFAULT_MERGE_PROMPT, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT as BASE_SHIP_PROMPT, SHIP_COMPLETION_INSTRUCTION, TASK_COMPLETION_INSTRUCTION, FAST_FORWARD_CONTINUE_SENTENCE, FAST_FORWARD_SHIP_SENTENCE, integrateUnavailable, mergeTargetSentence, proposalHandoverSentence, type AgentAvailability, type ChangeSession, type Session } from "../src/shared/types.ts";
+
+const DEFAULT_SHIP_PROMPT = `${BASE_SHIP_PROMPT} ${SHIP_COMPLETION_INSTRUCTION}`;
 import { agentForRepo, cardIsLive, cardSessionControls, consoleSteps, NEEDS_YOU_AFTER_MS, parseArgLines, sessionBadge, sessionForChange, sessionsEnabledFor, silenceDuration, slugId, startersFor } from "../src/ui/sessionState.ts";
 import { openSpec } from "../src/server/frameworks/openspec/index.ts";
 import { fakeProfile } from "./sessionHelpers.ts";
@@ -200,6 +202,15 @@ test("additional instructions extend a starter's prompt, and always as one line"
   expect(() => openingPrompt(naming, "implement", "x; rm -rf ~")).toThrow(/invalid change name/);
 });
 
+test("Draft model guidance follows the profile prompt, names distinct candidates, and preserves marker metadata", () => {
+  const profile = fakeProfile({ promptSuffixes: { draft: "Keep the proposal concise." } });
+  const prompt = openingPrompt(profile, "draft", "cache-api-calls", { implementModelCandidates: { draft: "reasoning", implement: "fast" } }) ?? "";
+  expect(prompt).toBe("draft cache-api-calls Keep the proposal concise. Assess implementation complexity: choose reasoning for work needing deeper reasoning or fast for straightforward work, then record that exact choice as spec-control.implement-model in openspec/changes/cache-api-calls/.openspec.yaml without changing any other marker fields.");
+  expect(openingPrompt(profile, "draft", "cache-api-calls", { implementModelCandidates: { draft: "same", implement: "same" } })).toBe("draft cache-api-calls Keep the proposal concise.");
+  expect(openingPrompt(profile, "draft", "cache-api-calls")).toBe("draft cache-api-calls Keep the proposal concise.");
+  expect(openingPrompt(profile, "implement", "cache-api-calls", { implementModelCandidates: { draft: "reasoning", implement: "fast" } })).toBe("implement cache-api-calls");
+});
+
 test("Ship: additional instructions extend the profile's prompt, or the agent-neutral default", () => {
   expect(shipPrompt(fakeProfile(), "cache-api-calls")).toBe(DEFAULT_SHIP_PROMPT);
   // The case the feature exists for: a standing instruction about pull requests, without restating the whole prompt.
@@ -207,7 +218,7 @@ test("Ship: additional instructions extend the profile's prompt, or the agent-ne
   expect(shipPrompt(fakeProfile({ promptSuffixes: { ship: extra } }), "cache-api-calls")).toBe(`${DEFAULT_SHIP_PROMPT} ${extra}`);
   // On top of the profile's own Ship prompt it behaves the same, `{change}` included.
   const own = fakeProfile({ prompts: { ...fakeProfile().prompts, ship: "Ship {change}." }, promptSuffixes: { ship: "Title the PR after {change}." } });
-  expect(shipPrompt(own, "cache-api-calls")).toBe("Ship cache-api-calls. Title the PR after cache-api-calls.");
+  expect(shipPrompt(own, "cache-api-calls")).toBe(`Ship cache-api-calls. ${SHIP_COMPLETION_INSTRUCTION} Title the PR after cache-api-calls.`);
 });
 
 test("Ship for a project with Conventional Commits titles: the sentence goes between the prompt and the additional instructions", () => {
@@ -219,7 +230,7 @@ test("Ship for a project with Conventional Commits titles: the sentence goes bet
   const extra = "Add the checklist from CONTRIBUTING.md.";
   const own = fakeProfile({ prompts: { ...fakeProfile().prompts, ship: "Ship {change}." }, promptSuffixes: { ship: extra } });
   const prompt = shipPrompt(own, "cache-api-calls", { convention: "conventional-commits" });
-  expect(prompt).toBe(`Ship cache-api-calls. ${CONVENTIONAL_COMMITS_SHIP_SENTENCE} ${extra}`);
+  expect(prompt).toBe(`Ship cache-api-calls. ${SHIP_COMPLETION_INSTRUCTION} ${CONVENTIONAL_COMMITS_SHIP_SENTENCE} ${extra}`);
   expect(prompt).not.toMatch(/[\r\n]/);
   // It passes through placeholder substitution, so it carries none of its own.
   expect(CONVENTIONAL_COMMITS_SHIP_SENTENCE).not.toMatch(/\{[a-z]+\}/);
@@ -702,7 +713,7 @@ test("Fast-forward: offered only while a change is unplanned and not blocked, an
 
 test("Fast-forward: Draft, then Implement, each with its additional instructions, without Ship tail", () => {
   const profile = fakeProfile({ promptSuffixes: { draft: "Keep it short.", implement: "Run the tests.", ship: "Mention the ticket." } });
-  const expected = `draft cache-api-calls Keep it short. ${FAST_FORWARD_CONTINUE_SENTENCE} implement cache-api-calls Run the tests.`;
+  const expected = `draft cache-api-calls Keep it short. ${FAST_FORWARD_CONTINUE_SENTENCE} implement cache-api-calls Run the tests. ${TASK_COMPLETION_INSTRUCTION}`;
   expect(fastForwardPrompt(profile, "cache-api-calls")).toBe(expected);
   expect(openingPrompt(profile, "fastForward", "cache-api-calls")).toBe(expected);
   expect(expected).not.toContain(AUTO_MERGE_DOCS_INSTRUCTION);

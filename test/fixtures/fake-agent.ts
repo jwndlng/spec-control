@@ -48,9 +48,15 @@ if (threshold >= 0) {
   }
   process.exit(0);
 }
+// Interactive agents use raw input. Canonical mode on macOS silently drops everything beyond 1024 bytes,
+// so use raw mode and echo explicitly to exercise complete composed prompts, including Ship's fixed instructions.
+process.stdin.setRawMode?.(true);
 let buffer = "";
 for await (const chunk of process.stdin) {
-  buffer += new TextDecoder().decode(chunk as Uint8Array);
+  const input = new TextDecoder().decode(chunk as Uint8Array);
+  if (input.includes("\x04")) process.exit(0);
+  process.stdout.write(input.replaceAll("\r", "\r\n"));
+  buffer += input;
   let newline = buffer.search(/[\r\n]/);
   while (newline >= 0) {
     const line = buffer.slice(0, newline).trim();

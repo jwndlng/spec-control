@@ -456,7 +456,7 @@ A card whose change is in `Ready` or `Implementing` and is **blocked** by its de
 
 While any session of the card's change is running, the card SHALL show that session's badge **in the place the starters occupy** and SHALL offer no starter at all. The badge SHALL read the running state the terminal can tell — that the agent is working, or that it may need the user with how long the terminal has been silent — and the starters SHALL stay hidden for every one of those states, so no button appears or vanishes as a terminal falls silent. Activating the badge SHALL open that change's detail view with its Console tab selected and that session shown.
 
-A card whose latest session failed to start or ended with an error SHALL show that badge and SHALL still offer the starters its change's stage allows, so the next attempt stays one activation away. A card MUST NOT offer a control that ends a session. Status MUST be conveyed by text as well as colour. **Show details** remains available. When agent sessions are disabled or the repository is excluded, cards MUST look and behave exactly as before, apart from the "waits for" note.
+A card whose latest session failed to start or ended with an error SHALL show that badge and SHALL still offer the starters its change's stage allows, so the next attempt stays one activation away. When a change is archived and its pull request is listed merged (or its work status is `merged`), and it has a running session that has not been automatically ended, the card SHALL offer **End session** in its footer beside the session badge, and activating it SHALL open the end-session dialog for that session; in every other case, a card MUST NOT offer a control that ends a session. Status MUST be conveyed by text as well as colour. **Show details** remains available. When agent sessions are disabled or the repository is excluded, cards MUST look and behave exactly as before, apart from the "waits for" note.
 
 #### Scenario: Done change offers Archive
 - **WHEN** a change is in `Done` and agent sessions are enabled
@@ -501,6 +501,14 @@ A card whose latest session failed to start or ended with an error SHALL show th
 #### Scenario: Ready change with an optional artifact missing
 - **WHEN** a change is in `Ready`, its optional `design.md` is not written, and agent sessions are enabled
 - **THEN** its card's split button shows **Implement**, with **Draft artifacts** in its menu
+
+#### Scenario: Archived and merged change offers End session on the card
+- **WHEN** a change is archived, its pull request is merged, and it has a running session that has not been automatically ended
+- **THEN** its card offers the session badge and **End session** in its footer, and activating **End session** opens the end-session dialog for that session
+
+#### Scenario: Automatically ended session does not offer End session
+- **WHEN** an archived change's session was automatically ended because its pull request merged
+- **THEN** the card shows the ended badge and offers no **End session** button
 
 ### Requirement: Open work lists running sessions and unshipped work
 While agent sessions are enabled the top bar SHALL show an "Open work" control. Now that each terminal lives in its
@@ -584,7 +592,7 @@ The session badge of a running session whose terminal is producing output — th
 - **THEN** the badge and the change name are static, the badge still reads `working`, and the card keeps its tint
 
 ### Requirement: The end-session dialog is graded by work status
-Ending a session SHALL be offered from the Console tab and nowhere else, and SHALL go through one dialog that reads the worktree's work status fresh and grades its warning: a plain confirmation for `clean`, `merged` or `missing`; a notice for `pushed` that the work is not merged as of the last fetch; and for `uncommitted` or `unpushed` a strong warning, as text plus colour, naming the number of files or commits that exist only in this worktree, with **Ship instead** offered and the confirming button labelled **End anyway**. The dialog MUST state that the worktree and branch are kept, and SHALL offer worktree removal only when that is safe. Cancelling MUST change nothing.
+Ending a session SHALL be offered from the Console tab, and on the card of an archived change whose pull request or work status is merged and whose session has not been automatically ended, and nowhere else. It SHALL go through one dialog that reads the worktree's work status fresh and grades its warning: a plain confirmation for `clean`, `merged` or `missing`; a notice for `pushed` that the work is not merged as of the last fetch; and for `uncommitted` or `unpushed` a strong warning, as text plus colour, naming the number of files or commits that exist only in this worktree, with **Ship instead** offered and the confirming button labelled **End anyway**. The dialog MUST state that the worktree and branch are kept, and SHALL offer worktree removal only when that is safe. Cancelling MUST change nothing.
 
 #### Scenario: Unshipped work
 - **WHEN** the user ends a session whose worktree holds 3 uncommitted files
@@ -595,8 +603,12 @@ Ending a session SHALL be offered from the Console tab and nowhere else, and SHA
 - **THEN** the dialog asks for a plain confirmation
 
 #### Scenario: The board does not end sessions
-- **WHEN** a session is running and the user looks for a way to end it on the board
+- **WHEN** a session of an unarchived change or a change whose pull request is not merged is running and the user looks for a way to end it on the board
 - **THEN** no card offers one, and the way to it is the change's Console tab
+
+#### Scenario: Ending a session from the card of an archived merged change
+- **WHEN** an archived change has a merged pull request and a running session that was not automatically ended, and the user activates **End session** on its card
+- **THEN** the end-session dialog opens for that session, grading its warning by the worktree's work status
 
 ### Requirement: Cards offer Show details
 Each card SHALL offer a **Show details** action that opens its change's detail view, carrying the board it sits on and that board's filters so the detail view can lead back to them. The action SHALL be a link: opening it in a new tab or window SHALL land on the same detail view, and activating it with the keyboard SHALL open the detail view in the current tab.
@@ -1352,3 +1364,18 @@ the override.
 #### Scenario: The overriding agent lacks a prompt
 - **WHEN** change `rotate-keys` in `Backlog` has the override `my-agent`, whose profile has an Implement prompt but no Draft prompt
 - **THEN** its card offers Implement and no Draft artifacts
+
+### Requirement: Merged changes can finish unresolved tasks
+When a change has unresolved tasks and a linked merged implementation pull request, its card and Console tab SHALL make **Finish checks** discoverable when agent sessions are enabled. The action SHALL lead to the agent workflow for finishing the tasks and SHALL NOT itself tick tasks, merge, push or contact GitHub.
+
+#### Scenario: Merged implementation has an open task
+- **WHEN** a change has a linked merged implementation PR and an unchecked task
+- **THEN** its card offers Finish checks, even though the change remains in Implementing and Archive is unavailable
+
+#### Scenario: Pull request information is unavailable
+- **WHEN** a change has unresolved tasks but no known merged implementation PR
+- **THEN** no merged-PR-specific action is inferred, and the ordinary console remains available
+
+#### Scenario: A running session exists
+- **WHEN** Finish checks is offered for a change with a running session
+- **THEN** it leads to that session's console and does not start a second agent

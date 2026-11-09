@@ -382,6 +382,19 @@ test("a repository enabled through PUT /api/config during a slow scan shows up w
   }
 }, 30_000);
 
+test("saving endMergedSessions does not start a scan", async () => {
+  const g = await gatedServer();
+  try {
+    const before = g.scans();
+    const response = await g.request("/api/config", "PUT", JSON.stringify({ ...g.state.config, agentSessions: { ...g.state.config.agentSessions, endMergedSessions: false } }));
+    expect(response.status).toBe(200);
+    expect(g.state.config.agentSessions.endMergedSessions).toBe(false);
+    expect(g.scans()).toBe(before);
+  } finally {
+    g.stop();
+  }
+});
+
 test("POST /api/scan: started when idle; during a scan not started, but one follow-up is queued", async () => {
   const g = await gatedServer();
   try {

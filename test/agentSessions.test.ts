@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { SessionActivity } from "../src/server/activity/events.ts";
 import type { SessionManager } from "../src/server/sessions/manager.ts";
 import { defaultShipTitle } from "../src/server/sessions/manager.ts";
+import { scanRepo } from "../src/server/scanner.ts";
 import { recordBranchInWorktree } from "../src/server/frameworks/worktreeMetadata.ts";
 import type { ChangeSession, PullRequest } from "../src/shared/types.ts";
 import { installFakeGh, type GhHarness } from "./ghHelpers.ts";
@@ -123,6 +124,7 @@ test("Ship commits uncommitted changes, pushes branch to origin, and opens PR vi
   managers.push(manager);
 
   const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified check\n");
   expect(session.branch).toBe(`feat/${IMPLEMENT}`);
 
   // Add an uncommitted file to the worktree
@@ -162,6 +164,7 @@ test("Ship on clean unpushed worktree creates no extra commit and pushes existin
   managers.push(manager);
 
   const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified check\n");
 
   // Commit a change directly with custom message
   await recordBranchInWorktree(session.worktreePath, IMPLEMENT, "branch", `feat/${IMPLEMENT}`);
@@ -193,6 +196,7 @@ test("Ship reuses existing open pull request from cache if present", async () =>
   managers.push(manager);
 
   const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified check\n");
   await putFile(session.worktreePath, "src/keys.ts", "export const v = 2;\n");
 
   const result = await manager.ship(session.id);
@@ -214,6 +218,7 @@ test("Ship records autoMergeAskedAt when only OpenSpec documents changed and aut
   managers.push(manager);
 
   const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified check\n");
   // Add changes ONLY under openspec/
   await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/notes.md`, "some notes\n");
 
@@ -289,6 +294,7 @@ test("Archive session automatically ships on exit 0 once archive directory exist
   managers.push(manager);
 
   const session = await manager.open({ repoId: h.repoId, change: ARCHIVE, action: "archive" });
+  await putFile(session.worktreePath, `openspec/changes/${ARCHIVE}/tasks.md`, "- [x] Verified check\n");
 
   // Move change to archive
   await putFile(session.worktreePath, `openspec/changes/archive/2026-11-01-${ARCHIVE}/proposal.md`, "# Done\n");
@@ -307,7 +313,7 @@ test("Archive session automatically ships on exit 0 once archive directory exist
   }, "archive auto-ship");
 });
 
-test("Fast-forward session automatically ships on exit 0 when all tasks are done or awaiting", async () => {
+test("Fast-forward session automatically ships on exit 0 when every task is checked", async () => {
   const h = await harness();
   await setupFakeRemote(h.repoPath);
 
@@ -317,8 +323,8 @@ test("Fast-forward session automatically ships on exit 0 when all tasks are done
   const FAST_FORWARD = "add-health-endpoint";
   const session = await manager.open({ repoId: h.repoId, change: FAST_FORWARD, action: "fastForward" });
 
-  // Put tasks with 1 done and 1 awaiting
-  await putFile(session.worktreePath, `openspec/changes/${FAST_FORWARD}/tasks.md`, "- [x] 1.1 Done task\n- [~] 1.2 Needs user check\n");
+  // Every task is verified before automatic shipping.
+  await putFile(session.worktreePath, `openspec/changes/${FAST_FORWARD}/tasks.md`, "- [x] 1.1 Done task\n- [x] 1.2 Verified check\n");
 
   const seen = await watch(manager, session.id);
   await waitFor(() => seen.text().includes("fake-agent ready"), "agent ready");
@@ -414,6 +420,7 @@ test("requestReadyMerges automatically merges ready docs-only PR directly on ser
   managers.push(manager);
 
   const session = await manager.open({ repoId: h.repoId, change: ARCHIVE, action: "archive" });
+  await putFile(session.worktreePath, `openspec/changes/${ARCHIVE}/tasks.md`, "- [x] Verified check\n");
   await putFile(session.worktreePath, `openspec/changes/archive/2026-11-01-${ARCHIVE}/proposal.md`, "done\n");
   git(session.worktreePath, "add", "-A");
   git(session.worktreePath, "commit", "-m", `chore: archive ${ARCHIVE}`);
@@ -564,4 +571,116 @@ test("session start passes phase model and settings changes leave the running pr
   h.config.agentSessions.agents[0].phaseModels!.implement = "updated";
   expect(terminal.text()).not.toContain("updated");
   terminal.detach();
+});
+
+test("Fast-forward exits with awaiting tasks without automatically committing, pushing or opening a PR", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  const manager = h.newManager();
+  managers.push(manager);
+  const change = "add-health-endpoint";
+  const session = await manager.open({ repoId: h.repoId, change, action: "fastForward" });
+  await putFile(session.worktreePath, `openspec/changes/${change}/tasks.md`, "- [x] Built\n- [~] Verify on a real device\n");
+  const before = git(session.worktreePath, "rev-parse", "HEAD");
+  const seen = await watch(manager, session.id);
+  await waitFor(() => seen.text().includes("fake-agent ready"), "agent ready");
+  manager.write(session.id, "exit\r");
+  await waitFor(() => manager.get(session.id).state === "exited", "exit");
+  await manager.shutdown();
+  expect(git(session.worktreePath, "rev-parse", "HEAD")).toBe(before);
+  expect((await gh.calls()).some((call) => call.argv.includes("create"))).toBe(false);
+  const result = await manager.ship(session.id);
+  expect(result).toMatchObject({ shipped: false, preflight: { summary: { awaiting: ["Verify on a real device"] } } });
+});
+
+test("a previous docs auto-merge record does not bypass unresolved implementation or archive tasks", async () => {
+  for (const action of ["implement", "archive"] as const) {
+    const h = await harness();
+    h.config.repos[0].agent = { enabled: true, autoMergeDocs: true };
+    await setupFakeRemote(h.repoPath);
+    const manager = h.newManager();
+    managers.push(manager);
+    const change = action === "archive" ? ARCHIVE : IMPLEMENT;
+    const session = await manager.open({ repoId: h.repoId, change, action });
+    await putFile(session.worktreePath, `openspec/changes/${change}/tasks.md`, "- [~] Verify on a real device\n");
+    git(session.worktreePath, "add", "-A");
+    git(session.worktreePath, "commit", "-q", "-m", "docs: record pending device check");
+    const head = git(session.worktreePath, "rev-parse", "HEAD");
+    (manager.get(session.id) as ChangeSession).autoMergeAskedAt = new Date().toISOString();
+    await gh.forget();
+    await manager.requestReadyMerges(h.repoId, [pr({ head: session.branch!, headOid: head })]);
+    expect((manager.get(session.id) as ChangeSession).mergeAsked).toBeUndefined();
+    expect((await gh.calls()).some((call) => call.argv.includes("merge"))).toBe(false);
+  }
+});
+
+test("Finish tasks persists a task-only request: completing its Fast-forward tasks does not auto-ship, but explicit Ship still works", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  const manager = h.newManager();
+  managers.push(manager);
+  const change = "add-health-endpoint";
+  const session = await manager.open({ repoId: h.repoId, change, action: "fastForward" });
+  await putFile(session.worktreePath, `openspec/changes/${change}/tasks.md`, "- [ ] Finish check\n");
+  const seen = await watch(manager, session.id);
+  await waitFor(() => seen.text().includes("fake-agent ready"), "agent ready");
+  const request = await manager.ship(session.id, { finishTasks: true });
+  expect(request).toMatchObject({ shipped: false, submitted: true, autoShipSuppressed: true });
+  await putFile(session.worktreePath, `openspec/changes/${change}/tasks.md`, "- [x] Verified check\n");
+  const before = git(session.worktreePath, "rev-parse", "HEAD");
+  manager.write(session.id, "exit\r");
+  await waitFor(() => manager.get(session.id).state === "exited", "exit");
+  await manager.shutdown();
+  expect(git(session.worktreePath, "rev-parse", "HEAD")).toBe(before);
+  expect((await gh.calls()).some((call) => call.argv.includes("create"))).toBe(false);
+  const { SessionStore } = await import("../src/server/sessions/store.ts");
+  const stored = (await new SessionStore().loadAll()).find((s) => s.id === session.id) as ChangeSession;
+  expect(stored.autoShipSuppressed).toBe(true);
+  const shipped = await manager.ship(session.id);
+  expect(shipped.shipped).toBe(true);
+  expect((shipped as ChangeSession).autoShipSuppressed).toBeUndefined();
+});
+
+test("Draft startup adds distinct resolved model candidates after the profile prompt", async () => {
+  const h = await harness({ agent: { promptSuffixes: { draft: "Keep it concise." }, phaseModels: { draft: "reasoning", implement: "fast" } } });
+  managers.push(h.manager);
+  const session = await h.manager.open({ repoId: h.repoId, change: DRAFT, action: "draft" });
+  const terminal = await watch(h.manager, session.id);
+  await waitFor(() => terminal.text().includes("spec-control.implement-model"), "Draft model-choice guidance");
+  expect(terminal.text()).toContain("Keep it concise.");
+  expect(terminal.text()).toContain("reasoning for work needing deeper reasoning or fast for straightforward work");
+  expect(terminal.text()).toContain("without changing any other marker fields");
+  terminal.detach();
+});
+
+test("Implement uses the scanned per-change model before the phase model, and later scans affect only new sessions", async () => {
+  const h = await harness({ agent: { model: "profile", phaseModels: { implement: "phase-model" } } });
+  managers.push(h.manager);
+  const marker = join(h.repoPath, "openspec", "changes", IMPLEMENT, ".openspec.yaml");
+  await writeFile(marker, "schema: spec-driven\ncreated: 2026-11-01\nspec-control:\n  implement-model: recorded-first\n");
+  h.snapshot.repos[0] = await scanRepo(h.config.repos[0]);
+  const first = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const firstTerminal = await watch(h.manager, first.id);
+  await waitFor(() => firstTerminal.text().includes("recorded-first"), "recorded Implement model");
+  expect(firstTerminal.text()).not.toContain("phase-model");
+
+  await writeFile(marker, "schema: spec-driven\ncreated: 2026-11-01\nspec-control:\n  implement-model: recorded-next\n");
+  h.snapshot.repos[0] = await scanRepo(h.config.repos[0]);
+  expect(firstTerminal.text()).not.toContain("recorded-next");
+  await h.manager.close(first.id);
+  firstTerminal.detach();
+
+  const second = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const secondTerminal = await watch(h.manager, second.id);
+  await waitFor(() => secondTerminal.text().includes("recorded-next"), "updated scanned Implement model");
+  expect(secondTerminal.text()).not.toContain("phase-model");
+  secondTerminal.detach();
+  await h.manager.close(second.id);
+
+  await writeFile(marker, "schema: spec-driven\ncreated: 2026-11-01\nspec-control:\n  implement-model: --dangerously-skip-permissions\n");
+  h.snapshot.repos[0] = await scanRepo(h.config.repos[0]);
+  const fallback = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const fallbackTerminal = await watch(h.manager, fallback.id);
+  await waitFor(() => fallbackTerminal.text().includes("phase-model"), "phase model after invalid recorded choice");
+  fallbackTerminal.detach();
 });

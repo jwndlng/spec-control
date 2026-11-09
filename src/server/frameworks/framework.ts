@@ -4,9 +4,9 @@
 // shape the board uses (`FrameworkChange`); `shared/columns.ts` derives stage and column from that shape alone. A module
 // only reads: it lists, reads and resolves paths through a `RepoSource`, and for writes it supplies paths and file
 // contents that the enumerated writers (`createChange.ts`, `dismissChange.ts`, …) use — never a write of its own.
-import { FRAMEWORK_INFO, type ArtifactStatus, type ChangeRecord, type FrameworkId, type TaskProgress } from "../../shared/types.ts";
+import { FRAMEWORK_INFO, type ArtifactStatus, type ChangeRecord, type FrameworkId, type ShipTaskSummary, type TaskProgress } from "../../shared/types.ts";
 import type { ChangeDirEntry, ChangeListing, ChangesLayout, RepoSource } from "../source.ts";
-import { parseTaskProgress } from "../tasksParser.ts";
+import { parseShipTaskSummary, parseTaskProgress } from "../tasksParser.ts";
 
 /** Where a framework keeps its files, relative to the project folder. Pure data. */
 export interface FrameworkLayout extends ChangesLayout {
@@ -36,6 +36,8 @@ export interface FrameworkChange {
   created?: string;
   /** The branches the change's pull requests were opened from, when the agent recorded them. */
   recorded?: ChangeRecord;
+  /** Valid per-change model choice for Implement, when the framework supports it. */
+  implementModel?: string;
   warnings: string[];
 }
 
@@ -112,6 +114,11 @@ export abstract class SpecFramework {
   /** Task progress of the tasks file's text: the dashboard's three checkbox states by default. */
   parseTasks(markdown: string): TaskProgress {
     return parseTaskProgress(markdown);
+  }
+
+  /** A bounded explanation of unresolved tasks for shipping; modules can override their task syntax. */
+  shipTaskSummary(markdown: string): ShipTaskSummary {
+    return parseShipTaskSummary(markdown);
   }
 
   /** Whether a finished change's spec deltas are reflected in the main specs; undefined when the framework cannot tell. */

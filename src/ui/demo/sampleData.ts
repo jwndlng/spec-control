@@ -44,6 +44,8 @@ interface SampleChange {
   /** Age of the last activity in days. */
   age: number;
   synced?: boolean;
+  /** A change-specific model choice shown in the detail view. */
+  implementModel?: string;
   /** When it is one of the repository's worktree branches, the change lives in that worktree. */
   branch?: string;
   /** The column of the main checkout's (older) copy, for a change whose work continues in a worktree. */
@@ -203,7 +205,7 @@ const REPOS: SampleRepo[] = [
       { name: "add-rate-limiting", tasks: [9, 14], age: 0.1, branch: "feat/add-rate-limiting", onMain: "Drafts" },
       { name: "paginate-list-endpoints", tasks: [3, 22], age: 2 },
       { name: "migrate-to-postgres-16", tasks: [0, 31], age: 5 },
-      { name: "structured-error-codes", written: "specs", age: 1, branch: "feat/structured-error-codes" },
+      { name: "structured-error-codes", written: "specs", age: 1, branch: "feat/structured-error-codes", implementModel: "fast-model" },
       { name: "idempotency-keys", written: "proposal", age: 9, issue: { number: 214, title: "Support idempotency keys on POST endpoints" } },
       { name: "deprecate-v1-auth", tasks: [12, 12], age: 3, branch: "chore/deprecate-v1-auth" },
       // Code-complete, two checks only a person can make: `Done`, sub-state `validate`.
@@ -275,7 +277,7 @@ const REPOS: SampleRepo[] = [
     warnings: ["openspec/config.yaml: unknown key `defaults` ignored"],
     changes: [
       { name: "centralize-log-shipping", tasks: [21, 38], age: 1 },
-      { name: "pin-terraform-providers", tasks: [6, 7], age: 19 },
+      { name: "pin-terraform-providers", branch: "feat/pin-terraform-providers", tasks: [6, 7], age: 19 },
       { name: "blue-green-deploys", tasks: [0, 26], age: 3, dependsOn: ["centralize-log-shipping"] },
       { name: "rotate-database-credentials", tasks: [0, 12], age: 24 },
       { name: "cost-allocation-tags", written: "specs", age: 8 },
@@ -419,6 +421,7 @@ export function buildSample(now: number): Sample {
         branchMatch: c.branch,
         ...checkouts(r, c),
         specsSynced: c.synced,
+        ...(c.implementModel ? { implementModel: c.implementModel } : {}),
         warnings: c.warnings,
         // Provisional, as the scanner records it; resolved against the whole repository below.
         ...(c.dependsOn ? { dependsOn: c.dependsOn.map((name) => ({ name, state: "waiting" as const })) } : {}),
@@ -643,7 +646,7 @@ const SAMPLE_PRS: Record<string, SamplePr[]> = {
   ],
   "lantern-infra": [
     { number: 128, title: "Centralize log shipping", author: "demo-rae", head: "feat/centralize-log-shipping", age: 22, review: "changes_requested", checks: "passing" },
-    { number: 124, title: "Pin the terraform providers", author: "demo-user", head: "chore/pin-terraform-providers", age: 140, state: "merged", checks: "passing" },
+    { number: 124, title: "Pin the terraform providers", author: "demo-user", head: "feat/pin-terraform-providers", age: 2, state: "merged", checks: "passing" },
   ],
   "ember-mobile": [{ number: 57, title: "Biometric login", author: "demo-nils", head: "feat/biometric-login", age: 9, review: "review_required", checks: "pending", mine: true }],
   "orbit-data": [
@@ -671,6 +674,7 @@ export function buildPullRequests(snapshot: Snapshot, now: number, fetchedAt: nu
         author: pr.author,
         head: pr.head,
         base: "main",
+        isCrossRepository: false,
         draft: pr.draft === true,
         state,
         createdAt: state === "open" ? at : iso((pr.age + 60) * HOUR),

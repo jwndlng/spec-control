@@ -69,6 +69,7 @@ test("Carry over archive cleanly cherry-picks and ships without starting an agen
   const h = track(await harness());
   await setupFakeRemote(h.repoPath);
   git(h.repoPath, "checkout", "-q", "-b", `feat/${CHANGE}`);
+  await writeFile(join(h.repoPath, OPENSPEC_PATHS.changesDir, CHANGE, "tasks.md"), "- [x] Verified before archive\n");
   await rename(join(h.repoPath, OPENSPEC_PATHS.changesDir, CHANGE), join(h.repoPath, OPENSPEC_PATHS.archiveDir as string, `2026-07-01-${CHANGE}`));
   git(h.repoPath, "add", "-A");
   git(h.repoPath, "commit", "-q", "-m", `chore(openspec): archive ${CHANGE}`);

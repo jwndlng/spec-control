@@ -58,8 +58,9 @@ bun test test/scanner.test.ts   # a single test file
    and removed with a non-forcing `git worktree remove` after the user confirmed and read-only checks proved nothing
    would be lost (`src/server/sessions/worktree.ts`) — or, with no dialog, when a pull-request query that already ran
    shows merged the pull request of a session whose prompt carried the Docs auto-merge instruction, in a project that
-   still has Docs auto-merge on (the opt-in is the confirmation; same checks, same command, the branch kept, no fetch,
-   no new git or `gh` subcommand, `SessionManager.endMergedAutoMerge`); the **pull action** — `git fetch` of the repository's own
+   still has Docs auto-merge on (same checks, same command, branch kept, no fetch, no new git or `gh` subcommand), or
+   when `agentSessions.endMergedSessions` is on and any eligible session's own pull request merged (same safe checks,
+   same command, branch kept, no fetch, no new git or `gh` subcommand, `SessionManager.endMergedSessions`); the **pull action** — `git fetch` of the repository's own
    remote with `--no-prune --no-prune-tags`, then a fast-forward-only `git merge --no-autostash` of the main checkout's
    upstream with `submodule.recurse=false`, never a merge commit, rebase, stash, reset, force or branch switch, one at a
    time per git repository (keyed by its git common directory, so projects sharing a repository share the lock), and only fetching when the checkout is off its default branch,
@@ -298,9 +299,12 @@ bun test test/scanner.test.ts   # a single test file
   action (`prompts.merge`, else `DEFAULT_MERGE_PROMPT`, then a fixed sentence naming `#<number>` and the full head
   commit, both from the server's list, never from the browser): the agent merges, with `--match-head-commit`, behind
   its own permission prompts; the user can send it from the panel for any ready pull request of a running session.
-  Once the query lists the pull request merged after `autoMergeAskedAt`, the session is ended and its worktree removed
-  as described in invariant 1 (`autoEnded` records the outcome). No query, timer or agent start is ever begun for any
-  of this. A status that holds work the base lacks also
+  Once the query lists the pull request merged after `autoMergeAskedAt`, the Docs auto-merge rule ends the session as
+  described in invariant 1. Separately, unless `agentSessions.endMergedSessions` is false, a completed query ends any
+  eligible change session whose own pull request merged after its agent was last started, only when its worktree is
+  clean and its checked-out commit is the pull request's head or its work status is `merged`. Both rules record the
+  outcome in `autoEnded`; resuming records a new `agentStartedAt` and clears that outcome. Neither starts a query,
+  timer or agent. A status that holds work the base lacks also
   carries a **conflict signal** — whether the branch still merges into that base, and which files clash — computed with
   `merge-tree` as invariant 1 describes, and as stale as the last fetch, which the UI says. **Resolve conflicts** is the
   second prompt-only action, shaped exactly like Ship (`prompts.resolveConflicts`, else

@@ -1,3 +1,4 @@
+import { TASK_COMPLETION_INSTRUCTION } from "../src/shared/types.ts";
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -252,7 +253,7 @@ test("Fast-forward: one session on the change's branch whose prompt drafts, impl
   await waitFor(() => view.text().includes("fake-agent ready"), "agent banner");
   const args = view.text().replace(/\r?\n/g, "");
   expect(args).toContain(`args=["draft ${drafting.name} This change is fast-forwarded`);
-  expect(args).toContain(`implement ${drafting.name}`);
+  expect(args).toContain(`implement ${drafting.name} ${TASK_COMPLETION_INSTRUCTION}`);
   expect(args).not.toContain("auto-merge");
 });
 
