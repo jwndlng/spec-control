@@ -84,12 +84,10 @@ export function duplicateNotice(name: string, duplicate: DuplicateAfterArchive, 
   const what = `Its archive is openspec/changes/archive/${duplicate.archive}/. ${differs}`;
   const pull = duplicate.pulled ? "" : " The main checkout has not pulled this yet: Pull brings it.";
   if (!sessionsAvailable) return { text: `${what} Delete ${dir} in a commit: the deletion has to be committed to ${target}.${pull}`, offered: false };
-  if (duplicate.archiveBranch) {
-    return { text: `${what} Remove duplicate is not offered while the branch ${duplicate.archiveBranch} exists: Clean up leftovers… removes it once it is merged.${pull}`, offered: false };
-  }
+  if (duplicate.removeDuplicateBranch) return { text: `${what} Remove duplicate is not offered while the branch ${duplicate.removeDuplicateBranch} exists: Clean up leftovers… removes it once it is merged.${pull}`, offered: false };
   if (running) return { text: `${what} Remove duplicate is offered once the change's running session has ended.${pull}`, offered: false };
   return {
-    text: `${what} Remove duplicate starts an archive session that asks you what to carry over into the archive, deletes ${dir} and opens a pull request for ${target}.${pull}`,
+    text: `${what} Remove duplicate starts an archive session that asks you what to carry over into the archive, deletes ${dir} and opens a pull request for ${target}${duplicate.archiveBranch ? ` on a separate branch because ${duplicate.archiveBranch} still exists` : ""}.${pull}`,
     offered: true,
   };
 }

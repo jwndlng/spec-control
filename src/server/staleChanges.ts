@@ -309,12 +309,15 @@ export async function findDuplicates(
       const paths = diff.split("\0").filter(Boolean).sort();
       const onMain = archivedOnMain.get(name);
       const archiveBranch = sessionBranch("archive", name);
+      const removeDuplicateBranch = `chore/remove-duplicate-${name}`;
+      const hasArchiveBranch = local.has(archiveBranch) || checkedOut.has(archiveBranch);
       found.set(name, {
         archive: archive.dir,
         differing: paths.slice(0, DUPLICATE_DIFFERING_LISTED),
         differingCount: paths.length,
         pulled: onMain !== undefined && onMain >= archive.date,
-        ...(local.has(archiveBranch) || checkedOut.has(archiveBranch) ? { archiveBranch } : {}),
+        ...(hasArchiveBranch ? { archiveBranch } : {}),
+        ...(local.has(removeDuplicateBranch) || checkedOut.has(removeDuplicateBranch) ? { removeDuplicateBranch } : {}),
       });
     }),
   );

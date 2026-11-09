@@ -214,7 +214,9 @@ test("the duplicate notice offers Remove duplicate, or says why not, or what to 
     "Its archive is openspec/changes/archive/2026-10-20-rotate-keys/. The copy differs from the archive in tasks.md. Remove duplicate starts an archive session that asks you what to carry over into the archive, deletes openspec/changes/rotate-keys/ and opens a pull request for main.",
   );
   const branch = duplicateNotice("rotate-keys", duplicate({ archiveBranch: "chore/archive-rotate-keys" }), { sessionsAvailable: true, running: false });
-  expect(branch).toEqual({ offered: false, text: expect.stringContaining("not offered while the branch chore/archive-rotate-keys exists: Clean up leftovers… removes it once it is merged.") });
+  expect(branch).toMatchObject({ offered: true });
+  expect(branch.text).toContain("on a separate branch because chore/archive-rotate-keys still exists");
+  expect(duplicateNotice("rotate-keys", duplicate({ archiveBranch: "chore/archive-rotate-keys", removeDuplicateBranch: "chore/remove-duplicate-rotate-keys" }), { sessionsAvailable: true, running: false })).toMatchObject({ offered: false, text: expect.stringContaining("Clean up leftovers…") });
   expect(duplicateNotice("rotate-keys", duplicate(), { sessionsAvailable: true, running: true }).offered).toBe(false);
   const byHand = duplicateNotice("rotate-keys", duplicate({ differing: [], differingCount: 0 }), { sessionsAvailable: false, running: false }, "main");
   expect(byHand).toEqual({
