@@ -2,3 +2,4 @@ schema: spec-driven
 created: 2026-11-09
 spec-control:
   branch: docs/end-proposal-autoship-deadlock
+  archive-branch: chore/archive-end-proposal-autoship-deadlock
