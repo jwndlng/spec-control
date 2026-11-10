@@ -1,7 +1,9 @@
-Dropdowns currently use browser-native selects with inconsistent sizing and limited support for finding choices in longer lists. This proposal defines a shared themed picker across filters, settings, setup and creation forms, with local search for lists of eight or more options, keyboard navigation, clear selection states and viewport-aware panels.
+Adds the `dropdown-ui` proposal, design, requirements and implementation checklist. This PR contains planning artifacts only; dropdown behavior is unchanged and all 16 implementation tasks remain unchecked.
 
-Existing values, defaults, inheritance, save timing and error feedback remain intact. Browsing or dismissing a dropdown never saves a choice. The design covers dialog Escape handling, focus, touch and reduced motion, and coordinates overlapping permission controls with `unify-change-permission-picker`.
+Checks run on the current branch:
 
-Planned verification: focused DOM tests for search, keyboard/focus, disabled options, dismissal and exactly-once selection; affected UI regression tests; `bun run check`, binary and demo builds; and manual demo/macOS checks in both themes at narrow widths and 200% zoom, including screen-reader and touch interaction.
+- Passed: `bun run build`, `bun run build:demo` and `dist/spec-control --version` (`dev`).
+- Failed: `bun run check` outside the sandbox (lint and typecheck passed; 2,317 tests passed, 3 failed): activity-log scan and archived-list timeouts, plus a stale PR-list refresh assertion (3 calls instead of 4). All three failed tests passed on isolated reruns; the full suite has no passing run. The initial sandbox run also failed to start local test servers.
+- Failed: `openspec validate dropdown-ui --strict --json`; `.openspec.yaml` contains the unrecognized `spec-control` key.
 
-This PR contains planning artifacts only; implementation and its verification remain pending in `tasks.md`.
+Feature-specific DOM, accessibility, touch and macOS checks remain unverified because the shared dropdown and call-site migrations are absent.
