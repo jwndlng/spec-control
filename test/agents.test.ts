@@ -125,6 +125,18 @@ test("every preset is a valid one-line profile that invokes OpenSpec the way its
   expect(CODEX_PROFILE.resumeCommand).toEqual(["codex", "resume", "--last"]);
 });
 
+test("Draft and Implement prompts prepare and keep the PR description current", () => {
+  for (const preset of AGENT_PRESETS) {
+    const draft = openingPrompt(preset.profile, "draft", "rotate-keys") as string;
+    const implement = openingPrompt(preset.profile, "implement", "rotate-keys") as string;
+    expect(draft).toContain("openspec/changes/rotate-keys/pull-request.md");
+    expect(draft).toContain("planned verification");
+    expect(implement).toContain("delivered behavior and checks actually run");
+    expect(implement).toContain("remove planned or unverified statements");
+    expect(implement).toContain("unless it ran and passed");
+  }
+});
+
 test("configs from the transcript-based version load: their keys are dropped, defaults fill in", () => {
   const old = { ...base, agentSessions: { enabled: true, maxRunning: 2, idleMinutes: 30, claudePath: "claude", passApiKeyEnv: false, commands: { draft: "/opsx:ff {change}" } }, repos: [{ ...newRepoConfig("/w/demo-ops", true), agent: { enabled: true, allowedTools: ["Bash(x)"] } }] };
   const cfg = validateConfig(old);

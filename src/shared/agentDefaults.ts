@@ -14,6 +14,8 @@ const FORMER_IMPLEMENT_TAIL =
   "when a task can only be verified or carried out by me (a secret to enter, an account to sign in to, a check on a real device), do every part of it you can, then leave it as `- [~]` instead of `- [x]` or `- [ ]`, and add to its line what exactly I have to check or do.";
 
 const IMPLEMENT_TAIL = `${TASK_COMPLETION_INSTRUCTION} ${FORMER_IMPLEMENT_TAIL}`;
+const DRAFT_DESCRIPTION = "Also create openspec/changes/{change}/pull-request.md with a concise reviewer-facing summary of the problem, intended outcome and planned verification, based on the change artifacts.";
+const IMPLEMENT_DESCRIPTION = "Update openspec/changes/{change}/pull-request.md for pull request reviewers: describe delivered behavior and checks actually run, remove planned or unverified statements, and keep it concise. Never claim a check passed unless it ran and passed.";
 
 /** Walks the user through the `- [~]` tasks; what the user does not confirm stays as it is. */
 const VALIDATE_TAIL =
@@ -39,7 +41,7 @@ const PREVIOUS_ARCHIVE_TAIL =
 
 /** How one agent invokes each OpenSpec workflow for `{change}`; the `- [~]` tails are appended to apply and archive. */
 function starterPrompts(invoke: { draft: string; apply: string; archive: string }): AgentProfile["prompts"] {
-  return { draft: invoke.draft, implement: `${invoke.apply} — ${IMPLEMENT_TAIL}`, validate: `${invoke.apply} — ${VALIDATE_TAIL}`, archive: `${invoke.archive} — ${ARCHIVE_TAIL}` };
+  return { draft: `${invoke.draft} — ${DRAFT_DESCRIPTION}`, implement: `${invoke.apply} — ${IMPLEMENT_DESCRIPTION} ${IMPLEMENT_TAIL}`, validate: `${invoke.apply} — ${VALIDATE_TAIL}`, archive: `${invoke.archive} — ${ARCHIVE_TAIL}` };
 }
 
 /**
@@ -122,6 +124,7 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
   {
     profile: CLAUDE_PROFILE,
     formerPrompts: {
+      draft: ["/opsx:ff {change}"],
       implement: ["/opsx:apply {change}", `/opsx:apply {change} — ${PREVIOUS_IMPLEMENT_TAIL}`, `/opsx:apply {change} — ${FORMER_IMPLEMENT_TAIL}`],
       validate: [`/opsx:apply {change} — ${PREVIOUS_VALIDATE_TAIL}`],
       archive: [
@@ -135,6 +138,7 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
   {
     profile: CODEX_PROFILE,
     formerPrompts: {
+      draft: ["Use the openspec-ff-change skill to create all artifacts of the OpenSpec change {change}."],
       implement: [`Use the openspec-apply-change skill on the OpenSpec change {change} — ${PREVIOUS_IMPLEMENT_TAIL}`, `Use the openspec-apply-change skill on the OpenSpec change {change} — ${FORMER_IMPLEMENT_TAIL}`],
       validate: [`Use the openspec-apply-change skill on the OpenSpec change {change} — ${PREVIOUS_VALIDATE_TAIL}`],
       archive: [
@@ -147,6 +151,7 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
   {
     profile: ANTIGRAVITY_PROFILE,
     formerPrompts: {
+      draft: ["/opsx-ff {change}"],
       implement: [`/opsx-apply {change} — ${PREVIOUS_IMPLEMENT_TAIL}`, `/opsx-apply {change} — ${FORMER_IMPLEMENT_TAIL}`],
       validate: [`/opsx-apply {change} — ${PREVIOUS_VALIDATE_TAIL}`],
       archive: [
