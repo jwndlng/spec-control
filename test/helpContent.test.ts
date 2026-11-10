@@ -95,3 +95,9 @@ test("Getting started introduces setup and how to run it again", () => {
   expect(start?.text).toContain("Run setup again");
   expect(start?.text).toContain("setup");
 });
+
+test("Help explains running session filtering and composition", () => {
+  const board = walked.find((s) => s.id === "board")!.text;
+  for (const term of ["Show running", "waiting for input or quiet", "archive", "Clear filters", "Activity threshold and Hide merged"])
+    expect(board).toContain(term);
+});
