@@ -1,14 +1,12 @@
-# Summary
+## Delivered
 
-The board has no direct way to isolate changes with live agent sessions. Recent activity and lifecycle stages make users scan unrelated cards when checking their running agents.
+- Add a default-off **Show running** switch to combined and project boards. It matches repository and change name against running sessions, including archive, in-place, waiting and quiet agents.
+- Keep the choice in `running=1`; Clear filters resets it while preserving layout. Existing search, repository, activity and archive rules still apply, with session updates changing membership through the existing session list.
+- Update Help and add a What's new entry.
 
-This proposal defines a default-off **Show running** filter on combined and project boards. It includes working, waiting and quiet agents, matches sessions by repository and change name, and excludes ended sessions and consoles. The choice persists as `running=1`, composes with existing filters and archive rules, and clears through **Clear filters**. Implementation reuses the existing session list and running-session predicate.
+## Verification
 
-This pull request contains the proposal, behavior delta, design and unchecked implementation tasks; it is ready for implementation.
+- Passed: `bun run check` (lint, typecheck, 2,329 tests; zero failures). Lint reports warnings.
 
-# Planned verification
-
-- Test URL defaults, parsing, round trips, clearing and accessible switch behavior.
-- Test running/ended/archive/in-place sessions, repository isolation, multiple sessions, filter composition and counts.
-- Check session updates, reload and board-return navigation on both boards and in demo routing using synthetic data or the fake agent.
-- Run strict OpenSpec validation and `bun run check`; update Help and validate an independent What's new entry during implementation.
+- Passed: 38 tests across `boardFilters`, `runningBoardUi`, `helpContent` and `whatsNew`, including rendered combined/project boards in path/hash routing, session updates, reload/remount, detail return targets, archive bounds/counts and clearing with sessions disabled. Synthetic sessions only.
+- Passed: strict validation with the repository's `./node_modules/.bin/openspec`, `bun run build`, `bun run build:demo`, and compiled `dist/spec-control --version` (`dev`).
