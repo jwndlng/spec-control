@@ -22,5 +22,4 @@
 - [x] 3.1 Add an independent What's new JSON entry under `src/ui/changelog/entries/` describing that Ship includes a
   prepared pull request description.
 - [x] 3.2 Run `bun run check` and `bun run build`; verify Ship opens a pull request with the prepared body and uses the
-  fallback for a legacy change without the artifact. Verified by successful `bun run build`, the Ship integration tests,
-  and CI run 42787809833 on this branch (Linux `bun run check` and macOS checks both passed).
+  fallback for a legacy change without the artifact.
