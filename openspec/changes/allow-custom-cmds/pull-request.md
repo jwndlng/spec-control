@@ -1,11 +1,11 @@
 # docs(openspec): add allow-custom-cmds
 
-Projects currently inherit a fixed command permission list, so their own build, test and tooling commands cannot be added through Spec Control.
+Adds the proposal, design, spec deltas and implementation checklist for project-scoped custom command allowances. This PR changes only OpenSpec artifacts; it delivers no runtime behavior. All 15 implementation tasks remain unchecked.
 
-This change plans a project-level Custom commands editor and validated command prefixes stored in Spec Control's home configuration. Supported adapters will include them in the next agent launch and its permission preview. The design preserves `minimum`, protected-command restrictions and merge/cleanup gates, and explicitly reports runtimes that cannot apply custom allowances. It covers change sessions and project consoles without changing repository or global agent settings.
+Checks run:
 
-Planned verification covers configuration round trips and atomic validation failures, project isolation, prefix matching and adapter precedence, preview/launch agreement, fresh starts and resume with fake agents, accessible settings behavior and demo parity. Implementation will run `bun run check`, `bun run build`, a compiled-server fake-agent smoke check and strict OpenSpec validation.
+- `bun run check` passed outside the sandbox: lint, typecheck and 2,320 tests (0 failures). Lint reported warnings.
+- `bun run build` passed; `dist/spec-control --version` returned `dev`.
+- `openspec validate allow-custom-cmds --strict` failed (exit 1): the main `dashboard-api` spec has a misplaced `## ADDED Requirements` header at line 1700, blocking archive, and `.openspec.yaml` contains the unrecognized key `spec-control`.
 
-This PR contains planning artifacts only; implementation tasks remain unchecked.
-
-Planning validation passes (`openspec validate allow-custom-cmds --strict`). It reports a pre-existing misplaced delta header in the main `dashboard-api` spec that must be repaired before archive.
+Custom-command behavior and the compiled-server fake-agent launch/resume smoke check remain unverified because the feature is not implemented.
