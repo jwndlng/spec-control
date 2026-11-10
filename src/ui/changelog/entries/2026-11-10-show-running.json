@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-10-show-running",
+  "date": "2026-11-10",
+  "title": "Find changes with running agents",
+  "summary": "Turn on **Show running** in the board filter bar to see changes with a running agent session, including archive sessions and agents waiting for input or quiet. Available on All changes and project boards; the choice stays in the URL."
+}
