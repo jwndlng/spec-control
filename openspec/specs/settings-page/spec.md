@@ -266,8 +266,6 @@ All model fields SHALL support live editing, preserving typed input and validati
 - **WHEN** a profile has `phaseModels.draft` set to `claude-3-opus` and the user clears the Draft field and saves
 - **THEN** `phaseModels.draft` is removed and subsequent draft sessions inherit the profile or global default model
 
-## ADDED Requirements
-
 ### Requirement: Agent sessions settings configure permission profiles and show capability matrix
 The Agent sessions section in Settings SHALL provide controls to configure agent permission profiles and inspect agent capabilities:
 1. A **Default permission profile** selector under general agent settings offering `minimum`, `less-friction` (marked as recommended), and `full-automation`.
