@@ -1,4 +1,4 @@
 schema: spec-driven
 created: 2026-11-09
 spec-control:
-  branch: feat/ship-button-has-no-description
+  branch: fix/ship-button-pr-description-ci
