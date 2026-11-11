@@ -108,8 +108,8 @@ test("preview: a squash-merged worktree and its branch are removable; the branch
 
   const p = await previewCleanup(r.repo);
   expect(p.base).toBe("origin/main");
-  expect(worktreeOf(p, wt)).toMatchObject({ branch: "feat/audit-trail", managed: true, removable: true, work: { state: "merged" } });
-  expect(branchOf(p, "feat/audit-trail")).toMatchObject({ removable: true, mergedBy: "content", worktreePath: wt });
+  expect(worktreeOf(p, wt)).toMatchObject({ branch: "feat/audit-trail", managed: true, removable: false, reason: "it is part of the active change audit-trail", work: { state: "merged" } });
+  expect(branchOf(p, "feat/audit-trail")).toMatchObject({ removable: false, reason: "it is part of the active change audit-trail" });
   expect(branchOf(p, "main")).toBeUndefined();
 });
 
@@ -128,9 +128,22 @@ test("preview: an unmerged branch is kept with its commit count; a fast-forward-
   git(r.path, "push", "-q", "origin", "main");
 
   const p = await previewCleanup(r.repo);
-  expect(branchOf(p, "fix/parser")).toMatchObject({ removable: false, reason: "2 commit(s) not in origin/main" });
+  expect(branchOf(p, "fix/parser")).toMatchObject({ removable: false, reason: expect.stringContaining("unmerged work from the last 30 days") });
   expect(branchOf(p, "feat/done")).toMatchObject({ removable: true, mergedBy: "ancestry" });
   expect(worktreeOf(p, wt)).toMatchObject({ managed: false, removable: true });
+});
+
+test("preview: old unmerged branch without an active change is removable", async () => {
+  const r = await repoWithOrigin();
+  const wt = await userWorktree(r, "fix/old-maintenance");
+  await writeFile(join(wt, "old.txt"), "old work\\n");
+  git(wt, "add", "-A");
+  const oldDateEnv = { ...process.env, GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z" };
+  const result = Bun.spawnSync(["git", "commit", "-q", "-m", "edit old.txt"], { cwd: wt, env: oldDateEnv, stdout: "pipe", stderr: "pipe" });
+  if (result.exitCode !== 0) throw new Error(`git commit: ${result.stderr.toString()}`);
+  const p = await previewCleanup(r.repo);
+  expect(branchOf(p, "fix/old-maintenance")).toMatchObject({ removable: true, reason: "old work not associated with an active change" });
+  expect(worktreeOf(p, wt)).toMatchObject({ removable: true });
 });
 
 test("preview: a dirty user worktree is kept and so is its merged branch", async () => {
@@ -209,21 +222,21 @@ test("preview writes nothing, not even a refreshed index", async () => {
 
 test("apply: removes the worktree, then its branch, and reports the commit to restore it", async () => {
   const r = await repoWithOrigin();
-  const wt = await dashboardWorktree(r, "audit-trail");
+  const wt = await dashboardWorktree(r, "quiet");
   await commit(wt, "a.txt", "1");
-  squashMerge(r, "feat/audit-trail");
+  squashMerge(r, "feat/quiet");
   const p = await previewCleanup(r.repo);
-  const b = branchOf(p, "feat/audit-trail")!;
+  const b = branchOf(p, "feat/quiet")!;
 
   const result = await applyCleanup(r.repo, { worktrees: [wt], prune: false, branches: [{ name: b.name, commit: b.commit }] });
   expect(result.items).toEqual([
     { kind: "worktree", id: wt, outcome: "removed" },
-    { kind: "branch", id: "feat/audit-trail", outcome: "deleted", commit: b.commit },
+    { kind: "branch", id: "feat/quiet", outcome: "deleted", commit: b.commit },
   ]);
   expect(existsSync(wt)).toBe(false);
-  expect(branches(r.path)).not.toContain("refs/heads/feat/audit-trail");
-  git(r.path, "branch", "feat/audit-trail", b.commit); // the restore command the dialog shows
-  expect(git(r.path, "rev-parse", "feat/audit-trail")).toBe(b.commit);
+  expect(branches(r.path)).not.toContain("refs/heads/feat/quiet");
+  git(r.path, "branch", "feat/quiet", b.commit); // the restore command the dialog shows
+  expect(git(r.path, "rev-parse", "feat/quiet")).toBe(b.commit);
 });
 
 test("apply: re-checks every item — a new file, a moved branch, a foreign path and a bad name are all kept", async () => {
@@ -528,9 +541,9 @@ test("a subfolder project's unmerged branch is kept with its commit count, and a
   git(m.top, "switch", "-q", "main");
 
   const p = await previewCleanup(repo);
-  expect(branchOf(p, "feat/rotate-keys")).toMatchObject({ removable: false, reason: "1 commit(s) not in origin/main" });
+  expect(branchOf(p, "feat/rotate-keys")).toMatchObject({ removable: false, reason: expect.stringContaining("unmerged work from the last 30 days") });
   const result = await applyCleanup(repo, { worktrees: [], prune: false, branches: [{ name: "feat/rotate-keys", commit: tip }] });
-  expect(result.items).toMatchObject([{ kind: "branch", id: "feat/rotate-keys", outcome: "kept", reason: "1 commit(s) not in origin/main" }]);
+  expect(result.items).toMatchObject([{ kind: "branch", id: "feat/rotate-keys", outcome: "kept", reason: expect.stringContaining("unmerged work from the last 30 days") }]);
   expect(branches(m.top)).toContain("refs/heads/feat/rotate-keys");
 
   squashMergeAt(m.top, "feat/rotate-keys");

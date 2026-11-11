@@ -479,6 +479,8 @@ export interface RepoAgentConfig {
    *  it is ready (agent-merges-docs-prs). The name predates that and is kept for compatibility. Absent means off. */
   autoMergeDocs?: boolean;
   permissionProfile?: AgentPermissionProfileId;
+  /** Optional project-scoped literal command prefixes. Absence and an empty list both mean no extra allowances. */
+  allowedCommands?: string[];
 }
 
 export type AgentPermissionProfileId = "minimum" | "less-friction" | "full-automation";
@@ -492,6 +494,7 @@ export interface AgentPermissionPolicy {
   allowCleanup: boolean;
   optInMerge: boolean;
   optInCleanup: boolean;
+  allowedCommands: string[];
 }
 export interface AdapterResult { args: string[]; settings?: Record<string, unknown>; limitations: string[] }
 export interface AgentCapabilityMatrix { agentId: string; toolFiltering: string; workspaceIsolation: string; remoteGit: string; unattended: string }
@@ -676,6 +679,9 @@ export type ShipResult = Session & {
   autoMergeInstructionIncluded: boolean;
   pullRequestUrl?: string;
   pullRequestNumber?: number;
+  pullRequestState?: "created" | "existing" | "unavailable";
+  taskSummary?: ShipTaskSummary;
+  shipWarning?: string;
 };
 export type AutoMergePromptResult = PromptResult & { autoMerge: boolean };
 export interface ShipPreflight {
@@ -691,7 +697,7 @@ export interface ShipTaskSummary {
   awaiting: string[];
   truncated: boolean;
 }
-export interface ShipRequest { title?: string; confirmation?: string; finishTasks?: boolean }
+export interface ShipRequest { title?: string; confirmation?: string; finishTasks?: boolean; confirmAllTasks?: boolean }
 
 export const TASK_COMPLETION_INSTRUCTION = "Complete and verify every task you can, including automated checks, before shipping. Tick only tasks supported by evidence; report the precise blocker for anything unresolved. Reserve - [~] for work that truly requires the user, complete all automatable parts first, and state exactly what the user must check or do on that task's line.";
 export const SHIP_COMPLETION_INSTRUCTION = `${TASK_COMPLETION_INSTRUCTION} Identify checks that require a PR or its CI, preserve their unresolved markers, and revisit them when evidence is available.`;
@@ -1179,7 +1185,9 @@ export function availableActions(change: Pick<ChangeSnapshot, "archived" | "arti
   if ((change.stage === "ready" || change.stage === "implementing") && !change.blocked) actions.push("implement");
   // In `Done` there is nothing left to implement; offering it is what sends an agent back into finished code.
   if (change.stage === "done" && change.subState === "validate") actions.push("validate");
-  if (change.stage === "done") actions.push("archive"); // every task settled, not archived yet
+  const required = change.artifacts.some((a) => a.required !== undefined) ? change.artifacts.filter((a) => a.required) : change.artifacts;
+  const artifacts = required.length ? required : change.artifacts;
+  if (artifacts.length > 0 && artifacts.every((a) => a.status === "done")) actions.push("archive");
   actions.push("custom");
   return actions;
 }

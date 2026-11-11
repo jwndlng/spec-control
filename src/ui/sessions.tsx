@@ -1,6 +1,7 @@
 import { FinishChecks } from "./finishChecks.tsx";
+import { ShipResultDialog } from "./shipResultDialog.tsx";
 import { ShipPreflightDialog, type ShipChoice } from "./shipPreflightDialog.tsx";
-import type { ShipPreflight } from "../shared/types.ts";
+import type { ShipPreflight, ShipResult } from "../shared/types.ts";
 // Agent sessions in the UI: a provider that polls the session list while the feature is on, and the controls a
 // card shows (starter buttons, or a badge that opens the session panel).
 import { createContext, Fragment, type ComponentChildren } from "preact";
@@ -234,6 +235,7 @@ export function SessionProvider({
     [refresh, openConsole, sessions, worktrees, reportUnsent, config, askFastForward, onConfig],
   );
 
+  const [shipResult, setShipResult] = useState<ShipResult>();
   const [shipAsk, setShipAsk] = useState<{ preview: ShipPreflight; answer: (choice: ShipChoice) => void }>();
   const shipping = useRef(new Set<string>());
   const ship = useCallback(async (id: string) => {
@@ -246,9 +248,10 @@ export function SessionProvider({
         const choice = await new Promise<ShipChoice>((answer) => setShipAsk({ preview, answer }));
         setShipAsk(undefined);
         if (choice === "cancel") return;
-        result = await api.shipSession(id, choice === "finish" ? { finishTasks: true } : { confirmation: preview.token });
+        result = await api.shipSession(id, choice === "finish" ? { finishTasks: true } : choice === "confirm" ? { confirmAllTasks: true, confirmation: preview.token } : { confirmation: preview.token });
       }
       reportShip({ reportUnsent, reportAutoMerge }, id, result);
+      setShipResult(result);
     } finally { shipping.current.delete(id); }
   }, []);
 
@@ -267,7 +270,14 @@ export function SessionProvider({
   return (
     <Context.Provider value={value}>
       {children}
-      {shipAsk && <ShipPreflightDialog preview={shipAsk.preview} answer={shipAsk.answer} />}
+      {shipResult && <ShipResultDialog result={shipResult} close={() => setShipResult(undefined)} review={() => {
+        if (!isConsole(shipResult) && !isIntegration(shipResult) && !isProjectConsole(shipResult)) openConsole(shipResult.repoId, shipResult.change, shipResult.id);
+        setShipResult(undefined);
+      }} />}
+      {shipAsk && <ShipPreflightDialog preview={shipAsk.preview} answer={(choice) => {
+        shipAsk.answer(choice);
+        setShipAsk(undefined);
+      }} />}
       {fastForwardAsk && (
         <FastForwardDialog
           change={fastForwardAsk.change}

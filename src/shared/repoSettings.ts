@@ -9,6 +9,7 @@ export interface RepoAgentPatch {
   agentId?: string | null;
   autoMergeDocs?: boolean;
   permissionProfile?: AgentPermissionProfileId | null;
+  allowedCommands?: string[] | null;
 }
 
 /** A repository without agent settings is included (`repoAgentEnabled`), so the first change starts from `{ enabled: true }`. */
@@ -22,6 +23,8 @@ export function withRepoAgent(repo: RepoConfig, patch: RepoAgentPatch): RepoConf
   else if (patch.autoMergeDocs === false) delete agent.autoMergeDocs;
   if (patch.permissionProfile === null) delete agent.permissionProfile;
   else if (patch.permissionProfile !== undefined) agent.permissionProfile = patch.permissionProfile;
+  if (patch.allowedCommands === null || patch.allowedCommands?.length === 0) delete agent.allowedCommands;
+  else if (patch.allowedCommands !== undefined) agent.allowedCommands = [...patch.allowedCommands];
   return { ...repo, agent };
 }
 

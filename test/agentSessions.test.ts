@@ -38,6 +38,28 @@ test("Antigravity receives supported mode and sandbox flags without an undocumen
   terminal.detach();
 });
 
+test("change-session permissions use the current project commands on start and resume only", async () => {
+  const h = await harness({ agent: { id: "claude" } });
+  managers.push(h.manager);
+  h.config.agentSessions.defaultAgent = "claude";
+  h.config.repos[0]!.agent = { enabled: true, permissionProfile: "less-friction", allowedCommands: ["bun run lint"] };
+  const session = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const first = await watch(h.manager, session.id);
+  await waitFor(() => first.text().includes("fake-agent ready"), "change agent start");
+  expect(first.text()).toContain("Bash(bun run lint)");
+  h.config.repos[0]!.agent.allowedCommands = ["bun run test"];
+  expect(first.text()).not.toContain("Bash(bun run test)");
+  await h.manager.close(session.id);
+  await h.manager.resume(session.id);
+  const resumed = await watch(h.manager, session.id);
+  await waitFor(() => resumed.text().includes("--resumed"), "change agent resume");
+  const resumedOutput = resumed.text().slice(resumed.text().lastIndexOf("fake-agent ready"));
+  expect(resumedOutput).toContain("Bash(bun run test)");
+  expect(resumedOutput).not.toContain("Bash(bun run lint)");
+  first.detach();
+  resumed.detach();
+});
+
 let cleanup: () => Promise<void>;
 let gh: GhHarness;
 const managers: SessionManager[] = [];
@@ -49,6 +71,7 @@ beforeAll(async () => {
 
 afterEach(async () => {
   for (const m of managers.splice(0)) await m.shutdown();
+  await gh.scenario({});
   await gh.forget();
 });
 
@@ -158,6 +181,7 @@ test("Ship commits uncommitted changes, pushes branch to origin, and opens PR vi
   expect(result.shipped).toBe(true);
   expect(result.pullRequestUrl).toBe("https://github.com/acme/demo-ops/pull/99");
   expect(result.pullRequestNumber).toBe(99);
+  expect(result.pullRequestState).toBe("created");
 
   // Verify .openspec.yaml has recorded branch
   const marker = await Bun.file(join(session.worktreePath, `openspec/changes/${IMPLEMENT}/.openspec.yaml`)).text();
@@ -262,11 +286,27 @@ test("Ship reuses existing open pull request from cache if present", async () =>
   const result = await manager.ship(session.id);
   expect(result.shipped).toBe(true);
   expect(result.pullRequestNumber).toBe(42);
+  expect(result.pullRequestState).toBe("existing");
   expect(result.pullRequestUrl).toBe("https://github.com/acme/demo-ops/pull/42");
 
   // gh pr create was NOT called
   const calls = await gh.calls();
   expect(calls.filter((c) => c.argv.includes("create"))).toHaveLength(0);
+});
+
+test("Ship reports partial completion when gh returns no valid PR URL", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  managers.push(h.manager);
+  const session = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/notes.md`, "ready to ship\n");
+  await gh.scenario({ createOutput: "not a pull request URL" });
+  const preflight = await h.manager.ship(session.id);
+  expect(preflight.preflight?.summary.open.length).toBeGreaterThan(0);
+  const result = await h.manager.ship(session.id, { confirmation: preflight.preflight!.token });
+  expect(result).toMatchObject({ shipped: false, submitted: true, pullRequestState: "unavailable" });
+  expect(result.pullRequestUrl).toBeUndefined();
+  expect(result.shipWarning).toContain("no valid pull request URL");
 });
 
 test("Ship records autoMergeAskedAt when only OpenSpec documents changed and autoMergeDocs is on", async () => {
@@ -283,7 +323,7 @@ test("Ship records autoMergeAskedAt when only OpenSpec documents changed and aut
   await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/notes.md`, "some notes\n");
 
   const result = await manager.ship(session.id);
-  expect(result.autoMerge).toBe(true);
+  expect(result).toMatchObject({ shipped: true, pullRequestState: "created", autoMerge: true });
   expect(result.autoMergeInstructionIncluded).toBe(true);
 
   const updated = manager.get(session.id) as ChangeSession;
@@ -641,6 +681,7 @@ test("Fast-forward exits with awaiting tasks without automatically committing, p
   const change = "add-health-endpoint";
   const session = await manager.open({ repoId: h.repoId, change, action: "fastForward" });
   await putFile(session.worktreePath, `openspec/changes/${change}/tasks.md`, "- [x] Built\n- [~] Verify on a real device\n");
+  await putFile(session.worktreePath, `openspec/changes/${change}/notes.md`, "ready for review\n");
   const before = git(session.worktreePath, "rev-parse", "HEAD");
   const seen = await watch(manager, session.id);
   await waitFor(() => seen.text().includes("fake-agent ready"), "agent ready");
@@ -649,8 +690,11 @@ test("Fast-forward exits with awaiting tasks without automatically committing, p
   await manager.shutdown();
   expect(git(session.worktreePath, "rev-parse", "HEAD")).toBe(before);
   expect((await gh.calls()).some((call) => call.argv.includes("create"))).toBe(false);
-  const result = await manager.ship(session.id);
-  expect(result).toMatchObject({ shipped: false, preflight: { summary: { awaiting: ["Verify on a real device"] } } });
+  const preflight = await manager.ship(session.id);
+  expect(preflight.preflight?.summary.awaiting).toEqual(["Verify on a real device"]);
+  const result = await manager.ship(session.id, { confirmation: preflight.preflight!.token });
+  expect(result).toMatchObject({ shipped: true, submitted: true, taskSummary: { awaiting: ["Verify on a real device"] } });
+  expect(await Bun.file(join(session.worktreePath, `openspec/changes/${change}/tasks.md`)).text()).toContain("[~] Verify on a real device");
 });
 
 test("a previous docs auto-merge record does not bypass unresolved implementation or archive tasks", async () => {

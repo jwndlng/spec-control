@@ -5,7 +5,7 @@ import { FinishChecks } from "./finishChecks.tsx";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { SHIPPABLE_WORK, type AgentPermissionProfileId, type ChangeSnapshot, type ChangeSession, type Session, type SessionAction, type SessionWorktree, type Shortcut } from "../shared/types.ts";
+import { SHIPPABLE_WORK, type ChangeSnapshot, type ChangeSession, type Session, type SessionAction, type SessionWorktree, type Shortcut } from "../shared/types.ts";
 import type { PullRequestStep } from "../shared/nextStep.ts";
 import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { api, type TerminalMessage } from "./api.ts";
@@ -315,7 +315,6 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   const nextAgent = ui.config?.agentSessions.agents.find((agent) => agent.id === nextAgentId);
   const [agentError, setAgentError] = useState<string>();
   const [savingAgent, setSavingAgent] = useState(false);
-  const [savingPermission, setSavingPermission] = useState(false);
   const chooseAgent = async (agentId: string) => {
     if (!repoId || !change || savingAgent) return;
     setSavingAgent(true);
@@ -327,14 +326,6 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
     } finally {
       setSavingAgent(false);
     }
-  };
-  const choosePermission = async (profile: string) => {
-    if (!repoId || !change || savingPermission) return;
-    setSavingPermission(true);
-    setAgentError(undefined);
-    try { ui.saveConfig(await api.setChangePermissionProfile(repoId, change, profile ? profile as AgentPermissionProfileId : null)); }
-    catch (err) { setAgentError(err instanceof Error ? err.message : String(err)); }
-    finally { setSavingPermission(false); }
   };
   const canResolve = resolvable(session, tree, card ? linkedPullRequest(card, prs.data?.repos) : undefined, prs.data?.repos.find((r) => r.repoId === repoId)?.fetchedAt);
   const merged = tree?.work.state === "merged";
@@ -381,12 +372,6 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
               {ui.config.agentSessions.agents.map((agent) => <option value={agent.id}>{agent.name}</option>)}
             </select></label>
           </div>
-        )}
-        {card && repo && ui.config?.agentSessions.enabled && (
-          <div class="row change-permission-picker"><label>Permission profile <select aria-label="Change permission profile" value={repo.agentOverrides?.[change ?? ""]?.permissionProfile ?? ""} disabled={savingPermission} onChange={(event) => void choosePermission(event.currentTarget.value)}>
-            <option value="">Inherit ({repo.agent?.permissionProfile ?? ui.config.agentSessions.defaultPermissionProfile ?? "minimum"})</option>
-            <option value="minimum">Minimum</option><option value="less-friction">Less friction</option><option value="full-automation">Full automation</option>
-          </select></label></div>
         )}
         {agentError && <div class="notice danger" role="status">{agentError}</div>}
         {session && nextAgent && session.agentId !== nextAgent.id && <div class="hint">This session uses {session.agentName}; the next session starts {nextAgent.name}.</div>}
