@@ -2,3 +2,4 @@ schema: spec-driven
 created: 2026-11-10
 spec-control:
   branch: feat/dedupe-archived-change-cards
+  archive-branch: chore/archive-dedupe-archived-change-cards
