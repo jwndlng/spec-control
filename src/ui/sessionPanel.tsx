@@ -5,7 +5,15 @@ import { FinishChecks } from "./finishChecks.tsx";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { SHIPPABLE_WORK, type ChangeSnapshot, type ChangeSession, type Session, type SessionAction, type SessionWorktree, type Shortcut } from "../shared/types.ts";
+import {
+  SHIPPABLE_WORK,
+  type ChangeSnapshot,
+  type ChangeSession,
+  type Session,
+  type SessionAction,
+  type SessionWorktree,
+  type Shortcut,
+} from "../shared/types.ts";
 import type { PullRequestStep } from "../shared/nextStep.ts";
 import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { api, type TerminalMessage } from "./api.ts";
@@ -13,7 +21,25 @@ import { cdCommand } from "./format.ts";
 import { inPlaceReason } from "./inPlaceText.ts";
 import { NOT_SUBMITTED_NOTICE, shortcutHint, shortcutMessage, visibleShortcuts } from "./quickReplies.ts";
 import { usePullRequests } from "./pullRequests.tsx";
-import { autoEndedText, autoMergeNotice, cleanupNotice, conflictAction, consoleSteps, handedOverProposal, mergeControl, mergeNotice, oneAtATime, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, sessionsEnabledFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
+import {
+  autoEndedText,
+  autoMergeNotice,
+  cleanupNotice,
+  conflictAction,
+  consoleSteps,
+  handedOverProposal,
+  mergeControl,
+  mergeNotice,
+  oneAtATime,
+  reportShip,
+  RESUME_TO_MERGE,
+  resolvable,
+  sessionBadge,
+  sessionsEnabledFor,
+  starterSplit,
+  workBadge,
+  worktreeOfSession,
+} from "./sessionState.ts";
 import { ConflictBadge, OpenInEditor, SessionBadgeView, SessionControls, useSessionUi } from "./sessions.tsx";
 import { StaleCleanupOutcome } from "./staleCleanup.tsx";
 
@@ -191,7 +217,14 @@ export function TerminalView({ sessionId, running, onExit }: { sessionId: string
             Shortcuts:
           </span>
           {shortcuts.map((shortcut) => (
-            <button key={shortcut.id} type="button" class="btn sm" title={shortcutHint(shortcut)} disabled={guarded.includes(shortcut.id)} onClick={() => sendShortcut(shortcut)}>
+            <button
+              key={shortcut.id}
+              type="button"
+              class="btn sm"
+              title={shortcutHint(shortcut)}
+              disabled={guarded.includes(shortcut.id)}
+              onClick={() => sendShortcut(shortcut)}
+            >
               {shortcut.title}
             </button>
           ))}
@@ -201,7 +234,14 @@ export function TerminalView({ sessionId, running, onExit }: { sessionId: string
   );
 }
 
-const STEP_LABEL: Record<SessionAction, string> = { draft: "Draft artifacts", fastForward: "Fast-forward", implement: "Implement", validate: "Validate", archive: "Archive", custom: "Custom session" };
+const STEP_LABEL: Record<SessionAction, string> = {
+  draft: "Draft artifacts",
+  fastForward: "Fast-forward",
+  implement: "Implement",
+  validate: "Validate",
+  archive: "Archive",
+  custom: "Custom session",
+};
 
 /**
  * The change's sessions, in the slot the delta specs use for their file list. Omitted for a single session: there is
@@ -213,19 +253,23 @@ export function ConsoleSessionList({ sessions, selected, onSelect }: { sessions:
   const inFlight = useRef(false);
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string>();
-  const remove = (session: ChangeSession) => oneAtATime(inFlight, setRemoving)(async () => {
-    try {
-      setError(undefined);
-      await api.deleteSession(session.id);
-      if (session.id === selected) {
-        const remaining = sessions.find((s) => s.id !== session.id);
-        if (remaining) onSelect(remaining.id);
+  const remove = (session: ChangeSession) =>
+    oneAtATime(
+      inFlight,
+      setRemoving,
+    )(async () => {
+      try {
+        setError(undefined);
+        await api.deleteSession(session.id);
+        if (session.id === selected) {
+          const remaining = sessions.find((s) => s.id !== session.id);
+          if (remaining) onSelect(remaining.id);
+        }
+        await ui.refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
       }
-      await ui.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  });
+    });
   if (sessions.length < 2) return null;
   return (
     <nav class="detail-files console-sessions" aria-label="Sessions of this change">
@@ -291,12 +335,34 @@ export function useTerminalGeneration(session: Session | undefined): number {
  * has neither a session nor a worktree — the tab exists before any agent has run, and then its job is to offer the
  * starters rather than to explain itself away.
  */
+const SHIP_DISMISSED_KEY = "spec-control.ship-dismissed";
+function dismissedShipOperations(): Set<string> {
+  try {
+    return new Set(JSON.parse(sessionStorage.getItem(SHIP_DISMISSED_KEY) ?? "[]") as string[]);
+  } catch {
+    return new Set();
+  }
+}
+function shipOperationDismissed(id: string): boolean {
+  return dismissedShipOperations().has(id);
+}
+function dismissShipOperation(id: string): void {
+  const dismissed = dismissedShipOperations();
+  dismissed.add(id);
+  try {
+    sessionStorage.setItem(SHIP_DISMISSED_KEY, JSON.stringify([...dismissed]));
+  } catch {
+    /* storage is optional */
+  }
+}
+
 export function ConsolePanel({ session, worktree, of }: { session?: ChangeSession; worktree?: SessionWorktree; of?: { repoId: string; change: string } }) {
   const ui = useSessionUi();
   const prs = usePullRequests();
   const [error, setError] = useState<string>();
   const inFlight = useRef(false);
   const [acting, setActing] = useState(false);
+  const [dismissedShipOperation, setDismissedShipOperation] = useState<string>();
   // An agent that was started again (Resume, Ship — from here or from the end-session dialog) gets a fresh terminal view.
   const generation = useTerminalGeneration(session);
 
@@ -327,7 +393,25 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
       setSavingAgent(false);
     }
   };
-  const canResolve = resolvable(session, tree, card ? linkedPullRequest(card, prs.data?.repos) : undefined, prs.data?.repos.find((r) => r.repoId === repoId)?.fetchedAt);
+  const canResolve = resolvable(
+    session,
+    tree,
+    card ? linkedPullRequest(card, prs.data?.repos) : undefined,
+    prs.data?.repos.find((r) => r.repoId === repoId)?.fetchedAt,
+  );
+  const shipOperation = session?.shipOperation;
+  const shipStageLabel =
+    shipOperation?.stage === "preparing"
+      ? "Preparing to ship"
+      : shipOperation?.stage === "committing"
+        ? "Committing changes"
+        : shipOperation?.stage === "pushing"
+          ? "Pushing branch"
+          : shipOperation?.stage === "pull-request"
+            ? "Opening or finding pull request"
+            : shipOperation?.stage === "refreshing"
+              ? "Refreshing pull request details"
+              : undefined;
   const merged = tree?.work.state === "merged";
   // Merge: the session's open pull request, from the lists the page already holds (agent-merges-docs-prs D7) — or the
   // proposal's, handed to the change's running session once the proposal session ended (one-console-per-change D3).
@@ -349,7 +433,10 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
 
   // One header action at a time: a double-click on Ship or Resume would otherwise start two agents in one worktree.
   const act = (fn: () => Promise<unknown>) =>
-    oneAtATime(inFlight, setActing)(async () => {
+    oneAtATime(
+      inFlight,
+      setActing,
+    )(async () => {
       try {
         setError(undefined);
         await fn();
@@ -367,14 +454,37 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
       <header class="session-head">
         {card && repo && ui.config && ui.config.agentSessions.agents.length > 1 && (
           <div class="row change-agent-picker">
-            <label>Agent <select aria-label="Change agent" value={repo.agent?.changeAgents?.[change ?? ""] ?? ""} disabled={savingAgent} onChange={(event) => void chooseAgent(event.currentTarget.value)}>
-              <option value="">Project agent ({ui.config.agentSessions.agents.find((agent) => agent.id === repo.agent?.agentId)?.name ?? ui.config.agentSessions.agents.find((agent) => agent.id === ui.config?.agentSessions.defaultAgent)?.name})</option>
-              {ui.config.agentSessions.agents.map((agent) => <option value={agent.id}>{agent.name}</option>)}
-            </select></label>
+            <label>
+              Agent{" "}
+              <select
+                aria-label="Change agent"
+                value={repo.agent?.changeAgents?.[change ?? ""] ?? ""}
+                disabled={savingAgent}
+                onChange={(event) => void chooseAgent(event.currentTarget.value)}
+              >
+                <option value="">
+                  Project agent (
+                  {ui.config.agentSessions.agents.find((agent) => agent.id === repo.agent?.agentId)?.name ??
+                    ui.config.agentSessions.agents.find((agent) => agent.id === ui.config?.agentSessions.defaultAgent)?.name}
+                  )
+                </option>
+                {ui.config.agentSessions.agents.map((agent) => (
+                  <option value={agent.id}>{agent.name}</option>
+                ))}
+              </select>
+            </label>
           </div>
         )}
-        {agentError && <div class="notice danger" role="status">{agentError}</div>}
-        {session && nextAgent && session.agentId !== nextAgent.id && <div class="hint">This session uses {session.agentName}; the next session starts {nextAgent.name}.</div>}
+        {agentError && (
+          <div class="notice danger" role="status">
+            {agentError}
+          </div>
+        )}
+        {session && nextAgent && session.agentId !== nextAgent.id && (
+          <div class="hint">
+            This session uses {session.agentName}; the next session starts {nextAgent.name}.
+          </div>
+        )}
         <div class="row">
           {session && <span class="hint">{session.agentName}</span>}
           {repo && <span class="hint">· {repo.name}</span>}
@@ -400,125 +510,227 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
             </span>
           )}
         </div>
-        <div class="row">
-          {card && <FinishChecks card={card} />}
+        <div class="console-ship-primary">
           {shippable && session && (
-            <button
-              type="button"
-              class="btn sm primary"
-              disabled={acting}
-              title="Commits, pushes and opens a pull request deterministically on the server without an agent"
-              onClick={() =>
-                act(async () => {
-                  await ui.ship(session.id);
-                })
-              }
+            <div class="console-ship-action">
+              <button
+                type="button"
+                class="btn sm primary"
+                disabled={acting || ui.shippingIds.has(session.id)}
+                title="Commits, pushes and opens a pull request deterministically on the server without an agent"
+                onClick={() =>
+                  act(async () => {
+                    await ui.ship(session.id);
+                  })
+                }
+              >
+                {ui.shippingIds.has(session.id) ? "Shipping…" : "⇪ Ship"}
+              </button>
+              <span>Commit this change, push its branch, and open or reuse a pull request. This does not merge it.</span>
+            </div>
+          )}
+          {shipOperation && dismissedShipOperation !== shipOperation.operationId && !shipOperationDismissed(shipOperation.operationId) && (
+            <div
+              class="hint ship-operation-status"
+              role={shipOperation.state === "failed" ? "alert" : "status"}
+              aria-live={shipOperation.state === "failed" ? "assertive" : "polite"}
             >
-              ⇪ Ship
-            </button>
+              {shipOperation.state === "running" ? (
+                `${shipStageLabel ?? "Shipping"}${shipOperation.committed ? " · committed" : ""}${shipOperation.pushed ? " · pushed" : ""}`
+              ) : shipOperation.state === "failed" ? (
+                <>
+                  Ship failed during {shipOperation.failedStage ?? "preparation"}: {shipOperation.error ?? "unknown error"}
+                  {shipOperation.committed ? " · changes committed" : ""}
+                  {shipOperation.pushed ? " · branch pushed" : ""}
+                  {shipOperation.pullRequestUrl && (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a href={shipOperation.pullRequestUrl} target="_blank" rel="noopener noreferrer">
+                        verified pull request
+                      </a>
+                    </>
+                  )}
+                </>
+              ) : shipOperation.state === "unknown" ? (
+                <>
+                  Ship outcome unknown: {shipOperation.error ?? "the remote may have completed the request"}
+                  {shipOperation.committed ? " · changes committed" : ""}
+                  {shipOperation.pushed ? " · branch pushed" : shipOperation.pushUnknown ? " · push outcome unknown" : ""}
+                  {shipOperation.pullRequestUrl && (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a href={shipOperation.pullRequestUrl} target="_blank" rel="noopener noreferrer">
+                        verified pull request
+                      </a>
+                    </>
+                  )}
+                </>
+              ) : shipOperation.pullRequestUrl ? (
+                <>
+                  <a href={shipOperation.pullRequestUrl} target="_blank" rel="noopener noreferrer">
+                    {shipOperation.pullRequestState === "existing" ? "Open existing pull request" : "Open pull request"}
+                  </a>{" "}
+                  · shipped
+                </>
+              ) : (
+                "Ship finished, but a pull request was not verified."
+              )}
+              {(shipOperation.state === "failed" || shipOperation.state === "unknown") && session && (
+                <button type="button" class="btn sm ghost" disabled={ui.shippingIds.has(session.id)} onClick={() => void act(() => ui.ship(session.id))}>
+                  Retry Ship
+                </button>
+              )}
+              {shipOperation.state !== "running" && (
+                <button
+                  type="button"
+                  class="btn sm ghost"
+                  onClick={() => {
+                    dismissShipOperation(shipOperation.operationId);
+                    setDismissedShipOperation(shipOperation.operationId);
+                  }}
+                >
+                  Dismiss
+                </button>
+              )}
+            </div>
           )}
-          {canResolve && session && !inSplit("resolveConflicts") && (
-            <button
-              type="button"
-              class="btn sm"
-              disabled={acting}
-              title={
-                session.state === "running"
-                  ? `Sends ${session.agentName} a prompt asking it to bring the branch up to date and resolve the conflicts. The dashboard merges nothing itself.`
-                  : `Starts ${session.agentName} in this worktree with a prompt to bring the branch up to date and resolve the conflicts. The dashboard merges nothing itself.`
-              }
-              onClick={() =>
-                act(async () => {
-                  const result = await api.resolveConflicts(session.id);
-                  ui.reportUnsent(result.submitted ? undefined : session.id);
-                })
-              }
-            >
-              ⚠ Resolve conflicts
-            </button>
-          )}
-          {merge && session && !inSplit("merge") && (
-            <button
-              type="button"
-              class="btn sm"
-              disabled={!merge.enabled || acting}
-              title={merge.title}
-              onClick={() =>
-                act(async () => {
-                  const result = await api.mergeSession(session.id);
-                  ui.reportUnsent(result.submitted ? undefined : session.id);
-                })
-              }
-            >
-              ⤵ Merge
-            </button>
-          )}
-          {session && session.state !== "running" && session.resumable && (
-            <button
-              type="button"
-              class="btn sm"
-              disabled={acting}
-              title="Start the agent again in the same worktree, continuing its latest conversation"
-              onClick={() => act(() => api.resumeSession(session.id))}
-            >
-              ▶ Resume
-            </button>
-          )}
-          {session && card && receiving && (
-            <SessionControls
-              card={card}
-              place="console"
-              pullRequest={linked}
-              into={session}
-              steps={{
-                merge: merge && {
-                  key: "merge",
-                  label: "⤵ Merge",
-                  title: merge.title,
-                  disabled: !merge.enabled || acting,
-                  onActivate: () =>
-                    act(async () => {
-                      const result = await api.mergeSession(session.id);
-                      ui.reportUnsent(result.submitted ? undefined : session.id);
-                    }),
-                },
-                // The pull request's step asks the same rule as the detail header: this session, on the head branch.
-                resolveConflicts:
-                  conflictAction(card, ui.worktrees, ui.sessions, prs.data)?.sessionId !== session.id
-                    ? { status: "Conflicts: resolve them on the pull request's branch", title: linked ? `#${linked.number} is on ${linked.head}, not ${session.branch}` : undefined }
-                    : {
-                      key: "resolveConflicts",
-                      label: "⚠ Resolve conflicts",
-                      disabled: acting,
-                      title: `Sends ${session.agentName} a prompt asking it to bring the branch up to date and resolve the conflicts. The dashboard merges nothing itself.`,
-                      onActivate: () =>
-                        act(async () => {
-                          const result = await api.resolveConflicts(session.id);
-                          ui.reportUnsent(result.submitted ? undefined : session.id);
-                        }),
-                    },
-                // Nothing to send for it: the agent is right here, and the failure is on GitHub for it to read.
-                fixChecks: { status: "Checks failing: ask the agent here to fix them", title: linked ? `#${linked.number}'s checks fail` : undefined },
-              }}
-            />
-          )}
-          {session && (
-            <button type="button" class="btn sm" disabled={session.cleanup?.state === "pending"} onClick={() => ui.requestEnd(session.id)}>
-              {session.state === "running" ? "End session" : session.cleanup?.state === "pending" ? "Cleaning up…" : "Clean up"}
-            </button>
-          )}
-          {session && session.state !== "running" && (
-            <button type="button" class="btn sm ghost" disabled={acting} title="Delete this session's record and stored output" onClick={() => act(() => api.deleteSession(session.id))}>
-              Delete record
-            </button>
-          )}
-          {path && <Copy text={cdCommand(path)} label="Copy cd" />}
-          {path && openInEditor && <OpenInEditor folder={path} open={openInEditor} run={act} />}
         </div>
+        <details class="console-more-actions">
+          <summary>More actions</summary>
+          <div class="console-action-groups">
+            <section class="console-action-group" aria-label="Pull request actions">
+              <span class="console-action-heading">Pull request</span>
+              <div class="row console-secondary-actions">
+                {card && <FinishChecks card={card} />}
+                {canResolve && session && !inSplit("resolveConflicts") && (
+                  <button
+                    type="button"
+                    class="btn sm"
+                    disabled={acting}
+                    title={
+                      session.state === "running"
+                        ? `Sends ${session.agentName} a prompt asking it to bring the branch up to date and resolve the conflicts. The dashboard merges nothing itself.`
+                        : `Starts ${session.agentName} in this worktree with a prompt to bring the branch up to date and resolve the conflicts. The dashboard merges nothing itself.`
+                    }
+                    onClick={() =>
+                      act(async () => {
+                        const result = await api.resolveConflicts(session.id);
+                        ui.reportUnsent(result.submitted ? undefined : session.id);
+                      })
+                    }
+                  >
+                    ⚠ Resolve conflicts
+                  </button>
+                )}
+                {merge && session && !inSplit("merge") && (
+                  <button
+                    type="button"
+                    class="btn sm"
+                    disabled={!merge.enabled || acting}
+                    title={merge.title}
+                    onClick={() =>
+                      act(async () => {
+                        const result = await api.mergeSession(session.id);
+                        ui.reportUnsent(result.submitted ? undefined : session.id);
+                      })
+                    }
+                  >
+                    ⤵ Merge
+                  </button>
+                )}
+              </div>
+            </section>
+            <section class="console-action-group" aria-label="Change actions">
+              <span class="console-action-heading">Change</span>
+              <div class="row console-secondary-actions">
+                {session && card && receiving && (
+                  <SessionControls
+                    card={card}
+                    place="console"
+                    pullRequest={linked}
+                    into={session}
+                    steps={{
+                      merge: merge && {
+                        key: "merge",
+                        label: "⤵ Merge",
+                        title: merge.title,
+                        disabled: !merge.enabled || acting,
+                        onActivate: () =>
+                          act(async () => {
+                            const result = await api.mergeSession(session.id);
+                            ui.reportUnsent(result.submitted ? undefined : session.id);
+                          }),
+                      },
+                      // The pull request's step asks the same rule as the detail header: this session, on the head branch.
+                      resolveConflicts:
+                        conflictAction(card, ui.worktrees, ui.sessions, prs.data)?.sessionId !== session.id
+                          ? {
+                              status: "Conflicts: resolve them on the pull request's branch",
+                              title: linked ? `#${linked.number} is on ${linked.head}, not ${session.branch}` : undefined,
+                            }
+                          : {
+                              key: "resolveConflicts",
+                              label: "⚠ Resolve conflicts",
+                              disabled: acting,
+                              title: `Sends ${session.agentName} a prompt asking it to bring the branch up to date and resolve the conflicts. The dashboard merges nothing itself.`,
+                              onActivate: () =>
+                                act(async () => {
+                                  const result = await api.resolveConflicts(session.id);
+                                  ui.reportUnsent(result.submitted ? undefined : session.id);
+                                }),
+                            },
+                      // Nothing to send for it: the agent is right here, and the failure is on GitHub for it to read.
+                      fixChecks: { status: "Checks failing: ask the agent here to fix them", title: linked ? `#${linked.number}'s checks fail` : undefined },
+                    }}
+                  />
+                )}
+              </div>
+            </section>
+            <section class="console-action-group" aria-label="Session actions">
+              <span class="console-action-heading">Session</span>
+              <div class="row console-secondary-actions">
+                {session && session.state !== "running" && session.resumable && (
+                  <button
+                    type="button"
+                    class="btn sm"
+                    disabled={acting}
+                    title="Start the agent again in the same worktree, continuing its latest conversation"
+                    onClick={() => act(() => api.resumeSession(session.id))}
+                  >
+                    ▶ Resume
+                  </button>
+                )}
+                {session && (
+                  <button type="button" class="btn sm" disabled={session.cleanup?.state === "pending"} onClick={() => ui.requestEnd(session.id)}>
+                    {session.state === "running" ? "End session" : session.cleanup?.state === "pending" ? "Cleaning up…" : "Clean up"}
+                  </button>
+                )}
+                {session && session.state !== "running" && (
+                  <button
+                    type="button"
+                    class="btn sm ghost"
+                    disabled={acting}
+                    title="Delete this session's record and stored output"
+                    onClick={() => act(() => api.deleteSession(session.id))}
+                  >
+                    Delete record
+                  </button>
+                )}
+                {path && <Copy text={cdCommand(path)} label="Copy cd" />}
+                {path && openInEditor && <OpenInEditor folder={path} open={openInEditor} run={act} />}
+              </div>
+            </section>
+          </div>
+        </details>
         {(error ?? session?.error) && <div class="notice danger">{error ?? session?.error}</div>}
         {session?.autoEnded && <div class={`notice ${session.autoEnded.removed ? "ok" : "warn"}`}>{autoEndedText(session.autoEnded)}</div>}
         {session?.cleanup && (
-          <div class={`notice ${session.cleanup.state === "done" ? (session.cleanup.worktreeRemoved ? "ok" : "warn") : session.cleanup.state === "pending" ? "" : "danger"}`} role="status">
+          <div
+            class={`notice ${session.cleanup.state === "done" ? (session.cleanup.worktreeRemoved ? "ok" : "warn") : session.cleanup.state === "pending" ? "" : "danger"}`}
+            role="status"
+          >
             {cleanupNotice(session.cleanup, session.change)}
           </div>
         )}
@@ -548,8 +760,8 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
       ) : (
         <div class="console-empty">
           <p class="detail-hint">
-            No session is recorded for this worktree, so there is no terminal to show. Its work is still here — copy a <code>cd</code> for it, open it in your editor, or
-            remove it from Open work when that is safe.
+            No session is recorded for this worktree, so there is no terminal to show. Its work is still here — copy a <code>cd</code> for it, open it in your
+            editor, or remove it from Open work when that is safe.
           </p>
           {path && <p class="hint mono">{path}</p>}
         </div>
@@ -600,7 +812,13 @@ export function ResolveConflicts({ change }: { change: ChangeSnapshot }) {
           {github.pushPending ? " · push pending" : ""}
         </span>
       )}
-      <button type="button" class="btn sm" disabled={busy} title={`${action.lines.join(" ")} Asks ${where} to resolve them; the dashboard merges nothing itself.`} onClick={run}>
+      <button
+        type="button"
+        class="btn sm"
+        disabled={busy}
+        title={`${action.lines.join(" ")} Asks ${where} to resolve them; the dashboard merges nothing itself.`}
+        onClick={run}
+      >
         ⚠ Resolve conflicts
       </button>
       {error && (

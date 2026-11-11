@@ -15,6 +15,8 @@ export interface GhFailure {
   /** `unavailable`: cannot be queried at all. `failed`: this attempt did not work. */
   kind: "unavailable" | "failed";
   reason: string;
+  /** The process timed out after a potentially successful remote mutation; callers must reconcile before claiming failure. */
+  outcomeUnknown?: boolean;
   /** The machine's `gh`, not this repository: the view says it once rather than per repository. */
   setup?: RepoPullRequests["setup"];
 }
@@ -99,7 +101,7 @@ export function failureOf(run: GhRun, purpose = "see pull requests"): GhFailure 
   if (run.missing) return notInstalled(purpose);
   if (run.ok) return undefined;
   if (saysNotSignedIn(run.err)) return NOT_SIGNED_IN;
-  if (run.timedOut) return { kind: "failed", reason: "gh timed out" };
+  if (run.timedOut) return { kind: "failed", reason: "gh timed out", outcomeUnknown: true };
   return { kind: "failed", reason: ghReason(run.err) };
 }
 

@@ -463,7 +463,9 @@ export function createDemoSessions({ now, getConfig, getSnapshot, integratable, 
       if (!change || !availableActions(change).includes("archive")) throw new ApiError(409, "Required change artifacts are not ready in this checkout.");
       const taskSummary = { verified: !!change.tasks?.total, reason: "Demo task state; no real checks run.", total: change.tasks?.total ?? 0, done: change.tasks?.done ?? 0, open: change.tasks && change.tasks.done + (change.tasks.awaiting ?? 0) < change.tasks.total ? ["Verify the implementation checks"] : [], awaiting: change.tasks?.awaitingTasks ?? [], truncated: false };
       run(s, "ship");
-      return { ...s.session, shipped: true, submitted: true, autoMerge: false, autoMergeInstructionIncluded: false, pullRequestState: "created", pullRequestUrl: "https://github.com/acme/demo-ops/pull/999", taskSummary };
+      const pullRequestUrl = "https://github.com/acme/demo-ops/pull/999";
+      s.session.shipOperation = { operationId: `demo-ship-${id}`, state: "succeeded", stage: "done", startedAt: iso(Date.now()), updatedAt: iso(Date.now()), committed: true, pushed: true, pullRequestState: "created", pullRequestUrl };
+      return { ...s.session, shipped: true, submitted: true, autoMerge: false, autoMergeInstructionIncluded: false, pullRequestState: "created", pullRequestUrl, taskSummary };
 
     },
 

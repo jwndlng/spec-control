@@ -683,6 +683,21 @@ export type ShipResult = Session & {
   taskSummary?: ShipTaskSummary;
   shipWarning?: string;
 };
+export type ShipOperationStage = "preparing" | "committing" | "pushing" | "pull-request" | "refreshing" | "done" | "failed";
+export interface ShipOperationStatus {
+  operationId: string;
+  state: "running" | "succeeded" | "failed" | "unknown";
+  stage: ShipOperationStage;
+  failedStage?: Exclude<ShipOperationStage, "done" | "failed">;
+  startedAt: string;
+  updatedAt: string;
+  committed: boolean;
+  pushed: boolean;
+  pushUnknown?: boolean;
+  pullRequestState?: "created" | "existing" | "unavailable";
+  pullRequestUrl?: string;
+  error?: string;
+}
 export type AutoMergePromptResult = PromptResult & { autoMerge: boolean };
 export interface ShipPreflight {
   token: string;
@@ -913,6 +928,8 @@ interface SessionBase {
   /** True once the agent has a conversation that `resumeCommand` can continue. */
   resumable: boolean;
   permissionProfile?: AgentPermissionProfileId;
+  /** Server-owned Ship operation snapshot, retained for reload reconciliation. */
+  shipOperation?: ShipOperationStatus;
 }
 
 /** A session started for one change of one repository, from a card's starter. */
