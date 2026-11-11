@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { relative, dirname } from "node:path";
 import type { FrameworkId, ShipTaskSummary } from "../../shared/types.ts";
 import { frameworkById } from "../frameworks/registry.ts";
+import { isPlanned } from "../../shared/columns.ts";
 import { linkedSegment, LocalRepoSource, readBounded } from "../source.ts";
 
 export const SHIP_TASK_BYTES = 64 * 1024;
@@ -28,6 +29,7 @@ export async function readShipTaskDocument(checkout: string, change: string, fra
     changeDir = entry.dir;
     const project = await framework.readProject(source);
     const result = await framework.readChange(source, project, entry);
+    artifactsReady = isPlanned(result.artifacts);
     if (!result.tasksPath) throw new Error("No tasks file is available in this checkout.");
     tasksPath = result.tasksPath;
     const rel = relative(checkout, result.tasksPath);

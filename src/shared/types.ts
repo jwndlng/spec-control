@@ -676,6 +676,9 @@ export type ShipResult = Session & {
   autoMergeInstructionIncluded: boolean;
   pullRequestUrl?: string;
   pullRequestNumber?: number;
+  pullRequestState?: "created" | "existing" | "unavailable";
+  taskSummary?: ShipTaskSummary;
+  shipWarning?: string;
 };
 export type AutoMergePromptResult = PromptResult & { autoMerge: boolean };
 export interface ShipPreflight {
@@ -1179,7 +1182,9 @@ export function availableActions(change: Pick<ChangeSnapshot, "archived" | "arti
   if ((change.stage === "ready" || change.stage === "implementing") && !change.blocked) actions.push("implement");
   // In `Done` there is nothing left to implement; offering it is what sends an agent back into finished code.
   if (change.stage === "done" && change.subState === "validate") actions.push("validate");
-  if (change.stage === "done") actions.push("archive"); // every task settled, not archived yet
+  const required = change.artifacts.some((a) => a.required !== undefined) ? change.artifacts.filter((a) => a.required) : change.artifacts;
+  const artifacts = required.length ? required : change.artifacts;
+  if (artifacts.length > 0 && artifacts.every((a) => a.status === "done")) actions.push("archive");
   actions.push("custom");
   return actions;
 }

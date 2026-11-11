@@ -2016,8 +2016,8 @@ The preset Implement and Fast-forward prompts SHALL ask the agent to complete an
 Before Ship commits, pushes or opens a pull request, the dashboard SHALL read task state from the session's own checkout and show unresolved tasks. When any remain, it SHALL offer to ask the agent to finish them and SHALL require explicit confirmation to ship with unresolved tasks. For a verified, untruncated task summary, it SHALL also offer the explicit **Mark all complete and Ship** choice. Only that user choice may mark remaining task markers complete; it MUST compare the complete task-file version shown in the preflight, and automatic shipping MUST NOT change task files.
 
 #### Scenario: Open tasks before shipping
-- **WHEN** Ship is activated and the session checkout has an open task
-- **THEN** the preflight names it, offers to ask the agent to complete it, and does not ship without an explicit choice to ship anyway
+- **WHEN** Ship is activated for an artifact-ready change with an open task
+- **THEN** Ship proceeds and reports the task as unresolved without requiring a task-specific override
 
 #### Scenario: Person needed before shipping
 - **WHEN** Ship is activated and a task is marked `- [~]`
@@ -2032,16 +2032,46 @@ Before Ship commits, pushes or opens a pull request, the dashboard SHALL read ta
 - **THEN** the bulk confirmation choice is unavailable or returns a refreshed preflight without changing the file
 
 #### Scenario: A check requires a pull request
-- **WHEN** a task can only be verified after a PR is opened
-- **THEN** the user can explicitly ship despite that unfinished task, and the agent is asked to report the pending check and revisit it after evidence is available
+- **WHEN** a remaining check requires a pull request or its CI
+- **THEN** explicit Ship opens the pull request and reports the unresolved check without changing its marker
 
 #### Scenario: All tasks are complete
-- **WHEN** the session checkout has readable tasks and every task is checked
-- **THEN** deterministic Ship proceeds without an unfinished-task confirmation
+- **WHEN** every task is marked complete and required artifacts are ready
+- **THEN** Ship proceeds without task confirmation and reports the task summary
 
 #### Scenario: Task state is unavailable
-- **WHEN** tasks cannot be read or their state is unknown
-- **THEN** the preflight says it cannot verify completion and requires explicit confirmation before Ship
+- **WHEN** task files are missing, malformed, unreadable or truncated
+- **THEN** Ship reports that task state could not be verified and proceeds if the required artifacts are ready
+
+#### Scenario: Required artifacts are not ready
+- **WHEN** Ship is activated before the required artifacts are ready
+- **THEN** the existing artifact-readiness refusal remains in force
+
+### Requirement: Ship returns an actionable pull request result
+When Ship finds or creates a pull request, its result SHALL include the pull request URL and whether it was newly created or already existed. The UI SHALL present a direct link to that pull request and report any unresolved or unknown task state alongside the result. It SHALL offer the applicable existing agent action for reviewing PR feedback or resolving conflicts, without starting an agent automatically. A successful Ship SHALL NOT imply that the pull request is merged, that checks passed, or that unresolved tasks were completed.
+
+#### Scenario: Ship creates a pull request
+- **WHEN** Ship successfully creates a pull request
+- **THEN** its result gives the user a direct link and identifies the pull request as newly created
+
+#### Scenario: Ship finds an existing pull request
+- **WHEN** Ship finds a pull request for the session branch
+- **THEN** its result gives the user a direct link and identifies the existing pull request without changing its body
+
+#### Scenario: User follows up on pull request feedback
+- **WHEN** Ship has returned a pull request and the session can run the relevant agent action
+- **THEN** the UI lets the user open the pull request and explicitly ask the agent to review feedback or resolve conflicts
+
+#### Scenario: Pull request URL is unavailable
+- **WHEN** Ship cannot obtain a valid pull request URL
+- **THEN** it does not report a complete successful Ship result without a review destination
+
+### Requirement: Explicit Archive is not blocked by unfinished tasks
+For a change whose required artifacts are ready for Archive, unresolved or unknown task state SHALL NOT prevent an explicit Archive action. Archive SHALL preserve task state and SHALL NOT imply that outstanding work was completed. Automatic Archive SHALL continue to follow its separate eligibility requirements, including its task completion gate.
+
+#### Scenario: Ready change has unresolved tasks
+- **WHEN** Archive is explicitly activated for a change with required artifacts ready and one or more unresolved tasks
+- **THEN** Archive proceeds while preserving those task states
 
 ### Requirement: Finish tasks after a merged implementation
 For a change with unresolved tasks and a linked merged implementation PR, the dashboard SHALL offer **Finish checks** to ask an agent to verify and finish remaining tasks. It SHALL use the relevant session or a safe session worktree, and SHALL ask the agent to prepare a reviewable task update after verification.

@@ -5,6 +5,17 @@ Defines how the scanner polls tracked repositories and derives each change's art
 
 ## Requirements
 
+### Requirement: Archived changes are merged with active copies
+When multiple archive directories have the same change name, the scanner SHALL report only the newest archive directory for that name. An older archive SHALL NOT produce another board card. Any leftover active copy SHALL be folded into the newest archive, as before.
+
+#### Scenario: Two archives with the same name
+- **WHEN** a repository contains archives `2026-11-09-agent-permission-sets` and `2026-11-10-agent-permission-sets`
+- **THEN** the scanner reports one archived card dated `2026-11-10`
+
+#### Scenario: Leftover belongs to newest archive
+- **WHEN** a main checkout has an active copy older than both archives
+- **THEN** it is folded into the newest archive, and the older archive does not appear as a separate card
+
 ### Requirement: Scanner polls enabled repositories on an interval
 The scanner SHALL scan every enabled repository each `pollIntervalSeconds` (default 60) and on explicit trigger. Repositories MUST be scanned concurrently with a bounded concurrency (default 4) and a per-repository timeout. If a scan is already in flight, a trigger MUST NOT start a second concurrent full scan; instead it SHALL queue exactly one follow-up scan, which starts once the running scan has finished and reads the configuration and the repositories afresh, so that whatever was written before the trigger is in the snapshot it produces. Any number of triggers while a scan is in flight SHALL queue that one follow-up and no more, and at most one scan SHALL run at any time.
 

@@ -77,15 +77,10 @@ test("the agent picker in the console pane renders when multiple agents exist, a
   expect(panel).toContain("This session uses {session.agentName}; the next session starts {nextAgent.name}.");
 });
 
-test("the change console offers a permission profile override selector and calls the scoped API", () => {
-  expect(panel).toContain('aria-label="Change permission profile"');
-  expect(panel).toContain("api.setChangePermissionProfile(repoId, change");
-  expect(panel).toContain("repo.agentOverrides?.[change ?? \"\"]?.permissionProfile");
-});
-
-test("change detail and project settings expose inherited permission profile selectors", () => {
-  expect(detailSource).toContain('aria-label="Change permission profile"');
-  expect(detailSource).toContain("api.setChangePermissionProfile(repoId, changeName");
+test("change detail owns the single permission picker; project settings keep their own", () => {
+  expect(panel).not.toContain("setChangePermissionProfile");
+  expect(panel).not.toContain("change-permission-picker");
+  expect(detailSource).toContain('<ChangePermissionPicker key={`${repoId}/${changeName}`}');
   expect(projectSettingsSource).toContain("PermissionProfilePicker({ repo, config, tracking })");
   expect(projectSettingsSource).toContain('aria-label={`Permission profile for ${repo.name}`}');
 });

@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { rm, symlink, writeFile } from "node:fs/promises";
+import { readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readShipTasks, SHIP_TASK_BYTES, tasksSettled } from "../src/server/sessions/taskSummary.ts";
 import { createFetchHandler, type AppState } from "../src/server/api.ts";
@@ -29,40 +29,33 @@ async function setup() {
   return { h, s, tasks, seen };
 }
 
-test("Ship reads only its checkout, lists unresolved tasks, and consumes a matching confirmation", async () => {
-  const { h, s, tasks, seen } = await setup();
-  h.config.repos[0].agent = { enabled: true, autoMergeDocs: true };
-  await writeFile(tasks, "- [x] Built\n- [ ] Run checks\n- [~] Sign in to the device\n");
-  const before = await treeFingerprint(s.worktreePath);
-  const preview = await h.manager.ship(s.id);
-  expect(preview).toMatchObject({
-    submitted: false,
-    autoMerge: false,
-    preflight: { summary: { open: ["Run checks"], awaiting: ["Sign in to the device"], done: 1, total: 3 } },
+for (const [name, content, verified] of [
+  ["open", "- [ ] Run checks\n", true],
+  ["awaiting", "- [~] Sign in on the real device\n", true],
+  ["unknown", "no task checkboxes\n", false],
+  ["complete", "- [x] Verified check\n", true],
+] as const) {
+  test(`explicit Ship reports ${name} tasks without confirmation or agent interaction`, async () => {
+    const { h, s, tasks, seen } = await setup();
+    h.config.repos[0].agent = { enabled: true, autoMergeDocs: true };
+    await writeFile(tasks, content);
+    const result = await h.manager.ship(s.id);
+    expect(result).toMatchObject({ submitted: true, taskSummary: { verified } });
+    expect(result.preflight).toBeUndefined();
+    expect(await readFile(tasks, "utf8")).toBe(content);
+    expect(seen.text()).not.toContain("you said: Ship the work");
+    if (name !== "complete") expect(result.autoMerge).toBe(false);
+    if (name === "open") expect(result.taskSummary?.open).toEqual(["Run checks"]);
+    if (name === "awaiting") expect(result.taskSummary?.awaiting).toEqual(["Sign in on the real device"]);
   });
-  expect(seen.text()).not.toContain("you said: Ship the work");
-  expect(await treeFingerprint(s.worktreePath)).toEqual(before);
-  expect((await h.manager.ship(s.id, { confirmation: "invented" })).preflight).toBeDefined();
-  // The newest preview invalidates every earlier token.
-  expect((await h.manager.ship(s.id, { confirmation: preview.preflight!.token })).submitted).toBe(false);
-  const current = await h.manager.ship(s.id);
-  const result = await h.manager.ship(s.id, { confirmation: current.preflight!.token });
-  expect(result).toMatchObject({ submitted: true, autoMerge: false });
-  expect((h.manager.get(s.id) as ChangeSession).autoMergeAskedAt).toBeUndefined();
-  expect((await h.manager.ship(s.id, { confirmation: current.preflight!.token })).preflight).toBeDefined();
-});
+}
 
-test("changed tasks return a new preview; Finish tasks does not send Ship", async () => {
+test("Finish tasks remains an explicit request and does not ship", async () => {
   const { h, s, tasks, seen } = await setup();
   await writeFile(tasks, "- [ ] Check A\n");
-  const preview = await h.manager.ship(s.id);
-  await writeFile(tasks, "- [ ] Check B\n");
-  const changed = await h.manager.ship(s.id, { confirmation: preview.preflight!.token });
-  expect(changed.preflight?.summary.open).toEqual(["Check B"]);
-  expect(changed.preflight?.token).not.toBe(preview.preflight?.token);
-  expect((await h.manager.ship(s.id, { finishTasks: true })).submitted).toBe(true);
+  expect(await h.manager.ship(s.id, { finishTasks: true })).toMatchObject({ submitted: true, shipped: false });
   await waitFor(() => seen.text().includes("Do not ship as part of this request"), "finish prompt");
-  expect(seen.text()).not.toContain("you said: Ship the work");
+  expect(await readFile(tasks, "utf8")).toBe("- [ ] Check A\n");
 });
 
 test("complete tasks proceed without confirmation even when the board snapshot is unresolved", async () => {
@@ -106,7 +99,7 @@ test("bounded task reads fail closed for missing, malformed, symlinked, oversize
   expect((await readShipTasks(s.worktreePath, "upgrade-runtime", "unknown")).summary.verified).toBe(false);
 });
 
-test("a direct Ship API request cannot bypass the server's task preflight", async () => {
+test("a direct Ship API request reports unresolved tasks without confirmation", async () => {
   const { h, s, tasks } = await setup();
   await writeFile(tasks, "- [ ] Run check\n");
   const fetch = createFetchHandler({ state: { sessions: h.manager } as AppState, indexHtml: "" });
@@ -118,7 +111,7 @@ test("a direct Ship API request cannot bypass the server's task preflight", asyn
     }),
   );
   expect(response.status).toBe(200);
-  expect(await response.json()).toMatchObject({ submitted: false, preflight: { summary: { open: ["Run check"] } } });
+  expect(await response.json()).toMatchObject({ submitted: true, taskSummary: { open: ["Run check"] } });
 });
 
 function merged(h: Harness): RepoPullRequests {
@@ -171,6 +164,7 @@ test("Finish checks sends into a running session and resumes an ended one withou
   expect(result).toMatchObject({ id: s.id, submitted: true });
   await waitFor(() => seen.text().includes("never push to the merged branch"), "follow-up prompt");
   expect(seen.text()).toContain("last fetched 2026-11-01");
+  expect(seen.text()).toContain("Verify the current PR and evidence yourself.");
   expect(seen.text()).toContain(CONVENTIONAL_COMMITS_SHIP_SENTENCE);
   expect(seen.text()).toContain("set branch:");
   expect(await treeFingerprint(s.worktreePath)).toEqual(before);
