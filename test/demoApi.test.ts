@@ -227,7 +227,8 @@ test("cleanup is simulated: a merged worktree and its branch go, kept items say 
   const worktree = preview.worktrees.find((w) => w.branch === "chore/upgrade-terraform")!;
   expect(worktree).toMatchObject({ removable: true, work: { state: "merged" } });
   expect(preview.worktrees.some((w) => !w.removable && w.reason)).toBe(true);
-  expect(preview.branches.find((b) => b.name === "experiment/plan-cache")).toMatchObject({ removable: false, reason: "4 commit(s) not in origin/main" });
+  expect(preview.branches.find((b) => b.name === "experiment/plan-cache")).toMatchObject({ removable: false, reason: expect.stringContaining("merge evidence is insufficient"), nextAction: expect.stringContaining("Refresh Pull requests"), evidenceFetchedAt: repo.scannedAt });
+  expect(preview.branches.find((b) => b.name === "fix/state-lock-timeout")).toMatchObject({ mergedBy: "pull-request", pullRequest: 81, evidenceFetchedAt: repo.scannedAt });
   expect(preview.prunable.length).toBe(1);
   const branch = preview.branches.find((b) => b.name === "chore/upgrade-terraform")!;
   expect(branch).toMatchObject({ removable: true, worktreePath: worktree.path });
@@ -245,6 +246,19 @@ test("cleanup is simulated: a merged worktree and its branch go, kept items say 
 
   const fresh = demo().api;
   expect((await fresh.state()).repos.find((r) => r.id === repo.id)!.worktrees.some((w) => w.path === worktree.path)).toBe(true);
+});
+
+test("demo cleanup prunes a stale branch's record before deleting the branch in one confirmation", async () => {
+  const { api } = demo();
+  const repo = (await api.state()).repos.find((r) => r.name === "lantern-infra")!;
+  const b = (await api.cleanupPreview(repo.id)).branches.find((b) => b.prunePath)!;
+  expect(b).toMatchObject({ name: "feat/abandoned-dns-module", removable: true });
+  const branches = [{ name: b.name, commit: b.commit }];
+  const kept = await api.cleanup(repo.id, { worktrees: [], prune: false, branches });
+  expect(kept.items[0]).toMatchObject({ outcome: "kept", reason: expect.stringContaining("select pruning") });
+  const result = await api.cleanup(repo.id, { worktrees: [], prune: true, branches });
+  expect(result.items.map((i) => i.outcome)).toEqual(["pruned", "deleted"]);
+  expect(result.items[1].commit).toBe(b.commit);
 });
 
 test("deleting a branch is simulated: a worktree with work goes with its branch, and a reload brings it back", async () => {

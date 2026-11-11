@@ -312,8 +312,14 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           interval.
         </li>
         <li>
-          <strong>Clean up</strong> on a repository's board removes leftover worktrees and local branches whose work is
-          merged. Only what provably holds no work of its own is offered, and nothing goes before you confirm.
+          <strong>Clean up</strong> on a repository's board removes leftover worktrees and local branches after confirmation.
+          Active changes, dirty worktrees, running sessions and external locks are kept. Recent work needs sufficient merge
+          evidence; old unrelated work remains eligible. Alongside local ancestry and file-content comparisons, a fresh
+          cached merged PR can prove the exact branch head merged when its merge commit is in the local base. Cleanup
+          fetches nothing: use <strong>Pull</strong> to update the base and refresh <strong>Pull requests</strong> for current
+          evidence. Kept branches explain the blocker and next step, and show the evidence age when available.
+          A branch held by a stale worktree record can go in the same confirmation as pruning that record;
+          selecting the branch selects pruning, and the branch is checked again after pruning.
         </li>
         <li>
           In a board's <strong>Details</strong>, every worktree whose branch belongs to no active change is marked{" "}
