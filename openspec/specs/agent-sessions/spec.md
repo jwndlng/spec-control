@@ -2013,27 +2013,57 @@ The preset Implement and Fast-forward prompts SHALL ask the agent to complete an
 - **THEN** the prompt asks the agent to complete the parts it can, mark the task `- [~]`, and state exactly what the person must do
 
 ### Requirement: Ship preflight exposes unfinished tasks
-Before Ship commits, pushes or opens a pull request, the dashboard SHALL read task state from the session's own checkout and show unresolved tasks. When any remain, it SHALL offer to ask the agent to finish them and SHALL require explicit confirmation to ship with unresolved tasks. It MUST NOT change task files itself.
+Before Ship, the dashboard SHALL inspect task state in the session's own checkout and preserve an accurate summary of unfinished or unknown tasks for the user. When the change's required artifacts are ready, unresolved tasks SHALL NOT prevent an explicit Ship action from committing, pushing or opening its pull request. Ship SHALL NOT edit task files, mark tasks complete, or claim that unresolved checks passed. If tasks cannot be read, Ship SHALL report that their state is unknown and SHALL still allow the explicit action when the required artifacts are ready. The dashboard SHALL continue to gate Implement and automatic implementation on task completion under their existing requirements.
 
 #### Scenario: Open tasks before shipping
-- **WHEN** Ship is activated and the session checkout has an open task
-- **THEN** the preflight names it, offers to ask the agent to complete it, and does not ship without an explicit choice to ship anyway
+- **WHEN** Ship is activated for an artifact-ready change with an open task
+- **THEN** Ship proceeds and reports the task as unresolved without requiring a task-specific override
 
 #### Scenario: Person needed before shipping
-- **WHEN** Ship is activated and a task is marked `- [~]`
-- **THEN** the preflight shows that task and asks the user to review it; the dashboard does not mark it complete
+- **WHEN** Ship is activated for an artifact-ready change with a task marked as needing a person
+- **THEN** Ship proceeds and reports that task for review without changing its state
 
 #### Scenario: A check requires a pull request
-- **WHEN** a task can only be verified after a PR is opened
-- **THEN** the user can explicitly ship despite that unfinished task, and the agent is asked to report the pending check and revisit it after evidence is available
+- **WHEN** a remaining check requires a pull request or its CI
+- **THEN** explicit Ship opens the pull request and reports the unresolved check without changing its marker
 
 #### Scenario: All tasks are complete
-- **WHEN** the session checkout has readable tasks and every task is checked
-- **THEN** deterministic Ship proceeds without an unfinished-task confirmation
+- **WHEN** every task is marked complete and required artifacts are ready
+- **THEN** Ship proceeds without task confirmation and reports the task summary
 
 #### Scenario: Task state is unavailable
-- **WHEN** tasks cannot be read or their state is unknown
-- **THEN** the preflight says it cannot verify completion and requires explicit confirmation before Ship
+- **WHEN** task files are missing, malformed, unreadable or truncated
+- **THEN** Ship reports that task state could not be verified and proceeds if the required artifacts are ready
+
+#### Scenario: Required artifacts are not ready
+- **WHEN** Ship is activated before the required artifacts are ready
+- **THEN** the existing artifact-readiness refusal remains in force
+
+### Requirement: Ship returns an actionable pull request result
+When Ship finds or creates a pull request, its result SHALL include the pull request URL and whether it was newly created or already existed. The UI SHALL present a direct link to that pull request and report any unresolved or unknown task state alongside the result. It SHALL offer the applicable existing agent action for reviewing PR feedback or resolving conflicts, without starting an agent automatically. A successful Ship SHALL NOT imply that the pull request is merged, that checks passed, or that unresolved tasks were completed.
+
+#### Scenario: Ship creates a pull request
+- **WHEN** Ship successfully creates a pull request
+- **THEN** its result gives the user a direct link and identifies the pull request as newly created
+
+#### Scenario: Ship finds an existing pull request
+- **WHEN** Ship finds a pull request for the session branch
+- **THEN** its result gives the user a direct link and identifies the existing pull request without changing its body
+
+#### Scenario: User follows up on pull request feedback
+- **WHEN** Ship has returned a pull request and the session can run the relevant agent action
+- **THEN** the UI lets the user open the pull request and explicitly ask the agent to review feedback or resolve conflicts
+
+#### Scenario: Pull request URL is unavailable
+- **WHEN** Ship cannot obtain a valid pull request URL
+- **THEN** it does not report a complete successful Ship result without a review destination
+
+### Requirement: Explicit Archive is not blocked by unfinished tasks
+For a change whose required artifacts are ready for Archive, unresolved or unknown task state SHALL NOT prevent an explicit Archive action. Archive SHALL preserve task state and SHALL NOT imply that outstanding work was completed. Automatic Archive SHALL continue to follow its separate eligibility requirements, including its task completion gate.
+
+#### Scenario: Ready change has unresolved tasks
+- **WHEN** Archive is explicitly activated for a change with required artifacts ready and one or more unresolved tasks
+- **THEN** Archive proceeds while preserving those task states
 
 ### Requirement: Finish tasks after a merged implementation
 For a change with unresolved tasks and a linked merged implementation PR, the dashboard SHALL offer **Finish checks** to ask an agent to verify and finish remaining tasks. It SHALL use the relevant session or a safe session worktree, and SHALL ask the agent to prepare a reviewable task update after verification.
@@ -2065,7 +2095,56 @@ Automatic implementation and archive Ship and docs-only Merge SHALL require a fr
 - **WHEN** Finish tasks or Finish checks is active and a refresh observes the session's previously merged pull request
 - **THEN** automatic shipping, merging and merged-PR cleanup remain suppressed until an explicit new workflow choice; the follow-up agent stays available
 
-## ADDED Requirements
+### Requirement: Draft and Implement maintain a pull request description
+
+The **Draft artifacts** prompt SHALL ask the agent to create `openspec/changes/<change>/pull-request.md` containing a
+concise summary of the problem, intended outcome and planned verification, based on the change artifacts. The
+**Implement** prompt SHALL ask the agent to update that file to describe the delivered behavior and checks actually
+performed, remove planned or unverified claims, and keep it concise for pull request reviewers. Neither prompt SHALL
+claim a check passed unless it was run and passed. The file SHALL be ordinary Markdown included in the change's own
+checkout.
+
+#### Scenario: Draft prepares a description
+
+- **WHEN** Draft artifacts completes the proposal for `rotate-keys`
+- **THEN** `openspec/changes/rotate-keys/pull-request.md` summarizes the problem, intended outcome and planned
+  verification for reviewers
+
+#### Scenario: Implement records delivered work
+
+- **WHEN** Implement completes code and runs its available checks for `rotate-keys`
+- **THEN** `pull-request.md` describes the delivered behavior and reports only checks that were actually performed
+
+### Requirement: Ship uses the prepared description for a new pull request
+
+When deterministic Ship creates a pull request, it SHALL read `openspec/changes/<change>/pull-request.md` from the
+session's own worktree, where `<change>` is the validated change name. If it is a readable regular file with non-empty
+content after trimming surrounding whitespace, Ship SHALL pass that trimmed Markdown as the pull request body. It
+MUST NOT read the artifact from the main checkout, another worktree, or a path outside the session worktree.
+
+If the file is absent, blank, unreadable, or not a regular file, Ship SHALL use a fixed non-empty fallback body that
+identifies the change and directs reviewers to its OpenSpec artifacts. This SHALL NOT prevent Ship from proceeding.
+When a pull request for the session's branch already exists, Ship SHALL leave its title and body unchanged.
+
+#### Scenario: New pull request uses the prepared description
+
+- **WHEN** Ship creates a pull request for `rotate-keys` and the session worktree's description contains Markdown
+- **THEN** `gh pr create` receives the trimmed Markdown as `--body`
+
+#### Scenario: Legacy change has no description artifact
+
+- **WHEN** Ship creates a pull request for a change whose worktree has no `pull-request.md`
+- **THEN** the pull request receives the fixed non-empty fallback body and Ship proceeds
+
+#### Scenario: Description artifact is empty or unsafe
+
+- **WHEN** the description is blank, unreadable, or not a regular file
+- **THEN** Ship uses the fallback and reads no file outside the session worktree
+
+#### Scenario: Pull request already exists
+
+- **WHEN** Ship finds an existing pull request for the session's branch
+- **THEN** it does not change that pull request's body
 
 ### Requirement: Predefined agent permission profiles and shared policy
 The dashboard SHALL support three predefined, opt-in agent permission profiles across all supported agent runtimes:

@@ -303,6 +303,7 @@ export function visibleCards(cards: Card[], filters: Filters, single: boolean, n
   return cards.filter((c) => {
     if (!single && filters.repos.length && !filters.repos.includes(c.repoId)) return false;
     if (q && !c.name.toLowerCase().includes(q) && !c.repoName.toLowerCase().includes(q)) return false;
+    if (filters.runningOnly && !hasRunningSession(c, sessions)) return false;
     if (filters.activeDays > 0) {
       const at = c.lastActivityAt ? Date.parse(c.lastActivityAt) : Number.NaN;
       if (!Number.isNaN(at) && now - at >= filters.activeDays * DAY_MS && !hasRunningSession(c, sessions)) return false;

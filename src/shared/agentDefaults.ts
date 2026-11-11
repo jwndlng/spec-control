@@ -124,6 +124,7 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
   {
     profile: CLAUDE_PROFILE,
     formerPrompts: {
+      draft: ["/opsx:ff {change}"],
       implement: ["/opsx:apply {change}", `/opsx:apply {change} — ${PREVIOUS_IMPLEMENT_TAIL}`, `/opsx:apply {change} — ${FORMER_IMPLEMENT_TAIL}`],
       validate: [`/opsx:apply {change} — ${PREVIOUS_VALIDATE_TAIL}`],
       archive: [
@@ -137,6 +138,7 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
   {
     profile: CODEX_PROFILE,
     formerPrompts: {
+      draft: ["Use the openspec-ff-change skill to create all artifacts of the OpenSpec change {change}."],
       implement: [`Use the openspec-apply-change skill on the OpenSpec change {change} — ${PREVIOUS_IMPLEMENT_TAIL}`, `Use the openspec-apply-change skill on the OpenSpec change {change} — ${FORMER_IMPLEMENT_TAIL}`],
       validate: [`Use the openspec-apply-change skill on the OpenSpec change {change} — ${PREVIOUS_VALIDATE_TAIL}`],
       archive: [
@@ -149,6 +151,7 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
   {
     profile: ANTIGRAVITY_PROFILE,
     formerPrompts: {
+      draft: ["/opsx-ff {change}"],
       implement: [`/opsx-apply {change} — ${PREVIOUS_IMPLEMENT_TAIL}`, `/opsx-apply {change} — ${FORMER_IMPLEMENT_TAIL}`],
       validate: [`/opsx-apply {change} — ${PREVIOUS_VALIDATE_TAIL}`],
       archive: [
