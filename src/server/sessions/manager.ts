@@ -1,4 +1,5 @@
-import { readShipTasks, tasksSettled } from "./taskSummary.ts";
+import { readShipTaskDocument, readShipTasks, tasksSettled } from "./taskSummary.ts";
+import { confirmAllTasks } from "../taskConfirmation.ts";
 import { FINISH_TASKS_PROMPT, FINISH_CHECKS_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, type ShipOperationStage, type ShipRequest, type ShipOperationStatus } from "../../shared/types.ts";
 // Session manager (design.md D15–D17). A session is an agent CLI running in a terminal inside the change's own git
 // worktree. The manager creates the worktree, starts the process, keeps a scrollback for late or returning viewers,
