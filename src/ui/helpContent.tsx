@@ -196,15 +196,18 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             PATH</strong> from VS Code's command palette. The editor is yours: the dashboard only starts it.
           </li>
           <li>
-            Ship first reads tasks from the session checkout. Unfinished or unreadable tasks offer <strong>Finish tasks</strong>, <strong>Ship anyway</strong> and Cancel.
-            Finish tasks does not ship. Ship anyway keeps unresolved markers for PR-dependent checks and withholds docs auto-merge. Automatic merging of implementation and archive PRs waits until every task is marked complete; proposal PRs can still merge before implementation.
-            After a linked implementation PR merges, <strong>Finish checks</strong> on the card and Console tab asks the agent to verify actual evidence and prepare a follow-up PR; cached merge status never completes a task.
-            Fast-forward includes the same completion instructions and automatically ships only when every task is marked complete.
-            <strong>Ship</strong> commits, pushes and opens the pull request on the server, after the task review. <strong>Finish tasks</strong> and <strong>Finish checks</strong> send requests to the agent; they do not ship.
+            <strong>Ship</strong> commits, pushes and opens or reuses a pull request once required artifacts are ready.
+            Unfinished or unreadable task state is reported beside the PR link and does not require confirmation.
+            Tasks keep their markers; shipping does not verify checks. Use the result's console link to review feedback
+            with the agent or resolve conflicts. <strong>Archive</strong> is also available once required artifacts are ready.
+            Automatic implementation and archive shipping and merging still require every task marked complete;
+            proposal PRs can precede implementation. After an implementation PR merges, <strong>Finish checks</strong>
+            asks the agent to verify remaining work and prepare a follow-up. Fast-forward ships automatically only
+            when every task is checked. <strong>Finish tasks</strong> and <strong>Finish checks</strong> do not ship.
             Draft artifacts prepares `openspec/changes/&lt;change&gt;/pull-request.md`, Implement updates it with delivered behavior and checks run, and Ship uses it as the body of a new pull request. Older changes without the file get a short fallback; an existing pull request is left alone.
             <strong>Resolve conflicts</strong> asks the agent to bring the branch up to date.
             An archived card whose work is still pending offers <strong>Continue archive</strong> to open its console:
-            resume its session to review unfinished tasks, or use <strong>Ship</strong> to ask the agent to open a pull request.
+            resume its session to review unfinished tasks, or use <strong>Ship</strong> to open its pull request.
           </li>
           <li>
             <strong>Resolve conflicts</strong> is offered when the session's worktree no longer merges as of your last fetch,
