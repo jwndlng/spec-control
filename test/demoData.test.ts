@@ -160,7 +160,7 @@ test("the demo shows a change in Ready without a design: the spec-driven schema 
   expect(noDesign.artifacts.find((a) => a.id === "tasks")).toMatchObject({ status: "done", required: true });
   expect(noDesign.column).toBe("Ready");
   // Implement is offered; Draft artifacts too, since the optional design can still be written.
-  expect(availableActions(noDesign)).toEqual(["draft", "implement", "custom"]);
+  expect(availableActions(noDesign)).toEqual(["draft", "implement", "archive", "custom"]);
 });
 
 test("the demo shows a change in Ready waiting for one in Implementing, and that one lists it as required by", () => {

@@ -9,17 +9,17 @@ mark tasks complete, or claim that unresolved checks passed. If tasks cannot be 
 state is unknown and SHALL still allow the explicit action when the required artifacts are ready. The dashboard SHALL
 continue to gate Implement and automatic implementation on task completion under their existing requirements.
 
-#### Scenario: Open task is reported but does not block Ship
+#### Scenario: Open tasks before shipping
 
 - **WHEN** Ship is activated for an artifact-ready change with an open task
 - **THEN** Ship proceeds and reports the task as unresolved without requiring a task-specific override
 
-#### Scenario: Human review task is reported but does not block Ship
+#### Scenario: Person needed before shipping
 
 - **WHEN** Ship is activated for an artifact-ready change with a task marked as needing a person
 - **THEN** Ship proceeds and reports that task for review without changing its state
 
-#### Scenario: Task state is unknown
+#### Scenario: Task state is unavailable
 
 - **WHEN** task files are missing, malformed, unreadable or truncated
 - **THEN** Ship reports that task state could not be verified and proceeds if the required artifacts are ready
@@ -29,16 +29,17 @@ continue to gate Implement and automatic implementation on task completion under
 - **WHEN** Ship is activated before the required artifacts are ready
 - **THEN** the existing artifact-readiness refusal remains in force
 
-### Requirement: Archive is not blocked by unfinished tasks
+#### Scenario: A check requires a pull request
 
-For a change whose required artifacts are ready for Archive, unresolved or unknown task state SHALL NOT prevent an
-explicit Archive action. Archive SHALL preserve the task state as authored and SHALL NOT imply that outstanding work
-was completed. Any automatic archive or merge behavior SHALL continue to follow its separate eligibility requirements.
+- **WHEN** a remaining check requires a pull request or its CI
+- **THEN** explicit Ship opens the pull request and reports the unresolved check without changing its marker
 
-#### Scenario: Ready change has unresolved tasks
+#### Scenario: All tasks are complete
 
-- **WHEN** Archive is activated for a change with all required artifacts ready and one or more unresolved tasks
-- **THEN** Archive proceeds while preserving those task states
+- **WHEN** every task is marked complete and required artifacts are ready
+- **THEN** Ship proceeds without task confirmation and reports the task summary
+
+## ADDED Requirements
 
 ### Requirement: Ship returns an actionable pull request result
 

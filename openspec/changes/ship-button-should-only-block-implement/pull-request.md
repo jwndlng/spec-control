@@ -1,16 +1,8 @@
 # Reviewer summary
 
-Documentation only: proposal, design, spec delta and task list. No runtime behavior has been delivered for this change;
-all nine implementation tasks remain open. Ship still requires confirmation when tasks are unresolved.
+Explicit Ship and Archive can proceed once required artifacts are ready, while unresolved or unreadable task state remains visible and unchanged. Implement and automatic implementation remain task-gated. Ship reports the task summary with a created or existing pull request link and an explicit console follow-up; it does not claim checks passed, complete tasks or merge the pull request. Help and demo behavior reflect the revised flow.
 
 Checks run:
 
-- `bun run check` (earlier in this session, outside the sandbox): failed. Lint and typecheck passed; tests reported
-  2,314 passed, six five-second timeouts across `activityApi.test.ts`, `frameworks.test.ts` and `scanner.test.ts`, and
-  one unhandled session-start error reporting no initial commit.
-- Filtered retry of the six timed-out tests: five passed; `scanner.test.ts` → “scans a fixture repo: artifacts, tasks,
-  archive dates, columns” timed out again after five seconds. The full check remains failing.
-- OpenSpec status and apply-instructions commands: succeeded; 0/9 tasks complete.
-- `openspec validate ship-button-should-only-block-implement --strict` (rerun): failed. The modified Ship preflight
-  requirement omits existing scenarios: “Open tasks before shipping”, “Person needed before shipping”, “A check
-  requires a pull request”, “All tasks are complete” and “Task state is unavailable”.
+- `bun run check` passed: lint, typecheck and 2,325 tests.
+- `openspec validate ship-button-should-only-block-implement --strict` exited 1 with warnings: the PR-result requirement exceeds the 500-character recommendation, and `.openspec.yaml` contains the repository's `spec-control` metadata key, which the OpenSpec CLI does not recognize.
