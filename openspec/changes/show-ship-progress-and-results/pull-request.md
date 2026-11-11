@@ -8,4 +8,5 @@ Checks:
 - `bun run build:demo` — passed; built `dist/demo/index.html` (1,281 KB).
 - `openspec validate show-ship-progress-and-results --json` — valid; reports an existing `.openspec.yaml` warning for the `spec-control` metadata key.
 - `git diff --check` — passed.
+- GitHub PR checks (`conventional-title`, `label`) — passed.
 - Demo visual review — user confirmed complete.
