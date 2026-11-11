@@ -22,6 +22,7 @@ None.
 
 ## Impact
 
+- `src/ui/styles.css` (spacing and responsive styling for the common control)
 - `src/ui/changeDetail.tsx`
 - `src/ui/sessionPanel.tsx`
 - `src/ui/sessionState.ts or a shared permission picker component`
