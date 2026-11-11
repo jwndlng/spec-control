@@ -31,12 +31,12 @@ const step = (s: PullRequestStep): NextStep => ({ kind: "pullRequest", step: s }
 
 test("without a pull request, each stage recommends its primary step and the menu holds the rest in order", () => {
   expect(split(change({ stage: "unknown", artifacts: [] }))).toEqual({ main: start("draft"), menu: [start("fastForward"), start("custom")] });
-  expect(split(change({ stage: "backlog", artifacts: optional("ready") }))).toEqual({ main: start("draft"), menu: [start("fastForward"), start("custom")] });
-  expect(split(change({ stage: "drafts", artifacts: optional("ready") }))).toEqual({ main: start("draft"), menu: [start("fastForward"), start("custom")] });
+  expect(split(change({ stage: "backlog", artifacts: optional("ready") }))).toEqual({ main: start("draft"), menu: [start("fastForward"), start("archive"), start("custom")] });
+  expect(split(change({ stage: "drafts", artifacts: optional("ready") }))).toEqual({ main: start("draft"), menu: [start("fastForward"), start("archive"), start("custom")] });
   // Ready with an optional design missing: Implement, Draft in the menu.
-  expect(split(change({ stage: "ready", artifacts: optional("ready") }))).toEqual({ main: start("implement"), menu: [start("draft"), start("custom")] });
-  expect(split(change({ stage: "ready" }))).toEqual({ main: start("implement"), menu: [start("custom")] });
-  expect(split(change({ stage: "implementing", artifacts: optional("ready") }))).toEqual({ main: start("implement"), menu: [start("custom")] });
+  expect(split(change({ stage: "ready", artifacts: optional("ready") }))).toEqual({ main: start("implement"), menu: [start("draft"), start("archive"), start("custom")] });
+  expect(split(change({ stage: "ready" }))).toEqual({ main: start("implement"), menu: [start("archive"), start("custom")] });
+  expect(split(change({ stage: "implementing", artifacts: optional("ready") }))).toEqual({ main: start("implement"), menu: [start("archive"), start("custom")] });
   expect(split(change({ stage: "done", subState: "validate" }))).toEqual({ main: start("validate"), menu: [start("archive"), start("custom")] });
   expect(split(change({ stage: "done", artifacts: optional("ready") }))).toEqual({ main: start("archive"), menu: [start("custom")] });
   expect(split(change({ stage: "done", subState: "complete" }))).toEqual({ main: start("archive"), menu: [start("custom")] });
@@ -44,8 +44,8 @@ test("without a pull request, each stage recommends its primary step and the men
 
 test("a step that is not available falls back to the next in menu order, or to nothing", () => {
   // Blocked: Implement is withheld, Draft for the design is what is left.
-  expect(split(change({ stage: "ready", artifacts: optional("ready"), blocked: true }))).toEqual({ main: start("draft"), menu: [start("custom")] });
-  expect(split(change({ stage: "implementing", blocked: true }))).toEqual({ main: start("custom"), menu: [] });
+  expect(split(change({ stage: "ready", artifacts: optional("ready"), blocked: true }))).toEqual({ main: start("draft"), menu: [start("archive"), start("custom")] });
+  expect(split(change({ stage: "implementing", blocked: true }))).toEqual({ main: start("archive"), menu: [start("custom")] });
   // The agent has no Validate prompt: Archive is recommended.
   expect(split(change({ stage: "done", subState: "validate" }), undefined, ["archive"])).toEqual({ main: start("archive"), menu: [] });
   // No Draft prompt: Fast-forward is all there is.
@@ -56,16 +56,16 @@ test("a step that is not available falls back to the next in menu order, or to n
 test("an open pull request decides by its readiness, and the menu keeps every starter", () => {
   const implementing = change({ stage: "implementing" });
   const done = change({ stage: "done" });
-  expect(split(implementing, pr({ mergeable: "conflicting" }))).toEqual({ main: step("resolveConflicts"), menu: [start("implement"), start("custom")] });
+  expect(split(implementing, pr({ mergeable: "conflicting" }))).toEqual({ main: step("resolveConflicts"), menu: [start("implement"), start("archive"), start("custom")] });
   expect(split(done, pr())).toEqual({ main: step("merge"), menu: [start("archive"), start("custom")] });
-  expect(split(implementing, pr({ checks: "failing" }))).toEqual({ main: start("implement"), menu: [start("custom")] });
+  expect(split(implementing, pr({ checks: "failing" }))).toEqual({ main: start("implement"), menu: [start("archive"), start("custom")] });
   // In Done Implement is not available: Fix checks opens the session's console.
   expect(split(done, pr({ checks: "failing" }))).toEqual({ main: step("fixChecks"), menu: [start("archive"), start("custom")] });
   expect(split(done, pr({ checks: "pending" }))).toEqual({ main: { kind: "waiting", reason: "checks running" }, menu: [start("archive"), start("custom")] });
-  expect(split(implementing, pr({ draft: true }))).toEqual({ main: { kind: "waiting", reason: "draft" }, menu: [start("implement"), start("custom")] });
-  expect(split(implementing, pr({ mergeable: "unknown" }))).toEqual({ main: { kind: "waiting", reason: "mergeability unknown" }, menu: [start("implement"), start("custom")] });
+  expect(split(implementing, pr({ draft: true }))).toEqual({ main: { kind: "waiting", reason: "draft" }, menu: [start("implement"), start("archive"), start("custom")] });
+  expect(split(implementing, pr({ mergeable: "unknown" }))).toEqual({ main: { kind: "waiting", reason: "mergeability unknown" }, menu: [start("implement"), start("archive"), start("custom")] });
   // Ready to merge while a Ready change's design could still be drafted: both starters stay in the menu.
-  expect(split(change({ stage: "ready", artifacts: optional("ready") }), pr())).toEqual({ main: step("merge"), menu: [start("draft"), start("implement"), start("custom")] });
+  expect(split(change({ stage: "ready", artifacts: optional("ready") }), pr())).toEqual({ main: step("merge"), menu: [start("draft"), start("implement"), start("archive"), start("custom")] });
   expect(waitingLabel("checks running")).toBe("Waiting: checks running");
   expect(waitingLabel("draft")).toBe("Waiting: draft pull request");
   expect(waitingLabel("mergeability unknown")).toBe("Waiting: mergeability unknown");

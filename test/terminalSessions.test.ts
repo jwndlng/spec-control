@@ -170,7 +170,7 @@ test("refusals", async () => {
   await expect(open(h, "no-such-change")).rejects.toMatchObject({ status: 404 });
   await expect(open(h, "x; rm -rf ~")).rejects.toMatchObject({ status: 400 });
   await expect(open(h, "add-health-endpoint")).rejects.toMatchObject({ status: 400 }); // proposal only
-  await expect(open(h, "upgrade-runtime", "archive")).rejects.toMatchObject({ status: 400 }); // not Done
+  await expect(open(h, "add-health-endpoint", "archive")).rejects.toMatchObject({ status: 400 }); // required tasks artifact missing
   await expect(open(h, "runbook-repo-field")).rejects.toMatchObject({ status: 404 }); // archived
   // The sub-state decides too: `validate` needs `Done` with an awaiting task, and `Done` has nothing left to implement.
   await expect(open(h, "upgrade-runtime", "validate")).rejects.toThrow(/"validate" is not available/);

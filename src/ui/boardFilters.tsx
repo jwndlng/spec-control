@@ -1,6 +1,6 @@
 // The board's filter bar (kanban-board: "The board's filters form one filter bar"): search, a Repositories menu, the
 // Activity selector, the Hide archived and Hide merged switches, removable tags for what is filtered, and the count of changes shown.
-// Same filters and URL format as before; only the controls are new.
+// Filter state is shared by the combined and project boards.
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { RepoSnapshot } from "../shared/types.ts";
 import { activeTags, EMPTY_FILTERS, type Filters, hasActiveFilters, activityOptions } from "./filters.ts";
@@ -131,6 +131,17 @@ export function FilterBar({
           </select>
           <IconChevronDown size={12} />
         </label>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={filters.runningOnly}
+          class={`control switch-control ${filters.runningOnly ? "on" : ""}`}
+          title="Show only changes with a running agent session, including agents waiting for input or quiet, and archive sessions"
+          onClick={() => setFilters({ runningOnly: !filters.runningOnly })}
+        >
+          <span class="switch" aria-hidden="true" />
+          Show running
+        </button>
         <button type="button" role="switch" aria-checked={filters.hideArchived} class={`control switch-control ${filters.hideArchived ? "on" : ""}`} onClick={() => setFilters({ hideArchived: !filters.hideArchived })}>
           <span class="switch" aria-hidden="true" />
           Hide archived
