@@ -1,0 +1,6 @@
+schema: spec-driven
+created: 2026-11-10
+skip_specs: true
+spec-control:
+  branch: feat/repair-permission-spec-structure
+  archive-branch: chore/archive-repair-permission-spec-structure

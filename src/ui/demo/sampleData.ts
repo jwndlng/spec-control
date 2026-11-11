@@ -207,7 +207,8 @@ const REPOS: SampleRepo[] = [
       { name: "migrate-to-postgres-16", tasks: [0, 31], age: 5 },
       { name: "structured-error-codes", written: "specs", age: 1, branch: "feat/structured-error-codes", implementModel: "fast-model" },
       { name: "idempotency-keys", written: "proposal", age: 9, issue: { number: 214, title: "Support idempotency keys on POST endpoints" } },
-      { name: "deprecate-v1-auth", tasks: [12, 12], age: 3, branch: "chore/deprecate-v1-auth" },
+      // Merged implementation with an unresolved check: Finish checks and on-demand PR freshness.
+      { name: "deprecate-v1-auth", tasks: [11, 12], age: 3, branch: "chore/deprecate-v1-auth" },
       // Code-complete, two checks only a person can make: `Done`, sub-state `validate`.
       {
         name: "verify-rate-limit-headers",

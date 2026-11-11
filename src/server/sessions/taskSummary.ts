@@ -2,14 +2,19 @@ import { createHash } from "node:crypto";
 import { relative, dirname } from "node:path";
 import type { FrameworkId, ShipTaskSummary } from "../../shared/types.ts";
 import { frameworkById } from "../frameworks/registry.ts";
+import { isPlanned } from "../../shared/columns.ts";
 import { linkedSegment, LocalRepoSource, readBounded } from "../source.ts";
 
 export const SHIP_TASK_BYTES = 64 * 1024;
 
 /** Read only the session checkout, using its framework's paths and the bounded repository reader. */
-export async function readShipTasks(checkout: string, change: string, frameworkId?: FrameworkId): Promise<{ summary: ShipTaskSummary; fingerprint: string }> {
+export interface ShipTaskDocument { summary: ShipTaskSummary; fingerprint: string; content: string; tasksPath?: string; changeDir?: string }
+
+export async function readShipTaskDocument(checkout: string, change: string, frameworkId?: FrameworkId): Promise<ShipTaskDocument> {
   let summary: ShipTaskSummary = { verified: false, reason: "Task state could not be read.", total: 0, done: 0, open: [], awaiting: [], truncated: false };
   let content = "";
+  let tasksPath: string | undefined;
+  let changeDir: string | undefined;
   try {
     const framework = frameworkById(frameworkId);
     if (!framework) throw new Error("The spec framework is unavailable.");
@@ -21,9 +26,12 @@ export async function readShipTasks(checkout: string, change: string, frameworkI
     if (!entry) throw new Error("The change directory is missing or contains a symbolic link.");
     const directory = relative(checkout, entry.dir);
     if (await linkedSegment(checkout, directory)) throw new Error("The change directory is missing or contains a symbolic link.");
+    changeDir = entry.dir;
     const project = await framework.readProject(source);
     const result = await framework.readChange(source, project, entry);
+    artifactsReady = isPlanned(result.artifacts);
     if (!result.tasksPath) throw new Error("No tasks file is available in this checkout.");
+    tasksPath = result.tasksPath;
     const rel = relative(checkout, result.tasksPath);
     if (rel.startsWith("..") || (await linkedSegment(checkout, relative(checkout, dirname(result.tasksPath)))))
       throw new Error("The tasks path is outside the checkout or contains a symbolic link.");
@@ -36,7 +44,12 @@ export async function readShipTasks(checkout: string, change: string, frameworkI
   } catch (err) {
     summary.reason = err instanceof Error ? err.message : "Task state could not be read.";
   }
-  return { summary, fingerprint: createHash("sha256").update(JSON.stringify(summary)).update(content).digest("hex") };
+  return { summary, fingerprint: createHash("sha256").update(JSON.stringify(summary)).update(content).digest("hex"), content, tasksPath, changeDir };
+}
+
+export async function readShipTasks(checkout: string, change: string, frameworkId?: FrameworkId): Promise<{ summary: ShipTaskSummary; fingerprint: string }> {
+  const { summary, fingerprint } = await readShipTaskDocument(checkout, change, frameworkId);
+  return { summary, fingerprint };
 }
 
 export const tasksSettled = (summary: ShipTaskSummary): boolean =>

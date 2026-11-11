@@ -14,6 +14,7 @@ const original = {
   sessions: api.sessions,
   pullRequests: api.pullRequests,
   finishChecks: api.finishChecks,
+  refreshPullRequests: api.refreshPullRequests,
   window: globalThis.window,
   document: globalThis.document,
   location: globalThis.location,
@@ -29,6 +30,7 @@ afterEach(() => {
   api.sessions = original.sessions;
   api.pullRequests = original.pullRequests;
   api.finishChecks = original.finishChecks;
+  api.refreshPullRequests = original.refreshPullRequests;
   globalThis.window = original.window;
   globalThis.document = original.document;
   globalThis.location = original.location;
@@ -37,7 +39,7 @@ afterEach(() => {
   globalThis.PopStateEvent = original.PopStateEvent;
 });
 
-async function setup(state: "merged" | "closed" = "merged") {
+async function setup(state: "merged" | "closed" = "merged", status: "failed" | "ok" = "failed", fetchedAt: string | undefined = "2026-11-01T10:00:00Z") {
   browser = new Window({ url: "http://localhost/board" });
   globalThis.window = browser as unknown as typeof window;
   globalThis.document = browser.document as unknown as Document;
@@ -66,8 +68,8 @@ async function setup(state: "merged" | "closed" = "merged") {
       repos: [
         {
           repoId: repo.id,
-          status: "failed",
-          fetchedAt: "2026-11-01T10:00:00Z",
+          status,
+          fetchedAt,
           pullRequests: [{ number: 42, head: "feat/rotate-keys", base: "main", state, isCrossRepository: false }],
         },
       ],
@@ -94,14 +96,20 @@ test("Finish checks is named accessibly, explains cache freshness, guards clicks
   const { calls } = await setup();
   const button = root.querySelector("button")!;
   expect(button.textContent).toBe("Finish checks");
-  expect(button.title).toContain("2026-11-01T10:00:00Z");
-  expect(root.textContent).toContain("latest refresh failed");
+  expect(button.title).not.toContain("2026-11-01T10:00:00Z");
+  expect(root.textContent).not.toContain("The agent must verify");
+  const details = root.querySelector("details")!;
+  expect(details.open).toBe(false);
+  expect(details.querySelector("summary")?.textContent).toBe("PR freshness");
+  expect(details.textContent).toContain("ago");
+  expect(details.querySelector("time")?.dateTime).toBe("2026-11-01T10:00:00Z");
+  expect(root.textContent).toContain("PR refresh failed");
   await act(async () => {
     button.click();
     button.click();
   });
   expect(calls).toHaveLength(1);
-  expect(root.querySelector('[role="status"]')?.textContent).toContain("end its session first");
+  expect(root.textContent).toContain("end its session first");
 });
 
 test("closed-unmerged PRs do not offer Finish checks", async () => {
@@ -117,4 +125,34 @@ test("Finish checks opens the returned session in the change's Console tab", asy
   expect(location.pathname).toContain("rotate-keys");
   expect(location.search).toContain("console");
   expect(location.search).toContain("follow-up");
+});
+
+
+test("successful refresh clears the failed state and updates on-demand freshness", async () => {
+  await setup();
+  const calls: unknown[] = [];
+  api.refreshPullRequests = async (options) => {
+    calls.push(options);
+    const response = await api.pullRequests();
+    return { ...response, repos: response.repos.map((r) => ({ ...r, status: "ok", fetchedAt: new Date().toISOString() })) };
+  };
+  await act(async () => { (root.querySelectorAll("button")[1] as HTMLButtonElement).click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(calls).toEqual([{ repoId: expect.any(String), force: true }]);
+  expect(root.querySelector('[role="status"]')?.textContent).toBeUndefined();
+  expect(root.querySelector("details")?.textContent).toContain("Fetched just now");
+});
+
+test("failed refresh keeps recovery available and preserves cached freshness", async () => {
+  await setup();
+  api.refreshPullRequests = async () => { throw Error("GitHub is unavailable"); };
+  await act(async () => { (root.querySelectorAll("button")[1] as HTMLButtonElement).click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(root.querySelector('[role="status"]')?.textContent).toContain("PR refresh failed");
+  expect(root.querySelectorAll("button")[1]?.disabled).toBe(false);
+  expect(root.querySelector("time")?.dateTime).toBe("2026-11-01T10:00:00Z");
+});
+
+test("unknown fetch time is stated without an invalid relative age", async () => {
+  await setup("merged", "ok", "");
+  expect(root.querySelector("details")?.textContent).toContain("Fetch time unknown");
+  expect(root.querySelector("time")).toBeNull();
 });

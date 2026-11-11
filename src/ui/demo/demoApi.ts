@@ -9,6 +9,7 @@ import { AUTO_FETCH_SECONDS, DEFAULT_AUTO_FETCH_SECONDS } from "../../shared/typ
 import type { ChangeSnapshot, Config, DismissFile, DismissPreview, FolderPickResult, GithubClone, GithubCloneProgress, GithubRepoEntry, IntegratableRepo, PullBlockingFile, PullResult, RepoConfig, RepoSharedConfig, RepoSnapshot, SharedConfigApplyResult, SharedConfigPreview, SharedProfile, Snapshot, UpdateStatus } from "../../shared/types.ts";
 import { parseGithubRepo } from "../../shared/github.ts";
 import { isProjectName } from "../../shared/types.ts";
+import { parseTaskLine } from "../../shared/taskLine.ts";
 import { ApiError, type Api, ConfigConflictError, labelLists, rememberRevision } from "../api.ts";
 import { demoApply, demoBranchDeletePreview, demoDeleteBranch, demoPreview, newCleanupState, remainingWorktrees } from "./demoCleanup.ts";
 import { createDemoSessions } from "./demoSessions.ts";
@@ -98,6 +99,8 @@ function demoRevision(config: Config): string {
 }
 
 export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoApiOptions = {}): Api {
+  const taskOverrides = new Map<string, string>();
+  const taskKey = (repoId: string, change: string) => `${repoId}/${change}`;
   const sample = buildSample(now());
   let config: Config = sample.config;
   let generatedAt = sample.snapshot.generatedAt;
@@ -274,7 +277,23 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
       .filter((r) => r.enabled)
       .map((r) => {
         const known = sampleRepo(r.id);
-        const repo = known ? cleanedUp(withoutDismissed({ ...known, name: r.name })) : emptyRepo(r.id, r.name, r.path);
+        const withTasks = known ? { ...known, changes: known.changes.map((change) => {
+          const text = taskOverrides.get(taskKey(r.id, change.name));
+          if (text === undefined) return change;
+          let done = 0;
+          let awaiting = 0;
+          let total = 0;
+          const awaitingTasks: string[] = [];
+          for (const line of text.split(/\r?\n/)) {
+            const task = parseTaskLine(line);
+            if (!task) continue;
+            total++;
+            if (/^[xX]$/.test(task.state)) done++;
+            else if (task.state === "~") { awaiting++; awaitingTasks.push(task.text); }
+          }
+          return { ...change, tasks: { done, total, awaiting, ...(awaitingTasks.length ? { awaitingTasks } : {}) } };
+        }) } : undefined;
+        const repo = withTasks ? cleanedUp(withoutDismissed({ ...withTasks, name: r.name })) : emptyRepo(r.id, r.name, r.path);
         // A session's worktree is a worktree of its repository, so `git worktree list` — the snapshot — has it too.
         const sessionWorktrees = config.agentSessions.enabled ? demoSessions.gitWorktrees(r.id) : [];
         const worktrees = [...repo.worktrees, ...sessionWorktrees];
@@ -385,17 +404,32 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
         const files = sampleArtifactFiles(change);
         return {
           change: { repoId, name: change.name, schema: change.schema, dir, archived: Boolean(change.archived) },
-          artifacts: change.artifacts.map((a) => ({ ...a, files: Object.entries(files[a.id] ?? {}).map(([path, text]) => ({ path, bytes: bytes(text) })).sort((x, y) => (x.path < y.path ? -1 : 1)) })),
+          artifacts: change.artifacts.map((a) => ({ ...a, files: Object.entries(files[a.id] ?? {}).map(([path, original]) => { const text = a.id === "tasks" && path === "tasks.md" ? taskOverrides.get(taskKey(repoId, changeName)) ?? original : original; return { path, bytes: bytes(text) }; }).sort((x, y) => (x.path < y.path ? -1 : 1)) })),
         };
       }),
     artifactFile: (repoId, changeName, path) =>
       failing(() => {
         const { change } = findChange(repoId, changeName);
         if (!path || path.startsWith("/") || path.split("/").includes("..")) throw new ApiError(400, "path must be relative to the change directory");
-        const text = Object.values(sampleArtifactFiles(change)).find((byPath) => path in byPath)?.[path];
+        const original = Object.values(sampleArtifactFiles(change)).find((byPath) => path in byPath)?.[path];
+        const text = path === "tasks.md" ? taskOverrides.get(taskKey(repoId, changeName)) ?? original : original;
         if (text === undefined) throw new ApiError(404, "no such file in this change");
         return { path, bytes: bytes(text), text };
       }),
+    confirmTask: (repoId, changeName, expectedText, lineNumber) => failing(() => {
+      const { change } = findChange(repoId, changeName);
+      if (change.archived) throw new ApiError(409, "archived changes cannot be confirmed");
+      const original = sampleArtifactFiles(change).tasks["tasks.md"];
+      const current = taskOverrides.get(taskKey(repoId, changeName)) ?? original;
+      if (!original || current !== expectedText) throw new ApiError(409, "the task file changed; refresh and try again");
+      const lines = current.split(/(?<=\n)/);
+      const line = lines[lineNumber - 1];
+      if (!line || !/^\s*(?:[-*+]|\d+[.)])\s+\[\s*~\s*\]/.test(line)) throw new ApiError(409, "this task is no longer awaiting confirmation; refresh and try again");
+      lines[lineNumber - 1] = line.replace(/\[\s*~\s*\]/, "[x]");
+      taskOverrides.set(taskKey(repoId, changeName), lines.join(""));
+      generatedAt = new Date(now()).toISOString();
+      return { confirmed: true as const };
+    }),
     // Built once from the sample, like a log that was written while the sample came about; kept for the same 7 days,
     // filtered and paged like the real one.
     activity: (query) => {

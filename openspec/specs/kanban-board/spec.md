@@ -165,6 +165,79 @@ The board SHALL provide filters for repository (multi-select), free-text search 
 - **WHEN** **Hide merged** is on and a running session belongs to `add-audit-log` of `beta-soc`, while `alpha-infra` also has a merged archived change `add-audit-log`
 - **THEN** only `beta-soc`'s change is kept; `alpha-infra`'s is hidden
 
+### Requirement: Board can show only changes with running sessions
+The combined and repository boards SHALL offer a keyboard-accessible **Show running** switch, off by default, exposing its checked state. When on, only changes with at least one running session for the same repository and change name SHALL match. Archive sessions SHALL count; exited, failed, main-console, project-console and integration sessions SHALL NOT. A running session SHALL count regardless of its working, waiting or quiet badge.
+
+#### Scenario: Default board
+- **WHEN** a board opens without a running-filter parameter
+- **THEN** Show running is off and session state does not restrict which changes match the filters
+
+#### Scenario: Working and waiting agents
+- **WHEN** Show running is on and three changes have running sessions whose badges are working, waiting and quiet respectively
+- **THEN** all three changes match the running filter
+
+#### Scenario: Ended sessions and unrelated activity
+- **WHEN** Show running is on and a change has only exited or failed sessions, recent file activity, or a pull request with checks running
+- **THEN** that change does not match the running filter
+
+#### Scenario: Archive and in-place sessions
+- **WHEN** Show running is on and one archived change has a running archive session and another change has a running in-place session
+- **THEN** both match the running filter
+
+#### Scenario: Matching the repository as well as the name
+- **WHEN** two repositories have a change named `rotate-keys` and only one has a running session for it
+- **THEN** only the change in that repository matches the running filter
+
+#### Scenario: Consoles and integrations
+- **WHEN** Show running is on and only the main console, a project console or an integration session is running
+- **THEN** none of those sessions makes a change match the running filter
+
+### Requirement: Running filter composes with board presentation
+**Show running** SHALL compose with repository, search and archive visibility filters. Existing running-session exceptions to recent activity and **Hide merged** SHALL still apply. Counts and archive bounds SHALL use matching cards under their existing rules; lifecycle stages and the unfiltered **To archive** total SHALL remain unchanged. With no matches the board SHALL show its empty filtered result and retain the controls to clear filters.
+
+#### Scenario: Search and repository restrictions still apply
+- **WHEN** Show running is on and a running change is excluded by search or repository selection
+- **THEN** that change is hidden
+
+#### Scenario: Old merged archive with a live session
+- **WHEN** Show running and Hide merged are on, the recent-activity threshold is 7 days, and a merged archive last active 30 days ago has a running archive session
+- **THEN** it remains visible and counted when Archived is shown, and is hidden if Hide archived is enabled
+
+#### Scenario: Counts follow existing rules
+- **WHEN** Show running excludes some cards
+- **THEN** column counts, the filter bar's shown-card count and the Open figure reflect the matching cards under existing archive bounds, while To archive still counts all complete changes
+
+#### Scenario: No matching changes
+- **WHEN** Show running is on and no change has a running session
+- **THEN** the board shows no matching cards and Clear filters remains available
+
+### Requirement: Running filter persists and follows session updates
+The running filter SHALL apply instantly on the client, persist as `running=1` in the board URL, and be off for an absent or other value. Turning it off SHALL omit that parameter. **Clear filters** SHALL reset it while preserving the board layout. Membership SHALL update from the existing session list without extra fetching, repository writes or terminal-output interpretation.
+
+#### Scenario: Reload and return from a change
+- **WHEN** Show running is enabled and the user reloads, or opens a change then returns using its board return link
+- **THEN** the board retains the running filter and its other URL filters on both combined and repository boards
+
+#### Scenario: Clearing the filter
+- **WHEN** the user turns Show running off or uses Clear filters
+- **THEN** the running parameter is removed; Clear filters also restores the other filter defaults and retains the layout choice
+
+#### Scenario: Session starts, ends and resumes
+- **WHEN** Show running is on and the board receives a session-list update showing a change's first running session, its last running session ending, or an ended session resuming
+- **THEN** that change respectively enters, leaves or re-enters the matching set without a page reload
+
+#### Scenario: More than one session
+- **WHEN** a change has two running sessions and one ends
+- **THEN** the change continues to match until its last running session ends
+
+#### Scenario: No sessions available
+- **WHEN** Show running is on and the existing session list is empty, including when agent sessions are disabled
+- **THEN** the board shows no matches and the user can turn the filter off
+
+#### Scenario: Invalid URL value
+- **WHEN** the board opens with `running=0` or `running=anything`
+- **THEN** Show running is off
+
 ### Requirement: Archived column is bounded
 The `Archived` column SHALL be presented like every other column: always open, with the same width, header layout, repository grouping and cards, and with no collapse, expand or close control of its own. It SHALL show at most the 25 most recently archived changes sorted by archive date descending, among the archived changes the active filters allow — with **Hide merged** on, only pending ones. Its header count SHALL be the total number of archived changes matching the active filters, **Hide merged** included; when more than 25 match, the count SHALL read `25 of <total>`. The "hide archived" filter SHALL remain the way to remove the column from the board. This SHALL apply to the combined board and to repository boards alike. Where the column shows repository groups, those groups follow the minimizing rules for repository groups and are minimized by default; the bound of 25 SHALL be applied before grouping, so a group's count is the number of its changes within the bound. The number of changes shown in the filter bar SHALL count only the archived cards the column shows.
 
@@ -1379,3 +1452,18 @@ When a change has unresolved tasks and a linked merged implementation pull reque
 #### Scenario: A running session exists
 - **WHEN** Finish checks is offered for a change with a running session
 - **THEN** it leads to that session's console and does not start a second agent
+
+### Requirement: Overview automation messages explain user-relevant progress
+The overview SHALL NOT render internal agent instructions such as "The agent must verify current evidence" or raw ISO timestamps as routine card content. PR freshness SHALL be available on demand with a relative label and precise timestamp. A failed refresh SHALL remain visible when it affects an action. Agent-side evidence verification SHALL be preserved.
+
+#### Scenario: Finish checks is available
+- **WHEN** a card offers Finish checks for a cached merged PR
+- **THEN** it presents the action without the internal evidence sentence while the follow-up agent still receives its verification instruction
+
+#### Scenario: Failed refresh
+- **WHEN** a PR refresh failed and current evidence affects the offered action
+- **THEN** the user sees a concise refresh failure with a useful recovery route
+
+#### Scenario: Freshness on demand
+- **WHEN** the user inspects the action's freshness label
+- **THEN** relative freshness and the exact fetched timestamp are accessible without expanding routine card content
