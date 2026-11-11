@@ -10,7 +10,7 @@
 
 - [x] 1.4 Show evidence freshness, specific blockers, and relevant next actions for kept branches; verify all nondefault branches appear and dirty worktree/external-lock/default-main protections stay intact; update cleanup Help and demo examples. Cleanup, UI row, selection and demo tests passed; Help explains cached proof, age-based eligibility and refresh/Pull actions.
 
-- [ ] 1.5 Verify the change with focused tests appropriate to its touched behavior, then run bun run check before pushing; record results. Focused parser, prune, selection, demo and changelog checks passed. Full check fails in untouched files on current main; typecheck separately reports missing SessionManager.shipPreviews, artifactsReady, ChangePermissionPicker, ShipChoice/setShipAsk, and ShipPreflight/preview/click. Feature verification also awaits 1.2.
+- [x] 1.5 Verify the change with focused tests appropriate to its touched behavior, then run bun run check before pushing; record results. After merging main's verification fixes, bun run check passed lint, typecheck and all 2,381 tests. The six-file focused suite passed 111 tests; build, compiled cleanup API smoke and strict OpenSpec validation passed. No user-only checks remain.
 
 - [x] 1.6 Add an independent What's new JSON entry under src/ui/changelog/entries/ for this change only; verify its filename/id and summary with the repository changelog validator. The 2026-11-11-recognize-merged-cleanup-branches entry passes test/whatsNew.test.ts; it describes the delivered one-pass pruning behavior.
 

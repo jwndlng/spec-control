@@ -12,17 +12,12 @@ wrong-base, and changed-head evidence does not prove a merge. Kept branches show
 evidence age and next steps; preview never fetches or queries GitHub.
 
 Active-change protection and main's independent age-based eligibility for old
-unrelated work are preserved, as confirmed by the user. Five of six tasks are
-complete; full-check verification remains unresolved. Nothing has been pushed.
+unrelated work are preserved.
 
 Checks run:
 
-- Focused cleanup, parser/cache, UI, demo and changelog suite: 106 passed.
-- `bun test test/cleanupApi.test.ts`: 5 passed, including cache-only proof with no gh calls.
+- `bun run check`: lint, typecheck and all 2,381 tests passed after merging main's verification fixes.
+- Focused cleanup, API, parser/cache, UI, demo and changelog suite: 111 passed.
 - `bun run build` and compiled cleanup API smoke passed: exact PR proof after
   later base edits, removal/deletion, and no gh calls.
 - `openspec validate recognize-merged-cleanup-branches --strict` passed.
-- `bun run check`: lint passed; typecheck failed with 16 errors in untouched
-  files (`sessions/manager.ts`, `sessions/taskSummary.ts`, `ui/changeDetail.tsx`,
-  `ui/sessions.tsx`, `test/shipPreflightUi.test.tsx`). Missing symbols include
-  `shipPreviews`, `artifactsReady`, and `ShipPreflight`; tests were not reached.
