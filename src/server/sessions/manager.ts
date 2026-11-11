@@ -748,7 +748,9 @@ export class SessionManager {
     };
     this.sessions.set(session.id, session);
     await this.store.saveMeta(session);
-    this.start(session, launchWithoutPrompt(agent, resolveModel(config, agent)), agentEnv(agent, process.env));
+    const policy = resolvePermissionPolicy(config, repo.id);
+    const permissionArgs = permissionAdapters.resolve(agent.id).preview(agent, policy).args;
+    this.start(session, withPermissionArgs(agent, launchWithoutPrompt(agent, resolveModel(config, agent)), permissionArgs), agentEnv(agent, process.env));
     for (const removed of await this.store.prune(this.list())) this.sessions.delete(removed);
     return { session, created: true };
   }
@@ -1600,7 +1602,12 @@ export class SessionManager {
     const resume = resumeLaunch(agent, resolveModel(this.deps.getConfig(), agent, isChangeless(session) ? undefined : session.action));
     if (!resume) throw new SessionError(400, "this agent has no resume command configured");
     if (!Bun.which(resume[0])) throw new SessionError(503, `${agent.name} was not found (${resume[0]})`);
-    if (!isChangeless(session)) {
+    if (isProjectConsole(session)) {
+      const config = this.deps.getConfig();
+      const policy = resolvePermissionPolicy(config, session.repoId);
+      const permissionArgs = permissionAdapters.resolve(agent.id).preview(agent, policy).args;
+      await this.restart(session, undefined, withPermissionArgs(agent, resume, permissionArgs), agentEnv(agent, process.env));
+    } else if (!isChangeless(session)) {
       const launch = await this.permissionLaunch(session, agent, "", resume, resolveModel(this.deps.getConfig(), agent, session.action));
       await this.restart(session, repoPath, launch.argv, agentEnv(agent, process.env), launch.typed);
     } else await this.restart(session, repoPath, resume, agentEnv(agent, process.env));

@@ -479,6 +479,8 @@ export interface RepoAgentConfig {
    *  it is ready (agent-merges-docs-prs). The name predates that and is kept for compatibility. Absent means off. */
   autoMergeDocs?: boolean;
   permissionProfile?: AgentPermissionProfileId;
+  /** Optional project-scoped literal command prefixes. Absence and an empty list both mean no extra allowances. */
+  allowedCommands?: string[];
 }
 
 export type AgentPermissionProfileId = "minimum" | "less-friction" | "full-automation";
@@ -492,6 +494,7 @@ export interface AgentPermissionPolicy {
   allowCleanup: boolean;
   optInMerge: boolean;
   optInCleanup: boolean;
+  allowedCommands: string[];
 }
 export interface AdapterResult { args: string[]; settings?: Record<string, unknown>; limitations: string[] }
 export interface AgentCapabilityMatrix { agentId: string; toolFiltering: string; workspaceIsolation: string; remoteGit: string; unattended: string }

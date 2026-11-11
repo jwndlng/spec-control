@@ -38,6 +38,28 @@ test("Antigravity receives supported mode and sandbox flags without an undocumen
   terminal.detach();
 });
 
+test("change-session permissions use the current project commands on start and resume only", async () => {
+  const h = await harness({ agent: { id: "claude" } });
+  managers.push(h.manager);
+  h.config.agentSessions.defaultAgent = "claude";
+  h.config.repos[0]!.agent = { enabled: true, permissionProfile: "less-friction", allowedCommands: ["bun run lint"] };
+  const session = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const first = await watch(h.manager, session.id);
+  await waitFor(() => first.text().includes("fake-agent ready"), "change agent start");
+  expect(first.text()).toContain("Bash(bun run lint)");
+  h.config.repos[0]!.agent.allowedCommands = ["bun run test"];
+  expect(first.text()).not.toContain("Bash(bun run test)");
+  await h.manager.close(session.id);
+  await h.manager.resume(session.id);
+  const resumed = await watch(h.manager, session.id);
+  await waitFor(() => resumed.text().includes("--resumed"), "change agent resume");
+  const resumedOutput = resumed.text().slice(resumed.text().lastIndexOf("fake-agent ready"));
+  expect(resumedOutput).toContain("Bash(bun run test)");
+  expect(resumedOutput).not.toContain("Bash(bun run lint)");
+  first.detach();
+  resumed.detach();
+});
+
 let cleanup: () => Promise<void>;
 let gh: GhHarness;
 const managers: SessionManager[] = [];

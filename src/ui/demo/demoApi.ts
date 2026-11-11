@@ -1,4 +1,5 @@
 import { mergedImplementation } from "../../shared/pullRequestLink.ts";
+import { normalizeCustomCommands } from "../../shared/customCommands.ts";
 // In-memory stand-in for the dashboard server. Nothing is read from or written to anywhere: a reload starts over.
 import { isTimeZone, pageEvents, retained } from "../../shared/activity.ts";
 import { labelKey, labelProblem, MAX_LABEL_COLORS } from "../../shared/labels.ts";
@@ -556,10 +557,12 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
         if (!name.trim()) throw new ApiError(400, "name must not be empty");
         return updateRepo(repoId, (r) => ({ ...r, name: name.trim() }));
       }),
-    setRepoAgent: (repoId, { enabled, agentId, permissionProfile }) =>
+    setRepoAgent: (repoId, { enabled, agentId, permissionProfile, allowedCommands }) =>
       failing(() => {
-        if (enabled === undefined && agentId === undefined && permissionProfile === undefined) throw new ApiError(400, "send enabled, agentId or permissionProfile");
+        if (enabled === undefined && agentId === undefined && permissionProfile === undefined && allowedCommands === undefined) throw new ApiError(400, "send enabled, agentId, permissionProfile or allowedCommands");
         if (typeof agentId === "string" && !config.agentSessions.agents.some((a) => a.id === agentId)) throw new ApiError(400, `unknown agent ${agentId}`);
+        const normalized = allowedCommands === undefined ? undefined : normalizeCustomCommands(allowedCommands);
+        if (normalized?.error) throw new ApiError(400, normalized.error);
         return updateRepo(repoId, (r) => {
           const agent: NonNullable<RepoConfig["agent"]> = { enabled: true, ...r.agent };
           if (enabled !== undefined) agent.enabled = enabled;
@@ -567,6 +570,8 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
           else if (agentId !== undefined) agent.agentId = agentId;
           if (permissionProfile === null) delete agent.permissionProfile;
           else if (permissionProfile !== undefined) agent.permissionProfile = permissionProfile;
+          if (allowedCommands === null || normalized?.commands?.length === 0) delete agent.allowedCommands;
+          else if (normalized?.commands) agent.allowedCommands = normalized.commands;
           return { ...r, agent };
         });
       }),

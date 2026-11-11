@@ -4,6 +4,7 @@ import { availableName } from "../shared/nameHints.ts";
 import { isChangeDirName } from "../shared/changeNames.ts";
 import { labelKey } from "../shared/labels.ts";
 import { withAutoFetch, withPrTitleConvention, withRepoAgent } from "../shared/repoSettings.ts";
+import { normalizeCustomCommands } from "../shared/customCommands.ts";
 import { MAX_PAGE, type ActivityLog, type PageQuery } from "./activity/log.ts";
 import { isTimeZone, pageEvents } from "../shared/activity.ts";
 import type { AutoFetchSeconds, BranchDeleteRequest, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequest, PullRequestsResponse, PullResult, RepoPullRequests, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Session, StaleCleanupRequest, StaleCleanupResult, UpdateStatus } from "../shared/types.ts";
@@ -270,15 +271,17 @@ async function postRepoName(state: AppState, req: Request, id: string): Promise<
  */
 async function postRepoAgent(state: AppState, req: Request, id: string): Promise<Response> {
   const body = await readJson(req);
-  const { enabled, agentId, autoMergeDocs, permissionProfile } = body;
-  if (enabled === undefined && agentId === undefined && autoMergeDocs === undefined && permissionProfile === undefined) return json({ error: "send enabled, agentId, autoMergeDocs or permissionProfile" }, 400);
+  const { enabled, agentId, autoMergeDocs, permissionProfile, allowedCommands } = body;
+  if (enabled === undefined && agentId === undefined && autoMergeDocs === undefined && permissionProfile === undefined && allowedCommands === undefined) return json({ error: "send enabled, agentId, autoMergeDocs, permissionProfile or allowedCommands" }, 400);
   if (enabled !== undefined && typeof enabled !== "boolean") return json({ error: "enabled must be true or false" }, 400);
   if (agentId !== undefined && agentId !== null && typeof agentId !== "string") return json({ error: "agentId must be an agent id or null" }, 400);
   if (autoMergeDocs !== undefined && typeof autoMergeDocs !== "boolean") return json({ error: "autoMergeDocs must be true or false" }, 400);
   if (permissionProfile !== undefined && permissionProfile !== null && (typeof permissionProfile !== "string" || !["minimum", "less-friction", "full-automation"].includes(permissionProfile))) return json({ error: "permissionProfile must be a valid profile or null" }, 400);
+  const normalizedCommands = allowedCommands === undefined ? undefined : normalizeCustomCommands(allowedCommands);
+  if (normalizedCommands?.error) return json({ error: normalizedCommands.error }, 400);
   return updateRepo(state, id, (repo) => {
     if (typeof agentId === "string" && !state.config.agentSessions.agents.some((a) => a.id === agentId)) throw new TrackingError(400, `unknown agent ${agentId}`);
-    return withRepoAgent(repo, { enabled, agentId, autoMergeDocs, permissionProfile: permissionProfile as import("../shared/types.ts").AgentPermissionProfileId | null | undefined });
+    return withRepoAgent(repo, { enabled, agentId, autoMergeDocs, permissionProfile: permissionProfile as import("../shared/types.ts").AgentPermissionProfileId | null | undefined, allowedCommands: allowedCommands === undefined ? undefined : normalizedCommands?.commands ?? [] });
   });
 }
 

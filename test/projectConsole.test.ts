@@ -104,6 +104,54 @@ test("opens in place in the main checkout without a prompt, once, and never as c
   view.detach();
 });
 
+test("project command permissions reach project-console start and resume, but not main or integration consoles", async () => {
+  const h = await harness({ agent: { id: "claude" } });
+  h.config.agentSessions.defaultAgent = "claude";
+  h.config.repos[0]!.agent = { enabled: true, permissionProfile: "less-friction", allowedCommands: ["bun run lint"] };
+  const manager = track(h.manager);
+  const { session } = await manager.openProjectConsole(h.repoId);
+  const view = await watch(manager, session.id);
+  await waitFor(() => view.text().includes("fake-agent ready"), "project console start");
+  expect(view.text()).toContain("Bash(bun run lint)");
+  expect(view.text()).toContain("Bash(bun run lint *)");
+  await manager.close(session.id);
+  await manager.resume(session.id);
+  const resumed = await watch(manager, session.id);
+  await waitFor(() => resumed.text().split("fake-agent ready").length > 1 && resumed.text().includes("--resumed"), "project console resume");
+  const resumedOutput = resumed.text().slice(resumed.text().lastIndexOf("fake-agent ready"));
+  expect(resumedOutput).toContain("Bash(bun run lint)");
+  resumed.detach();
+  view.detach();
+
+  const plain = await harness({ agent: { id: "claude" }, git: false });
+  plain.config.agentSessions.defaultAgent = "claude";
+  plain.config.repos[0]!.agent = { enabled: true, permissionProfile: "less-friction", allowedCommands: ["bun run test"] };
+  const plainManager = track(plain.manager);
+  const plainSession = await plainManager.openProjectConsole(plain.repoId);
+  const plainView = await watch(plainManager, plainSession.session.id);
+  await waitFor(() => plainView.text().includes("fake-agent ready"), "non-git project console start");
+  expect(plainView.text()).toContain("Bash(bun run test)");
+  plainView.detach();
+});
+
+test("custom project commands stay out of main and integration consoles", async () => {
+  const h = await harness({ agent: { id: "claude" } });
+  h.config.agentSessions.defaultAgent = "claude";
+  h.config.repos[0]!.agent = { enabled: true, permissionProfile: "less-friction", allowedCommands: ["bun run lint"] };
+  const manager = track(h.manager);
+  const main = await manager.openConsole();
+  const mainView = await watch(manager, main.session.id);
+  await waitFor(() => mainView.text().includes("fake-agent ready"), "main console start");
+  expect(mainView.text()).not.toContain("Bash(bun run lint)");
+  await manager.close(main.session.id);
+  const setup = await manager.openIntegration(h.repoPath);
+  const setupView = await watch(manager, setup.session.id);
+  await waitFor(() => setupView.text().includes("fake-agent ready"), "integration start");
+  expect(setupView.text()).not.toContain("Bash(bun run lint)");
+  mainView.detach();
+  setupView.detach();
+});
+
 test("resumes in the same folder and starts a new console after the previous one ended", async () => {
   const h = await harness();
   const manager = track(h.manager);

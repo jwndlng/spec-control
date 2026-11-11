@@ -5,6 +5,7 @@
 // tile. Hook-free, so tests can walk them; the state lives in `useTracking`. Every control stops the click, so a row or
 // tile that holds one never opens the repository's board because of it.
 import type { ComponentChildren } from "preact";
+import { useState } from "preact/hooks";
 import { AUTO_FETCH_SECONDS, type AgentPermissionProfileId, type AutoFetchSeconds, autoFetchInterval, CONVENTIONAL_COMMITS_SHIP_SENTENCE, repoAgentEnabled, type Config, type DetectedLabel, type PrTitleConvention, type RepoConfig } from "../shared/types.ts";
 import { settingApplies } from "../shared/repoSettings.ts";
 import { IconPencil, IconSettings, IconTag } from "./icons.tsx";
@@ -12,6 +13,7 @@ import { labelSuggestions, RepoLabelsEditor } from "./labels.tsx";
 import { OpenSpecSetupAction } from "./openSpecSetup.tsx";
 import { Modal } from "./modal.tsx";
 import { autoFetchEvery } from "./pullState.ts";
+import { customCommandCapability, normalizeCustomCommands } from "../shared/customCommands.ts";
 import { DisableButton, type Tracking } from "./untracked.tsx";
 import { followInApp, hrefWithQuery } from "./url.ts";
 
@@ -199,6 +201,33 @@ export function PermissionProfilePicker({ repo, config, tracking }: { repo: Repo
   </select>;
 }
 
+export function CustomCommandsEditor({ repo, config, tracking }: { repo: RepoConfig; config: Config; tracking: Tracking }) {
+  const [draft, setDraft] = useState("");
+  const [validationError, setValidationError] = useState("");
+  const saved = repo.agent?.allowedCommands ?? [];
+  const busy = tracking.busy[repo.id] !== undefined;
+  const selectedAgent = config.agentSessions.agents.find((agent) => agent.id === (repo.agent?.agentId ?? config.agentSessions.defaultAgent));
+  const profile = repo.agent?.permissionProfile ?? config.agentSessions.defaultPermissionProfile;
+  const capability = customCommandCapability(selectedAgent?.id, profile ?? "minimum");
+  const status = capability === "inactive" ? "Saved prefixes are inactive under the minimum permission profile." : capability === "supported" ? "Claude applies these prefixes on the next start or resume." : "This agent runtime does not apply project command prefixes.";
+  const add = () => {
+    const result = normalizeCustomCommands([...saved, draft]);
+    if (result.error) { setValidationError(result.error); return; }
+    setValidationError("");
+    setDraft("");
+    tracking.setAgent(repo.id, { allowedCommands: result.commands });
+  };
+  return <div class="custom-commands-editor">
+    <p class="hint">Literal prefixes match the command and trailing arguments. They take effect on the next agent start; commands execute repository code and retain protected-command confirmation. {status}</p>
+    <label class="custom-command-entry">Command prefix
+      <input class="input" aria-label={`Custom command prefix for ${repo.name}`} value={draft} disabled={busy} onClick={stop} onInput={(event) => { setDraft(event.currentTarget.value); setValidationError(""); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); add(); } }} />
+    </label>
+    <button type="button" class="btn sm" aria-label={`Add custom command for ${repo.name}`} disabled={busy || !draft.trim()} onClick={(event) => { event.stopPropagation(); add(); }}>Add</button>
+    {validationError && <p class="notice danger" role="alert">{validationError}</p>}
+    {saved.length > 0 && <ul class="custom-command-list">{saved.map((command) => <li key={command}><code>{command}</code><button type="button" class="btn sm ghost" aria-label={`Remove ${command} from ${repo.name}`} disabled={busy} onClick={(event) => { event.stopPropagation(); tracking.setAgent(repo.id, { allowedCommands: saved.filter((item) => item !== command) }); }}>Remove</button></li>)}</ul>}
+  </div>;
+}
+
 export const PR_TITLES_TITLE = `PR titles: how Ship asks the agent to title this project's pull requests, saved at once. Conventional Commits adds: "${CONVENTIONAL_COMMITS_SHIP_SENTENCE}"`;
 
 /**
@@ -366,6 +395,7 @@ export function ProjectSettingsDialog({ repo, config, isGit, tracking }: { repo:
         <SettingLine label="Agent sessions">{AgentToggle({ repo, config, tracking })}</SettingLine>
         <SettingLine label="Agent">{AgentPicker({ repo, config, tracking })}</SettingLine>
         <SettingLine label="Permission profile">{PermissionProfilePicker({ repo, config, tracking })}</SettingLine>
+        {config.agentSessions.enabled && repoAgentEnabled(repo) && <SettingLine label="Custom commands"><CustomCommandsEditor repo={repo} config={config} tracking={tracking} /></SettingLine>}
         <SettingLine label="PR titles">{PrTitlesPicker({ repo, isGit, tracking })}</SettingLine>
         <SettingLine label="Docs auto-merge">{AutoMergeToggle({ repo, config, isGit, tracking, short: true })}</SettingLine>
         <SettingLine label="Auto fetch">{AutoFetchPicker({ repo, isGit, tracking })}</SettingLine>
