@@ -486,7 +486,7 @@ export function buildSample(now: number): Sample {
     version: 1,
     scanRoots: [DEMO_ROOT],
     ignorePaths: [],
-    repos: REPOS.map((r) => ({ id: r.id, path: repoPath(r.name), name: r.name, enabled: true, ...(r.labels && { labels: r.labels }), ...(r.hiddenLabels && { hiddenLabels: r.hiddenLabels }) })),
+    repos: REPOS.map((r) => ({ id: r.id, path: repoPath(r.name), name: r.name, enabled: true, ...(r.labels && { labels: r.labels }), ...(r.hiddenLabels && { hiddenLabels: r.hiddenLabels }), ...(r.name === "atlas-api" ? { agent: { enabled: true, allowedCommands: ["go test ./..."] } } : {}) })),
     pollIntervalSeconds: 60,
     port: 4711,
     // On by default, so the session features show without setup. The agent is fictional; nothing is ever started.

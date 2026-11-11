@@ -30,4 +30,5 @@ None.
 - API and sessions: `src/server/api.ts`, `src/server/sessions/permissionResolver.ts`, `permissionAdapters.ts`, `protectedCommands.ts`, and `manager.ts` in that sessions directory.
 - UI and demo: `src/ui/projectSettings.tsx`, its styles, the tracking state and API types as needed, `src/ui/demo/`, `src/ui/helpContent.tsx`, and an independent `src/ui/changelog/entries/` file.
 - Verification: configuration, repository settings, permission API/resolver/adapter, project settings UI, demo and fake-agent session tests under `test/`; compiled-binary smoke verification.
+- Structural repair required for validation/archive: `openspec/specs/dashboard-api/spec.md` (the existing permission-profile requirements were left under a misplaced delta header).
 - No new dependency or repository-write exception is needed. Coordinate shared permission types and UI with `unify-change-permission-picker`; this change adds no per-change command editor and preserves its single-picker design.

@@ -1,11 +1,11 @@
-# docs(openspec): add allow-custom-cmds
+# feat(agent-sessions): allow project custom command prefixes
 
-Adds the proposal, design, spec deltas and implementation checklist for project-scoped custom command allowances. This PR changes only OpenSpec artifacts; it delivers no runtime behavior. All 15 implementation tasks remain unchecked.
+Project settings now store validated literal command prefixes. Claude sessions apply them on the next start or resume for supported profiles; running processes are unchanged. Effective-permission previews show the normalized list and runtime limitations. Minimum and unsupported adapters report inactive or unsupported status. Protected operations remain gated. Help, demo data and What's new describe the feature.
 
 Checks run:
 
-- `bun run check` passed outside the sandbox: lint, typecheck and 2,320 tests (0 failures). Lint reported warnings.
-- `bun run build` passed; `dist/spec-control --version` returned `dev`.
-- `openspec validate allow-custom-cmds --strict` failed (exit 1): the main `dashboard-api` spec has a misplaced `## ADDED Requirements` header at line 1700, blocking archive, and `.openspec.yaml` contains the unrecognized key `spec-control`.
-
-Custom-command behavior and the compiled-server fake-agent launch/resume smoke check remain unverified because the feature is not implemented.
+- `bun run check` — passed: lint, typecheck and 2,342 tests (199 lint warnings).
+- `bun run build` — passed.
+- `bun run build:demo` — passed.
+- Compiled-server smoke test — passed, including launch, resume and terminal relay.
+- `openspec validate allow-custom-cmds --strict` — passed.
