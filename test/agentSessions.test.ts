@@ -301,7 +301,9 @@ test("Ship reports partial completion when gh returns no valid PR URL", async ()
   const session = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
   await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/notes.md`, "ready to ship\n");
   await gh.scenario({ createOutput: "not a pull request URL" });
-  const result = await h.manager.ship(session.id);
+  const preflight = await h.manager.ship(session.id);
+  expect(preflight.preflight?.summary.open.length).toBeGreaterThan(0);
+  const result = await h.manager.ship(session.id, { confirmation: preflight.preflight!.token });
   expect(result).toMatchObject({ shipped: false, submitted: true, pullRequestState: "unavailable" });
   expect(result.pullRequestUrl).toBeUndefined();
   expect(result.shipWarning).toContain("no valid pull request URL");
@@ -688,7 +690,9 @@ test("Fast-forward exits with awaiting tasks without automatically committing, p
   await manager.shutdown();
   expect(git(session.worktreePath, "rev-parse", "HEAD")).toBe(before);
   expect((await gh.calls()).some((call) => call.argv.includes("create"))).toBe(false);
-  const result = await manager.ship(session.id);
+  const preflight = await manager.ship(session.id);
+  expect(preflight.preflight?.summary.awaiting).toEqual(["Verify on a real device"]);
+  const result = await manager.ship(session.id, { confirmation: preflight.preflight!.token });
   expect(result).toMatchObject({ shipped: true, submitted: true, taskSummary: { awaiting: ["Verify on a real device"] } });
   expect(await Bun.file(join(session.worktreePath, `openspec/changes/${change}/tasks.md`)).text()).toContain("[~] Verify on a real device");
 });
