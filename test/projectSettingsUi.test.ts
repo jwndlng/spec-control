@@ -466,10 +466,10 @@ test("a folder without git offers no Pull on its tile, and a failed scan none ei
 
 test("the settings dialog lists its lines in order, then Disable set apart; a setting that does not apply leaves no line", () => {
   const t = tracking().t;
-  expect(settingLines(dialog(configWith({ agents: 2 }), t))).toEqual(["Agent sessions", "Agent", "Permission profile", "PR titles", "Docs auto-merge", "Auto fetch", "Labels", "Stop tracking"]);
-  expect(settingLines(dialog(configWith(), t))).toEqual(["Agent sessions", "Permission profile", "PR titles", "Docs auto-merge", "Auto fetch", "Labels", "Stop tracking"]);
+  expect(settingLines(dialog(configWith({ agents: 2 }), t))).toEqual(["Agent sessions", "Agent", "Permission profile", "Custom commands", "PR titles", "Docs auto-merge", "Auto fetch", "Labels", "Stop tracking"]);
+  expect(settingLines(dialog(configWith(), t))).toEqual(["Agent sessions", "Permission profile", "Custom commands", "PR titles", "Docs auto-merge", "Auto fetch", "Labels", "Stop tracking"]);
   const [plainRow] = overviewRows({ generatedAt: "2026-10-01T00:00:00Z", repos: [{ ...snapshotRepo, isGit: false }] });
-  expect(settingLines(dialog(configWith(), t, plainRow))).toEqual(["Agent sessions", "Permission profile", "Labels", "Stop tracking"]);
+  expect(settingLines(dialog(configWith(), t, plainRow))).toEqual(["Agent sessions", "Permission profile", "Custom commands", "Labels", "Stop tracking"]);
   expect(settingLines(dialog(configWith({ agent: { enabled: false } }), t))).toEqual(["Agent sessions", "PR titles", "Auto fetch", "Labels", "Stop tracking"]);
   // The console is an action on the row and tile, not a setting.
   expect(byComponent(dialog(configWith(), t), ProjectConsoleButton)).toHaveLength(0);

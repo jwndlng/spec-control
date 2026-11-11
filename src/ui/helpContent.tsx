@@ -278,6 +278,13 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             undo. The session that set a new project up shows here until you start a new console.
           </li>
           <li>
+            A project's settings dialog can save literal <strong>Custom commands</strong> for that project's agent sessions.
+            Prefixes match the command and trailing arguments, apply on the next explicit start or resume, and do not
+            change a running agent. The list never grants protected commands or bypasses merge and cleanup gates. Commands
+            execute repository code; the validator does not sandbox scripts. The minimum profile leaves them inactive,
+            and runtimes without session command filtering show an unsupported notice.
+          </li>
+          <li>
             With more than one agent profile, a change's Console tab lets you choose an agent for its next session.
             Choose Project agent to return to the project's choice. A running session keeps its original agent.
           </li>

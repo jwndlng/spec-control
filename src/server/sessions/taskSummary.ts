@@ -8,13 +8,14 @@ import { linkedSegment, LocalRepoSource, readBounded } from "../source.ts";
 export const SHIP_TASK_BYTES = 64 * 1024;
 
 /** Read only the session checkout, using its framework's paths and the bounded repository reader. */
-export interface ShipTaskDocument { summary: ShipTaskSummary; fingerprint: string; content: string; tasksPath?: string; changeDir?: string }
+export interface ShipTaskDocument { summary: ShipTaskSummary; fingerprint: string; content: string; tasksPath?: string; changeDir?: string; artifactsReady: boolean }
 
 export async function readShipTaskDocument(checkout: string, change: string, frameworkId?: FrameworkId): Promise<ShipTaskDocument> {
   let summary: ShipTaskSummary = { verified: false, reason: "Task state could not be read.", total: 0, done: 0, open: [], awaiting: [], truncated: false };
   let content = "";
   let tasksPath: string | undefined;
   let changeDir: string | undefined;
+  let artifactsReady = false;
   try {
     const framework = frameworkById(frameworkId);
     if (!framework) throw new Error("The spec framework is unavailable.");
@@ -44,12 +45,12 @@ export async function readShipTaskDocument(checkout: string, change: string, fra
   } catch (err) {
     summary.reason = err instanceof Error ? err.message : "Task state could not be read.";
   }
-  return { summary, fingerprint: createHash("sha256").update(JSON.stringify(summary)).update(content).digest("hex"), content, tasksPath, changeDir };
+  return { summary, fingerprint: createHash("sha256").update(JSON.stringify(summary)).update(content).digest("hex"), content, tasksPath, changeDir, artifactsReady };
 }
 
-export async function readShipTasks(checkout: string, change: string, frameworkId?: FrameworkId): Promise<{ summary: ShipTaskSummary; fingerprint: string }> {
-  const { summary, fingerprint } = await readShipTaskDocument(checkout, change, frameworkId);
-  return { summary, fingerprint };
+export async function readShipTasks(checkout: string, change: string, frameworkId?: FrameworkId): Promise<{ summary: ShipTaskSummary; fingerprint: string; artifactsReady: boolean }> {
+  const { summary, fingerprint, artifactsReady } = await readShipTaskDocument(checkout, change, frameworkId);
+  return { summary, fingerprint, artifactsReady };
 }
 
 export const tasksSettled = (summary: ShipTaskSummary): boolean =>

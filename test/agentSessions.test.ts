@@ -38,6 +38,28 @@ test("Antigravity receives supported mode and sandbox flags without an undocumen
   terminal.detach();
 });
 
+test("change-session permissions use the current project commands on start and resume only", async () => {
+  const h = await harness({ agent: { id: "claude" } });
+  managers.push(h.manager);
+  h.config.agentSessions.defaultAgent = "claude";
+  h.config.repos[0]!.agent = { enabled: true, permissionProfile: "less-friction", allowedCommands: ["bun run lint"] };
+  const session = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const first = await watch(h.manager, session.id);
+  await waitFor(() => first.text().includes("fake-agent ready"), "change agent start");
+  expect(first.text()).toContain("Bash(bun run lint)");
+  h.config.repos[0]!.agent.allowedCommands = ["bun run test"];
+  expect(first.text()).not.toContain("Bash(bun run test)");
+  await h.manager.close(session.id);
+  await h.manager.resume(session.id);
+  const resumed = await watch(h.manager, session.id);
+  await waitFor(() => resumed.text().includes("--resumed"), "change agent resume");
+  const resumedOutput = resumed.text().slice(resumed.text().lastIndexOf("fake-agent ready"));
+  expect(resumedOutput).toContain("Bash(bun run test)");
+  expect(resumedOutput).not.toContain("Bash(bun run lint)");
+  first.detach();
+  resumed.detach();
+});
+
 let cleanup: () => Promise<void>;
 let gh: GhHarness;
 const managers: SessionManager[] = [];
@@ -279,7 +301,9 @@ test("Ship reports partial completion when gh returns no valid PR URL", async ()
   const session = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
   await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/notes.md`, "ready to ship\n");
   await gh.scenario({ createOutput: "not a pull request URL" });
-  const result = await h.manager.ship(session.id);
+  const preflight = await h.manager.ship(session.id);
+  expect(preflight.preflight?.summary.open.length).toBeGreaterThan(0);
+  const result = await h.manager.ship(session.id, { confirmation: preflight.preflight!.token });
   expect(result).toMatchObject({ shipped: false, submitted: true, pullRequestState: "unavailable" });
   expect(result.pullRequestUrl).toBeUndefined();
   expect(result.shipWarning).toContain("no valid pull request URL");
@@ -666,7 +690,9 @@ test("Fast-forward exits with awaiting tasks without automatically committing, p
   await manager.shutdown();
   expect(git(session.worktreePath, "rev-parse", "HEAD")).toBe(before);
   expect((await gh.calls()).some((call) => call.argv.includes("create"))).toBe(false);
-  const result = await manager.ship(session.id);
+  const preflight = await manager.ship(session.id);
+  expect(preflight.preflight?.summary.awaiting).toEqual(["Verify on a real device"]);
+  const result = await manager.ship(session.id, { confirmation: preflight.preflight!.token });
   expect(result).toMatchObject({ shipped: true, submitted: true, taskSummary: { awaiting: ["Verify on a real device"] } });
   expect(await Bun.file(join(session.worktreePath, `openspec/changes/${change}/tasks.md`)).text()).toContain("[~] Verify on a real device");
 });
