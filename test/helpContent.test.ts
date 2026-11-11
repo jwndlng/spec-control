@@ -95,3 +95,10 @@ test("Getting started introduces setup and how to run it again", () => {
   expect(start?.text).toContain("Run setup again");
   expect(start?.text).toContain("setup");
 });
+
+test("the board Help documents shared dropdown keyboard, search and dismiss behavior", () => {
+  const board = walked.find((section) => section.id === "board");
+  for (const text of ["Arrow keys", "Home and End", "eight or more", "Escape closes without changing", "Tab closes", "never saves a setting"]) {
+    expect(board?.text).toContain(text);
+  }
+});

@@ -84,7 +84,7 @@ test("the change console offers a permission profile override selector and calls
 });
 
 test("change detail and project settings expose inherited permission profile selectors", () => {
-  expect(detailSource).toContain('aria-label="Change permission profile"');
+  expect(detailSource).toContain('aria-label="Permission profile for this change"');
   expect(detailSource).toContain("api.setChangePermissionProfile(repoId, changeName");
   expect(projectSettingsSource).toContain("PermissionProfilePicker({ repo, config, tracking })");
   expect(projectSettingsSource).toContain('aria-label={`Permission profile for ${repo.name}`}');

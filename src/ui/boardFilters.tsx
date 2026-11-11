@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { RepoSnapshot } from "../shared/types.ts";
 import { activeTags, EMPTY_FILTERS, type Filters, hasActiveFilters, activityOptions } from "./filters.ts";
 import { IconChevronDown, IconClock, IconColumns, IconFolderGit, IconRotateCcw, IconRows, IconSearch, IconX } from "./icons.tsx";
+import { Select } from "./select.tsx";
 
 /** Sets --repo-hue for the `repo-tint` class. */
 function repoHue(hue: number | undefined) {
@@ -119,18 +120,11 @@ export function FilterBar({
           )}
         </label>
         {!single && <RepoMenu repos={repos} hues={hues} selected={filters.repos} onChange={(ids) => setFilters({ repos: ids })} />}
-        <label class={`control select-control ${filters.activeDays ? "on" : ""}`}>
+        <div class={`control select-control ${filters.activeDays ? "on" : ""}`}>
           <IconClock />
           <span>Activity</span>
-          <select value={filters.activeDays} onChange={(e) => setFilters({ activeDays: Number(e.currentTarget.value) || 0 })}>
-            {activityOptions(filters.activeDays).map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <IconChevronDown size={12} />
-        </label>
+          <Select aria-label="Activity" value={String(filters.activeDays)} onChange={(value) => setFilters({ activeDays: Number(value) || 0 })} options={activityOptions(filters.activeDays).map((o) => ({ value: String(o.value), label: o.label }))} />
+        </div>
         <button type="button" role="switch" aria-checked={filters.hideArchived} class={`control switch-control ${filters.hideArchived ? "on" : ""}`} onClick={() => setFilters({ hideArchived: !filters.hideArchived })}>
           <span class="switch" aria-hidden="true" />
           Hide archived

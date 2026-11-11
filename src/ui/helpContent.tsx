@@ -121,6 +121,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           choice in the URL, so a filtered board can be bookmarked or shared.
         </p>
         <p>
+          Open a dropdown with a click or Enter, Space or Arrow Down. Arrow keys move through choices; Home and End jump
+          to the first and last enabled choice, and Enter commits it. Short lists also let you type to jump by name. Lists
+          of eight or more choices open a local search field. Escape closes without changing the value; Tab closes and
+          continues through the form. Browsing or searching never saves a setting.
+        </p>
+        <p>
           A card is tinted as <strong>working</strong> while an agent works on its change, and also while the change's pull
           request is open but not ready yet — a draft, a conflict, failing or running checks — whether or not an agent still
           runs. Its badge says why, for example <code>PR #125 · checks running</code>; once every check is green and the

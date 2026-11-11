@@ -1,5 +1,6 @@
 // Walks Preact VNodes without a DOM: enough to assert on what a hook-free component or the Markdown renderer produces.
-import type { ComponentChildren, VNode } from "preact";
+import { h, type ComponentChildren, type VNode } from "preact";
+import { Select, type SelectOption } from "../src/ui/select.tsx";
 
 type Props = Record<string, unknown> & { children?: ComponentChildren };
 
@@ -23,9 +24,15 @@ function expand(node: VNode<Props>): ComponentChildren | undefined {
 export function elements(node: ComponentChildren): VNode<Props>[] {
   if (Array.isArray(node)) return node.flatMap(elements);
   if (!isVNode(node)) return [];
+  if (node.type === Select) return [node];
   if (typeof node.type === "function") {
     const output = expand(node);
     return output === undefined ? [node] : elements(output);
+  }
+  const props = node.props as Props & Record<string, unknown>;
+  if (props.class === undefined && typeof props.className === "string") props.class = props.className;
+  for (const [compatName, nativeName] of [["onfocusout", "onBlur"], ["onfocusin", "onFocus"], ["oninput", "onInput"], ["onchange", "onChange"]]) {
+    if (props[nativeName] === undefined && typeof props[compatName] === "function") props[nativeName] = props[compatName];
   }
   return [node, ...elements(node.props.children)];
 }
@@ -35,7 +42,12 @@ export function byComponent(node: ComponentChildren, component: unknown): VNode<
 }
 
 export function byTag(node: ComponentChildren, tag: string): VNode<Props>[] {
-  return elements(node).filter((el) => el.type === tag);
+  const all = elements(node);
+  if (tag === "select") return all.filter((el) => el.type === tag || el.type === Select);
+  if (tag === "option") return all.flatMap((el) => el.type === Select
+    ? ((el.props.options as SelectOption[] | undefined) ?? []).map((option) => h("option", { value: option.value, disabled: option.disabled }, option.label) as unknown as VNode<Props>)
+    : el.type === tag ? [el] : []);
+  return all.filter((el) => el.type === tag);
 }
 
 export function textOf(node: ComponentChildren): string {

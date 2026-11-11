@@ -23,6 +23,7 @@ import { duplicateNotice, staleHint, staleReason } from "./staleState.ts";
 import { dismissedNotice, dismissOffer } from "./dismissState.ts";
 import { checkoutHint, daysSince, leftoverHint, pendingArchiveHint, relTime, splitPathLabel } from "./format.ts";
 import { currentQuery, followInApp, href, hrefWithQuery, navigate, replaceQuery } from "./url.ts";
+import { Select, dismissActiveSelect } from "./select.tsx";
 
 export function artifactLabel(id: string): string {
   return id.replace(/[-_]+/g, " ").replace(/^./, (c) => c.toUpperCase());
@@ -187,6 +188,11 @@ export function closeOnEscape(onClose: () => void): (e: KeyboardEvent) => void {
     // Duck-typed rather than `instanceof Element`, so this stays a pure function testable without a DOM.
     const target = e.target as { closest?: (selector: string) => unknown } | null;
     if (typeof target?.closest === "function" && target.closest(TERMINAL_SELECTOR)) return;
+    if (dismissActiveSelect()) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     e.preventDefault();
     onClose();
   };
@@ -766,10 +772,10 @@ export function ChangeDetail({
         onDismiss={onDismissed ? () => setDismissing(true) : undefined}
         pullRequest={detailPullRequest(change, pullRequests.data)}
       />
-      {!change.archived && repoConfig && ui.config?.agentSessions.enabled && <div class="detail-permission-picker"><label>Permission profile for this change <select aria-label="Change permission profile" value={repoConfig.agentOverrides?.[changeName]?.permissionProfile ?? ""} disabled={savingPermission} onChange={(event) => void savePermission(event.currentTarget.value)}>
-        <option value="">Inherit ({repoConfig.agent?.permissionProfile ?? ui.config.agentSessions.defaultPermissionProfile ?? "minimum"})</option>
-        <option value="minimum">Minimum</option><option value="less-friction">Less friction</option><option value="full-automation">Full automation</option>
-      </select></label>{permissionError && <span class="notice danger" role="alert">{permissionError}</span>}</div>}
+      {!change.archived && repoConfig && ui.config?.agentSessions.enabled && <div class="detail-permission-picker"><Select aria-label="Permission profile for this change" value={repoConfig.agentOverrides?.[changeName]?.permissionProfile ?? ""} disabled={savingPermission} onChange={(value) => void savePermission(value)} options={[
+        { value: "", label: `Inherit (${repoConfig.agent?.permissionProfile ?? ui.config.agentSessions.defaultPermissionProfile ?? "minimum"})` },
+        { value: "minimum", label: "Minimum" }, { value: "less-friction", label: "Less friction" }, { value: "full-automation", label: "Full automation" },
+      ]} />{permissionError && <span class="notice danger" role="alert">{permissionError}</span>}</div>}
       <StaleNotice repo={repo} change={change} />
       {(listing || hasConsole) && (
         <ArtifactTabs artifacts={listing?.artifacts ?? []} selected={selection.artifactId} onSelect={(id) => setQuery({ artifact: id, file: undefined })} console={hasConsole} />

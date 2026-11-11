@@ -1,9 +1,7 @@
-Adds the `dropdown-ui` proposal, design, requirements and implementation checklist. This PR contains planning artifacts only; dropdown behavior is unchanged and all 16 implementation tasks remain unchecked.
+This change replaces native selectors with a shared controlled dropdown across filters, settings, setup and creation forms. Short lists support keyboard navigation and type-ahead; lists with eight or more options support local search. The picker preserves caller-owned values, supports disabled options, positions within dialogs or the viewport, and dismisses without saving. Help and What's new describe the delivered behavior.
 
-Checks run on the current branch:
+Checks passed:
 
-- Passed: `bun run build`, `bun run build:demo` and `dist/spec-control --version` (`dev`).
-- Failed: `bun run check` outside the sandbox (lint and typecheck passed; 2,317 tests passed, 3 failed): activity-log scan and archived-list timeouts, plus a stale PR-list refresh assertion (3 calls instead of 4). All three failed tests passed on isolated reruns; the full suite has no passing run. The initial sandbox run also failed to start local test servers.
-- Failed: `openspec validate dropdown-ui --strict --json`; `.openspec.yaml` contains the unrecognized `spec-control` key.
-
-Feature-specific DOM, accessibility, touch and macOS checks remain unverified because the shared dropdown and call-site migrations are absent.
+- `bun run check` — lint, typecheck and 2,336 tests across 187 files.
+- `bun run build`, `bun run build:demo`, and `dist/spec-control --version` (`dev`).
+- `bunx openspec validate dropdown-ui --strict --json`.

@@ -16,6 +16,7 @@ import { usePullRequests } from "./pullRequests.tsx";
 import { autoEndedText, autoMergeNotice, cleanupNotice, conflictAction, consoleSteps, handedOverProposal, mergeControl, mergeNotice, oneAtATime, reportShip, RESUME_TO_MERGE, resolvable, sessionBadge, sessionsEnabledFor, starterSplit, workBadge, worktreeOfSession } from "./sessionState.ts";
 import { ConflictBadge, OpenInEditor, SessionBadgeView, SessionControls, useSessionUi } from "./sessions.tsx";
 import { StaleCleanupOutcome } from "./staleCleanup.tsx";
+import { Select } from "./select.tsx";
 
 export function Copy({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false);
@@ -376,17 +377,17 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
       <header class="session-head">
         {card && repo && ui.config && ui.config.agentSessions.agents.length > 1 && (
           <div class="row change-agent-picker">
-            <label>Agent <select aria-label="Change agent" value={repo.agent?.changeAgents?.[change ?? ""] ?? ""} disabled={savingAgent} onChange={(event) => void chooseAgent(event.currentTarget.value)}>
-              <option value="">Project agent ({ui.config.agentSessions.agents.find((agent) => agent.id === repo.agent?.agentId)?.name ?? ui.config.agentSessions.agents.find((agent) => agent.id === ui.config?.agentSessions.defaultAgent)?.name})</option>
-              {ui.config.agentSessions.agents.map((agent) => <option value={agent.id}>{agent.name}</option>)}
-            </select></label>
+            <span>Agent</span><Select aria-label="Change agent" value={repo.agent?.changeAgents?.[change ?? ""] ?? ""} disabled={savingAgent} onChange={(value) => void chooseAgent(value)} options={[
+              { value: "", label: `Project agent (${ui.config.agentSessions.agents.find((agent) => agent.id === repo.agent?.agentId)?.name ?? ui.config.agentSessions.agents.find((agent) => agent.id === ui.config?.agentSessions.defaultAgent)?.name})` },
+              ...ui.config.agentSessions.agents.map((agent) => ({ value: agent.id, label: agent.name })),
+            ]} />
           </div>
         )}
         {card && repo && ui.config?.agentSessions.enabled && (
-          <div class="row change-permission-picker"><label>Permission profile <select aria-label="Change permission profile" value={repo.agentOverrides?.[change ?? ""]?.permissionProfile ?? ""} disabled={savingPermission} onChange={(event) => void choosePermission(event.currentTarget.value)}>
-            <option value="">Inherit ({repo.agent?.permissionProfile ?? ui.config.agentSessions.defaultPermissionProfile ?? "minimum"})</option>
-            <option value="minimum">Minimum</option><option value="less-friction">Less friction</option><option value="full-automation">Full automation</option>
-          </select></label></div>
+          <div class="row change-permission-picker"><span>Permission profile</span><Select aria-label="Change permission profile" value={repo.agentOverrides?.[change ?? ""]?.permissionProfile ?? ""} disabled={savingPermission} onChange={(value) => void choosePermission(value)} options={[
+            { value: "", label: `Inherit (${repo.agent?.permissionProfile ?? ui.config.agentSessions.defaultPermissionProfile ?? "minimum"})` },
+            { value: "minimum", label: "Minimum" }, { value: "less-friction", label: "Less friction" }, { value: "full-automation", label: "Full automation" },
+          ]} /></div>
         )}
         {agentError && <div class="notice danger" role="status">{agentError}</div>}
         {session && nextAgent && session.agentId !== nextAgent.id && <div class="hint">This session uses {session.agentName}; the next session starts {nextAgent.name}.</div>}

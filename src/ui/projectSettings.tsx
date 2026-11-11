@@ -14,6 +14,7 @@ import { Modal } from "./modal.tsx";
 import { autoFetchEvery } from "./pullState.ts";
 import { DisableButton, type Tracking } from "./untracked.tsx";
 import { followInApp, hrefWithQuery } from "./url.ts";
+import { Select } from "./select.tsx";
 
 const stop = (e: Event) => e.stopPropagation();
 
@@ -120,10 +121,6 @@ export function AutoMergeToggle({ repo, config, isGit, tracking, short = false }
 export const KEEP_EACH = "keep";
 export const KEEP_EACH_LABEL = "Keep each project's setting";
 
-function KeepOption({ keep }: { keep?: boolean }) {
-  return keep ? <option value={KEEP_EACH}>{KEEP_EACH_LABEL}</option> : null;
-}
-
 /** The control a setting is shown with: its value, its accessible name and what a change does. Saving is the caller's. */
 interface SelectProps {
   value: string;
@@ -137,43 +134,17 @@ interface SelectProps {
 
 /** "default agent" or a configured profile; the value `""` is the default agent. */
 export function AgentSelect({ agents, value, label, title, disabled, keep, onChange }: SelectProps & { agents: Config["agentSessions"]["agents"] }) {
-  return (
-    <select class="input agent-picker" aria-label={label} title={title} value={value} disabled={disabled} onClick={stop} onChange={(e) => onChange(e.currentTarget.value)}>
-      <KeepOption keep={keep} />
-      <option value="">default agent</option>
-      {agents.map((a) => (
-        <option key={a.id} value={a.id}>
-          {a.name}
-        </option>
-      ))}
-    </select>
-  );
+  return <Select class="input agent-picker" aria-label={label} title={title} value={value} disabled={disabled} onTriggerClick={stop} onChange={onChange} options={[...(keep ? [{ value: KEEP_EACH, label: KEEP_EACH_LABEL }] : []), { value: "", label: "default agent" }, ...agents.map((agent) => ({ value: agent.id, label: agent.name }))]} />;
 }
 
 /** No convention (`""`) or Conventional Commits. */
 export function PrTitlesSelect({ value, label, title = PR_TITLES_TITLE, disabled, keep, onChange }: SelectProps) {
-  return (
-    <select class="input pr-titles-picker" aria-label={label} title={title} value={value} disabled={disabled} onClick={stop} onChange={(e) => onChange(e.currentTarget.value)}>
-      <KeepOption keep={keep} />
-      <option value="">No convention</option>
-      <option value="conventional-commits">Conventional Commits</option>
-    </select>
-  );
+  return <Select class="input pr-titles-picker" aria-label={label} title={title} value={value} disabled={disabled} onTriggerClick={stop} onChange={onChange} options={[...(keep ? [{ value: KEEP_EACH, label: KEEP_EACH_LABEL }] : []), { value: "", label: "No convention" }, { value: "conventional-commits", label: "Conventional Commits" }]} />;
 }
 
 /** Off (`"0"`) or one of the offered intervals, in seconds. */
 export function AutoFetchSelect({ value, label, title = AUTO_FETCH_TITLE, disabled, keep, onChange }: SelectProps) {
-  return (
-    <select class="input auto-fetch-picker" aria-label={label} title={title} value={value} disabled={disabled} onClick={stop} onChange={(e) => onChange(e.currentTarget.value)}>
-      <KeepOption keep={keep} />
-      <option value="0">Off</option>
-      {AUTO_FETCH_SECONDS.map((s) => (
-        <option key={s} value={String(s)}>
-          {autoFetchLabel(s)}
-        </option>
-      ))}
-    </select>
-  );
+  return <Select class="input auto-fetch-picker" aria-label={label} title={title} value={value} disabled={disabled} onTriggerClick={stop} onChange={onChange} options={[...(keep ? [{ value: KEEP_EACH, label: KEEP_EACH_LABEL }] : []), { value: "0", label: "Off" }, ...AUTO_FETCH_SECONDS.map((seconds) => ({ value: String(seconds), label: autoFetchLabel(seconds) }))]} />;
 }
 
 /** Which agent the project's sessions start: only offered with a choice to make and sessions on for the project. */
@@ -193,10 +164,10 @@ export function AgentPicker({ repo, config, tracking }: { repo: RepoConfig; conf
 
 export function PermissionProfilePicker({ repo, config, tracking }: { repo: RepoConfig; config: Config; tracking: Tracking }) {
   if (!config.agentSessions.enabled || !repoAgentEnabled(repo)) return null;
-  return <select class="input" aria-label={`Permission profile for ${repo.name}`} value={repo.agent?.permissionProfile ?? ""} disabled={tracking.busy[repo.id] !== undefined} onClick={stop} onChange={(event) => tracking.setAgent(repo.id, { permissionProfile: (event.currentTarget.value || null) as AgentPermissionProfileId | null })}>
-    <option value="">Default ({config.agentSessions.defaultPermissionProfile ?? "minimum"})</option>
-    <option value="minimum">Minimum</option><option value="less-friction">Less friction</option><option value="full-automation">Full automation</option>
-  </select>;
+  return <Select class="input" aria-label={`Permission profile for ${repo.name}`} value={repo.agent?.permissionProfile ?? ""} disabled={tracking.busy[repo.id] !== undefined} onTriggerClick={stop} onChange={(value) => tracking.setAgent(repo.id, { permissionProfile: (value || null) as AgentPermissionProfileId | null })} options={[
+    { value: "", label: `Default (${config.agentSessions.defaultPermissionProfile ?? "minimum"})` },
+    { value: "minimum", label: "Minimum" }, { value: "less-friction", label: "Less friction" }, { value: "full-automation", label: "Full automation" },
+  ]} />;
 }
 
 export const PR_TITLES_TITLE = `PR titles: how Ship asks the agent to title this project's pull requests, saved at once. Conventional Commits adds: "${CONVENTIONAL_COMMITS_SHIP_SENTENCE}"`;
