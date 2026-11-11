@@ -9,12 +9,13 @@ See proposal.md for motivation. The selected task artifact is currently rendered
 **Goals:**
 
 - Let a person record that a `[~]` task has been checked or performed.
+- Let a person explicitly mark every remaining task complete from Ship preflight when they have verified the work.
 - Preserve the exact task text, ordering, indentation, and all unrelated file bytes.
 - Fail closed if the displayed task list no longer matches the file.
 
 **Non-Goals:**
 
-- Editing task text or toggling open/done tasks.
+- Editing task text or toggling individual open/done tasks.
 - Adding support for task writes to arbitrary frameworks or paths.
 - Automatically confirming tasks during scanning, refresh, validation, or archive.
 
@@ -25,6 +26,7 @@ See proposal.md for motivation. The selected task artifact is currently rendered
 - Use a same-origin mutating API route. Resolve repository and change from the current tracked snapshot, obtain the task path from the framework, and verify each path segment is an ordinary file/directory rather than a symlink before writing.
 - Write a replacement preserving all non-target bytes through an exclusive temporary file in the task file's directory and atomic rename. Do not invoke git or the OpenSpec CLI. After success, trigger a scan and let existing refresh behavior update the detail view.
 - Return a conflict response for missing, changed, unreadable, or ambiguous tasks; the UI explains that the task changed and offers refresh. Disable the action while a request is pending to prevent duplicate submissions.
+- Ship preflight offers **Mark all complete and Ship** only for a verified, untruncated task summary. The request carries the preflight token; the server re-reads the session checkout, compares the complete version, atomically marks remaining open and awaiting checkboxes complete, then continues Ship. If the version changed, the dialog refreshes its preview and writes nothing.
 
 ## Risks / Trade-offs
 

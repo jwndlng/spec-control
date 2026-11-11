@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: Explicit task confirmation write
-The dashboard MAY update a tracked repository's task file only after the user explicitly confirms one task marked `- [~]` in change detail. The operation MUST be limited to that change's framework-provided task path, preserve all other file content, and refuse stale or ambiguous task content without writing.
+The dashboard MAY write task markers only after an explicit user action. It MUST use a framework-provided task path and compare the complete displayed file version, refusing stale content without writing. Writes MUST preserve unrelated content and atomically replace markers. Automatic shipping MUST NOT change task files.
 
 #### Scenario: Confirm one awaiting task
 - **WHEN** the user explicitly confirms a uniquely identified `- [~]` task and its current content still matches the displayed task
@@ -16,4 +16,15 @@ The dashboard MAY update a tracked repository's task file only after the user ex
 #### Scenario: No implicit task writes
 - **WHEN** a scan, refresh, page load, polling request, or click on an ordinary checklist checkbox occurs
 - **THEN** no task file is written
+
+### Requirement: Bulk task confirmation from Ship preflight
+The **Mark all complete and Ship** action MUST be available only for a verified, untruncated summary. It SHALL mark remaining `[ ]` and `[~]` tasks in the session checkout and proceed only after the write succeeds.
+
+#### Scenario: Confirm every remaining task from Ship preflight
+- **WHEN** the user chooses **Mark all complete and Ship** with the current preflight token for a verified, untruncated task file
+- **THEN** the server changes only remaining open and awaiting task markers in the session checkout, then continues Ship
+
+#### Scenario: Stale Ship preflight
+- **WHEN** the session task file changes after preflight and the user chooses **Mark all complete and Ship**
+- **THEN** the file is unchanged and the refreshed preflight is shown again
 

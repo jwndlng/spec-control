@@ -1,4 +1,4 @@
 schema: spec-driven
 created: 2026-11-11
 spec-control:
-  branch: docs/tick-off-tasks-ui
+  branch: feat/tick-off-tasks-ui

@@ -246,7 +246,7 @@ export function SessionProvider({
         const choice = await new Promise<ShipChoice>((answer) => setShipAsk({ preview, answer }));
         setShipAsk(undefined);
         if (choice === "cancel") return;
-        result = await api.shipSession(id, choice === "finish" ? { finishTasks: true } : { confirmation: preview.token });
+        result = await api.shipSession(id, choice === "finish" ? { finishTasks: true } : choice === "confirm" ? { confirmAllTasks: true, confirmation: preview.token } : { confirmation: preview.token });
       }
       reportShip({ reportUnsent, reportAutoMerge }, id, result);
     } finally { shipping.current.delete(id); }

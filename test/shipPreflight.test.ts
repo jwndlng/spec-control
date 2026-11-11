@@ -73,6 +73,20 @@ test("complete tasks proceed without confirmation even when the board snapshot i
   expect(result.preflight).toBeUndefined();
 });
 
+test("the Ship-menu bulk confirmation checks every remaining marker from its preflight version, then ships", async () => {
+  const { h, s, tasks } = await setup();
+  await writeFile(tasks, "# Tasks\n\n- [x] Done\n- [ ] Open\n- [~] Needs review\n");
+  const preview = await h.manager.ship(s.id);
+  expect(preview.preflight?.summary).toMatchObject({ done: 1, total: 3, open: ["Open"], awaiting: ["Needs review"] });
+  await writeFile(tasks, "# Tasks\n\n- [x] Done\n- [ ] Changed after preview\n- [~] Needs review\n");
+  const refreshed = await h.manager.ship(s.id, { confirmAllTasks: true, confirmation: preview.preflight!.token });
+  expect(refreshed.preflight?.summary.open).toEqual(["Changed after preview"]);
+  expect(await Bun.file(tasks).text()).toContain("- [ ] Changed after preview");
+  const shipped = await h.manager.ship(s.id, { confirmAllTasks: true, confirmation: refreshed.preflight!.token });
+  expect(shipped.shipped).toBe(true);
+  expect(await Bun.file(tasks).text()).toBe("# Tasks\n\n- [x] Done\n- [x] Changed after preview\n- [x] Needs review\n");
+});
+
 test("bounded task reads fail closed for missing, malformed, symlinked, oversized and empty files", async () => {
   const { s, tasks } = await setup();
   const read = () => readShipTasks(s.worktreePath, "upgrade-runtime");

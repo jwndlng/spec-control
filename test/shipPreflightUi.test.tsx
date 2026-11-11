@@ -30,7 +30,7 @@ function Probe() {
     </button>
   );
 }
-async function setup() {
+async function setup(currentPreview: ShipPreflight = preview) {
   browser = new Window({ url: "http://localhost/board" });
   globalThis.window = browser as unknown as typeof window;
   globalThis.document = browser.document as unknown as Document;
@@ -43,7 +43,7 @@ async function setup() {
       id: "s1",
       submitted: false,
       autoMerge: false,
-      ...(!request.confirmation && !request.finishTasks ? { preflight: preview } : { submitted: true }),
+      ...(!request.confirmation && !request.finishTasks && !request.confirmAllTasks ? { preflight: currentPreview } : { submitted: true }),
     } as ShipResult;
   };
   await act(async () => {
@@ -73,6 +73,7 @@ test("Ship dialog renders readable tasks as text, focuses Cancel, and cancels wi
   expect(root!.querySelector("script")).toBeNull();
   expect(root!.textContent).toContain("Sign in on the real device");
   expect(root!.textContent).toContain("list is shortened");
+  expect([...root!.querySelectorAll("button")].some((button) => button.textContent === "Mark all complete and Ship")).toBe(false);
   expect(document.activeElement?.textContent).toBe("Cancel");
   await click("Cancel");
   expect(calls).toEqual([{}]);
@@ -92,6 +93,16 @@ test("Finish tasks and Ship anyway send distinct explicit requests; double-click
   await click("Ship");
   await click("Ship anyway");
   expect(calls[3]).toEqual({ confirmation: "preview-a" });
+});
+
+test("the Ship menu offers a separate explicit bulk-completion choice for complete task summaries", async () => {
+  const eligible = { ...preview, summary: { ...preview.summary, truncated: false } };
+  const { calls, click } = await setup(eligible);
+  await click("Ship");
+  expect(root!.textContent).toContain("only when you have completed and verified all listed work");
+  await click("Mark all complete and Ship");
+  expect(calls[1]).toEqual({ confirmAllTasks: true, confirmation: "preview-a" });
+  expect(root!.querySelector('[role="alertdialog"]')).toBeNull();
 });
 
 test("a changed confirmation preview stays open for review; Escape sends nothing further", async () => {

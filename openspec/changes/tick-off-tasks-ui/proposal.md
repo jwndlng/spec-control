@@ -7,6 +7,7 @@ Tasks marked `[~]` require a person to verify or perform something, but the dash
 ## What Changes
 
 - Add a task completion control for tasks awaiting human review in change detail.
+- Add a separate explicit Ship-preflight choice for a user who has completed and verified every remaining task.
 - Add a narrowly scoped API operation that changes only the selected task marker after an explicit user action, then refreshes the snapshot.
 - Keep task text and task ordering intact, and reject stale or ambiguous task requests rather than guessing.
 
