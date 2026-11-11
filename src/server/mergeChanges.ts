@@ -62,10 +62,13 @@ export function foldLeftovers(mainCopies: ChangeCopy[], archived: ChangeSnapshot
     if (i === undefined || (copy.change.created ?? "") > (archived[i].archived ?? "")) copies.push(copy);
     else leftovers.set(i, [...(leftovers.get(i) ?? []), copy]);
   }
-  const folded = archived.map((change, i) => {
+  const folded = archived.flatMap((change, i) => {
+    // Multiple archive directories with the same change name are successive snapshots, not separate board cards.
+    // Keep the newest one (the list is newest first), matching the index used above for leftovers.
+    if (newest.get(change.name) !== i) return [];
     const left = leftovers.get(i);
-    if (!left) return change;
-    return { ...change, otherCheckouts: [...(change.otherCheckouts ?? []), ...left.map((o) => ({ ...o.checkout, column: o.change.column }))] };
+    if (!left) return [change];
+    return [{ ...change, otherCheckouts: [...(change.otherCheckouts ?? []), ...left.map((o) => ({ ...o.checkout, column: o.change.column }))] }];
   });
   return { copies, archived: folded };
 }

@@ -100,10 +100,7 @@ test("foldLeftovers: a name reused after the archive stays a change of its own",
 test("foldLeftovers: of two archives of one name only the newest gets the leftover", () => {
   const { copies, archived } = foldLeftovers([copy(MAIN, "done", "Done", { created: "2026-09-10" })], [archivedSnapshot("2026-09-20"), archivedSnapshot("2026-08-01")]);
   expect(copies).toEqual([]);
-  expect(archived.map((c) => [c.archived, c.otherCheckouts])).toEqual([
-    ["2026-09-20", [{ ...MAIN, column: "Done" }]],
-    ["2026-08-01", undefined],
-  ]);
+  expect(archived.map((c) => [c.archived, c.otherCheckouts])).toEqual([["2026-09-20", [{ ...MAIN, column: "Done" }]]]);
 });
 
 test("mergeChanges: worktrees that merely carry main's copy along are not listed", () => {

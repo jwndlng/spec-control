@@ -118,7 +118,10 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         <ColumnGlossary />
         <p>
           The filter bar narrows the board to some projects or to a search over change and project names, and keeps your
-          choice in the URL, so a filtered board can be bookmarked or shared.
+          choice in the URL, so a filtered board can be bookmarked or shared. <strong>Show running</strong> in the
+          filter bar on All changes and project boards keeps only changes with a running agent session, including archive
+          sessions and agents waiting for input or quiet. It combines with search, project selection and archive visibility;
+          running sessions still count with the Activity threshold and Hide merged. Clear filters turns it off.
         </p>
         <p>
           A card is tinted as <strong>working</strong> while an agent works on its change, and also while the change's pull
