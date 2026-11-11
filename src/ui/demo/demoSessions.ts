@@ -456,12 +456,15 @@ export function createDemoSessions({ now, getConfig, getSnapshot, integratable, 
       const work = workOf(s);
       if (!SHIPPABLE_WORK.includes(work.state)) throw new ApiError(409, `there is nothing to ship (${work.state})`);
       const change = getSnapshot().repos.find((r) => r.id === s.session.repoId)?.changes.find((c) => c.name === s.session.change);
-      if ((!change?.tasks || change.tasks.total === 0 || change.tasks.done < change.tasks.total) && request.confirmation !== `demo:${id}` && !request.finishTasks) {
-        return { ...s.session, shipped: false, autoMergeInstructionIncluded: false, submitted: false, autoMerge: false, preflight: { token: `demo:${id}`, summary: { verified: !!change?.tasks?.total, reason: "Demo task state; no real checks run.", total: change?.tasks?.total ?? 0, done: change?.tasks?.done ?? 0, open: ["Verify the implementation checks"], awaiting: change?.tasks?.awaitingTasks ?? [], truncated: false } } };
+      if (request.finishTasks) {
+        run(s, "implement");
+        return { ...s.session, shipped: false, submitted: true, autoMerge: false, autoMergeInstructionIncluded: false };
       }
-      run(s, request.finishTasks ? "implement" : "ship");
-      // The recording's agent ships nothing real, so its prompt never carries the docs auto-merge instruction.
-      return { ...s.session, shipped: !request.finishTasks, submitted: true, autoMerge: false, autoMergeInstructionIncluded: false };
+      if (!change || !availableActions(change).includes("archive")) throw new ApiError(409, "Required change artifacts are not ready in this checkout.");
+      const taskSummary = { verified: !!change.tasks?.total, reason: "Demo task state; no real checks run.", total: change.tasks?.total ?? 0, done: change.tasks?.done ?? 0, open: change.tasks && change.tasks.done + (change.tasks.awaiting ?? 0) < change.tasks.total ? ["Verify the implementation checks"] : [], awaiting: change.tasks?.awaitingTasks ?? [], truncated: false };
+      run(s, "ship");
+      return { ...s.session, shipped: true, submitted: true, autoMerge: false, autoMergeInstructionIncluded: false, pullRequestState: "created", pullRequestUrl: "https://github.com/acme/demo-ops/pull/999", taskSummary };
+
     },
 
     resolveConflicts(id: string): PromptResult {
