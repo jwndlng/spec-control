@@ -157,6 +157,7 @@ test("Finish checks sends into a running session and resumes an ended one withou
   expect(result).toMatchObject({ id: s.id, submitted: true });
   await waitFor(() => seen.text().includes("never push to the merged branch"), "follow-up prompt");
   expect(seen.text()).toContain("last fetched 2026-11-01");
+  expect(seen.text()).toContain("Verify the current PR and evidence yourself.");
   expect(seen.text()).toContain(CONVENTIONAL_COMMITS_SHIP_SENTENCE);
   expect(seen.text()).toContain("set branch:");
   expect(await treeFingerprint(s.worktreePath)).toEqual(before);
