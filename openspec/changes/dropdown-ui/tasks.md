@@ -27,6 +27,6 @@
 
 ## 5. Integration and release note
 
-- [ ] 5.1 `src/ui/` has no remaining native `<select>` elements; both builds, binary version, strict OpenSpec validation, and 275 focused migration tests pass. Local `bun run check` and PR #495's `check (ubuntu-latest)` stop at typecheck on mainline `tick-off-tasks-ui` errors: `SessionManager.shipPreviews`, `artifactsReady`, `ShipChoice`/`setShipAsk`, and `ShipPreflight`/`preview`/`click` are undefined in server/session/test files. CI did not reach tests or builds. PR #491 reported the same errors plus a missing `ChangePermissionPicker` import, which this branch fixes. Re-run `bun run check` after mainline fixes the listed symbols.
+- [x] 5.1 Confirmed `src/ui/` has no remaining native `<select>` elements; `bun run check` passes with 2,386 tests across 194 files, both builds pass, `dist/spec-control --version` prints `dev`, and strict OpenSpec validation passes.
 - [~] 5.2 Automated DOM/style checks cover keyboard, Escape, scrolling, themes, contrast, reduced motion, and no save while browsing. User confirmed the console Agent dropdown looks good. Still required: in the demo and macOS wrapper, check filters/settings/setup/creation in both themes, narrow viewport, 200% zoom, pointer and touch, keyboard-only use, screen-reader names/selection, modal Escape, scrolling, reduced motion, and confirm no new network requests.
 - [x] 5.3 Added an independent What's new entry describing shared searchable dropdowns; wording matches the UI and `bun test test/whatsNew.test.ts` passes.
