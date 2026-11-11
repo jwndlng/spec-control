@@ -2,3 +2,4 @@ schema: spec-driven
 created: 2026-11-10
 spec-control:
   branch: feat/add-filter-show-running
+  archive-branch: chore/archive-add-filter-show-running

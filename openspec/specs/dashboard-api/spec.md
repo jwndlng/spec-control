@@ -1697,8 +1697,6 @@ repository.
 - **WHEN** `PUT /api/config` is sent with `agentSessions.endMergedSessions: "yes"`
 - **THEN** the response is `400` naming `agentSessions.endMergedSessions` and the saved configuration is unchanged
 
-## ADDED Requirements
-
 ### Requirement: Permission profiles configuration and effective permissions endpoint
 The API SHALL support querying and validating agent permission configurations:
 1. `GET /api/config` and `PUT /api/config` SHALL support `agentSessions.defaultPermissionProfile` (one of `"minimum"`, `"less-friction"`, `"full-automation"`), `agentSessions.optInMerge` (boolean), and `agentSessions.optInCleanup` (boolean). Invalid profile values or bypass flags in the configuration SHALL be rejected with `400`.
