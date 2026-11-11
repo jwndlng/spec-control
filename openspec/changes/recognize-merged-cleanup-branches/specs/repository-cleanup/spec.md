@@ -17,9 +17,11 @@ or **kept with a reason**:
   always removable.
 - **Branches**: every local branch except the default branch. A branch is removable only if the base is known and
   either every commit on the branch is reachable from the base, or every file the branch changed since it forked from
-  the base has the same content in the base (which recognises squash and rebase merges), or exact merged PR evidence satisfies "Cleanup recognizes the exact merged PR head". A branch MUST be kept when it
+  the base has the same content in the base (which recognises squash and rebase merges), or exact merged PR evidence satisfies "Cleanup recognizes the exact merged PR head", or the existing relevance-based rule finds old unrelated work eligible. A branch MUST be kept when it
   is the default branch or the branch the main checkout is on, and when it is checked out in a linked worktree that is
   not itself removable. A branch checked out in a removable worktree SHALL be marked as depending on that worktree.
+
+The relevance-based cleanup rules on main SHALL be preserved: work associated with an active change is kept; old unrelated work remains eligible without merge proof, while recent work without sufficient merge evidence is kept. Exact PR evidence is an additional merge proof, not a new prerequisite for age-based deletion. Dirty work, running sessions, external locks, protected branches, and changed heads remain protected.
 
 Every kept item's reason SHALL be stated in words (for example: uncommitted files, commits not in the base with their
 count, session running, locked, checked out in the main checkout, default branch unknown). The preview MUST NOT write
@@ -107,7 +109,11 @@ A branch selected with a stale-record dependency SHALL be re-evaluated after pru
 ## ADDED Requirements
 
 ### Requirement: Cleanup recognizes the exact merged PR head
-Cleanup SHALL accept cached merged PR evidence only when the PR belongs to the repository, targets its default branch, its head SHA equals the current local branch head, and its merge commit is reachable from the locally known base. It SHALL retain local ancestry/content proofs as alternatives. Missing, stale, mismatched, or fork evidence SHALL NOT authorize deletion. Preview SHALL not fetch or query GitHub.
+Cleanup SHALL accept cached PR merge proof only for a same-repository PR targeting the default branch, with an exact local head match and a merge commit reachable from the local base. Local ancestry/content proofs and age-based eligibility SHALL remain alternatives. Missing, stale, mismatched, or fork evidence SHALL NOT prove a merge. Preview SHALL NOT fetch or query GitHub.
+
+#### Scenario: Cache freshness
+- **WHEN** cleanup evaluates cached PR evidence
+- **THEN** only a successful cache fetched within five minutes, with a valid non-future timestamp, can establish a PR merge proof
 
 #### Scenario: Squash merge followed by edits
 - **WHEN** a branch head exactly matches a merged PR head, its merge commit is in the base, and the base later edited the same files

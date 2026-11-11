@@ -53,14 +53,24 @@ test("a failed request enables the actions again", async () => {
 });
 
 test("the panel's header actions go through the guard and are disabled while one runs", () => {
-  expect(panel).toContain("oneAtATime(inFlight, setActing)");
+  expect(panel).toContain("oneAtATime(");
   const header = panel.slice(panel.indexOf('<header class="session-head">'), panel.indexOf("</header>"));
-  // Ship, Resolve conflicts, Resume and Delete record; Merge also keeps its own readiness.
-  expect(header.match(/disabled=\{acting\}/g)).toHaveLength(4);
+  // Ship also reads the provider's immediate in-flight flag; other actions use the local guard.
+  expect(header.match(/disabled=\{acting\}/g)).toHaveLength(3);
+  expect(header).toContain("disabled={acting || ui.shippingIds.has(session.id)}");
   expect(header).toContain("disabled={!merge.enabled || acting}");
+  expect(header).toContain('<details class="console-more-actions">');
+  expect(header).toContain("<summary>More actions</summary>");
+  expect(header).toContain("Commit this change, push its branch, and open or reuse a pull request. This does not merge it.");
+  expect(header).toContain('aria-label="Pull request actions"');
+  expect(header).toContain('aria-label="Change actions"');
+  expect(header).toContain('aria-label="Session actions"');
   // The same steps offered through the split button in the console.
   expect(header).toContain("disabled: !merge.enabled || acting,");
   expect(header).toContain("disabled: acting,");
+  expect(panel).toContain("Ship outcome unknown:");
+  expect(panel).toContain('aria-live={shipOperation.state === "failed" ? "assertive" : "polite"}');
+  expect(panel).toContain("shipOperationDismissed(shipOperation.operationId)");
   for (const call of ["ui.ship(session.id)", "api.resolveConflicts(session.id)", "api.mergeSession(session.id)", "api.resumeSession(session.id)", "api.deleteSession(session.id)"]) {
     const at = header.indexOf(call);
     expect(at).toBeGreaterThan(0);

@@ -14,6 +14,8 @@ Implement only the proposal's listed concern in its owned paths. Preserve unrela
 
 Keep current local ancestry and content tests. As an additional proof, use cached same-repository/default-base merged PR evidence whose head SHA exactly equals the current branch head and whose merge commit is reachable from the locally known base. Extend cached parsed PR fields if needed. An old merged PR on the same branch name is insufficient after new commits; a merge not yet fetched is insufficient until local base evidence catches up. Preview remains local/read-only and does not start hidden network requests.
 
+Preserve the relevance-based cleanup rules now on main, as confirmed by the user: active changes remain protected; old unrelated work remains eligible without merge proof. PR evidence only adds a merge proof and never bypasses other protections. Evidence is fresh only within the existing five-minute PR cache window; a failed refresh, invalid date, or future date does not authorize this proof. The API supplies its existing cache and cleanup verifies the current origin's repository identity independently.
+
 Represent stale-record pruning as a selection dependency just like worktree removal. Process selected worktrees, prune records, then re-evaluate selected branches in the same operation. Preserve changed-head, dirty-file, external-lock, running-session, default/main branch, and canonical repository lock protections. Distinguish missing evidence from proven unique work in reasons and offer a useful next action. Retain restoration commands for deleted branches.
 
 ## Risks / Trade-offs

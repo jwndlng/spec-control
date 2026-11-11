@@ -33,15 +33,17 @@ import type {
   CleanupSelection,
   CleanupWorktree,
   RepoConfig,
+  RepoPullRequests,
   Worktree,
 } from "../shared/types.ts";
 import { isBranchName } from "./branchName.ts";
 import { removeStaleChangeDirectory } from "./dismissChange.ts";
 import { frameworkById, writablePaths } from "./frameworks/registry.ts";
-import { parseWorktrees, repositoryKey, subdirectory } from "./git.ts";
+import { originUrl, parseWorktrees, repositoryKey, subdirectory } from "./git.ts";
 import { gitWrite } from "./gitWrite.ts";
 import { branchBackupsDir, worktreesDir } from "./paths.ts";
 import { backupDirName } from "./pull.ts";
+import { FRESHNESS_MS, githubRepoFromRemote, parseHeadOid } from "./pullRequests.ts";
 import { baseRef } from "./sessions/base.ts";
 import { contentIsInBase, readWorkStatus } from "./sessions/workStatus.ts";
 import { checkWorktreeRemovable, removeWorktree } from "./sessions/worktree.ts";
@@ -145,6 +147,7 @@ interface Context {
   /** Real paths of worktrees with a running agent session. */
   sessions: Set<string>;
   activeChanges: Set<string>;
+  evidence?: RepoPullRequests;
 }
 
 const RECENT_WORK_DAYS = 30;
@@ -159,7 +162,7 @@ function recentlyWorked(date: string | undefined): boolean {
   return Number.isFinite(at) && Date.now() - at <= RECENT_WORK_DAYS * 24 * 60 * 60 * 1000;
 }
 
-async function context(repo: RepoConfig, sessions: Set<string>): Promise<Context> {
+async function context(repo: RepoConfig, sessions: Set<string>, evidence?: RepoPullRequests): Promise<Context> {
   const [remoteHead, listedOut, root] = await Promise.all([
     git(repo.path, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]),
     git(repo.path, ["worktree", "list", "--porcelain"]),
@@ -182,7 +185,35 @@ async function context(repo: RepoConfig, sessions: Set<string>): Promise<Context
   const activeChanges = new Set((await readdir(join(repo.path, "openspec/changes"), { withFileTypes: true }).catch(() => []))
     .filter((entry) => entry.isDirectory() && entry.name !== "archive")
     .map((entry) => entry.name));
-  return { repo, base, defaultName, listed, mainBranch: listed.find((w) => w.isMain)?.branch, managedRoot: join(root, repo.id), sessions, activeChanges };
+  const github = evidence && githubRepoFromRemote(await originUrl(repo.path));
+  const sameRepo = github && evidence?.repoId === repo.id && evidence.github?.toLowerCase() === github.toLowerCase();
+  return { repo, base, defaultName, listed, mainBranch: listed.find((w) => w.isMain)?.branch, managedRoot: join(root, repo.id), sessions, activeChanges, evidence: sameRepo ? evidence : undefined };
+}
+
+/** An additional proof only: old unrelated work retains its independent age-based eligibility. */
+async function mergeProof(ctx: Context, ref: BranchRef): Promise<Pick<CleanupBranch, "mergedBy" | "pullRequest" | "reason" | "nextAction">> {
+  if (!ctx.base) return { reason: "the default branch is unknown", nextAction: "Inspect the repository's default branch configuration." };
+  const ahead = await git(ctx.repo.path, ["rev-list", "--count", `${ctx.base}..${ref.commit}`]);
+  if (!ahead.ok) return { reason: `could not compare it with ${ctx.base}`, nextAction: "Pull, then inspect the branch locally." };
+  if (ahead.out === "0") return { mergedBy: "ancestry" };
+  if (await contentIsInBase(ctx.repo.path, ctx.base, ref.commit)) return { mergedBy: "content" };
+  const evidence = ctx.evidence;
+  const fetchedAt = Date.parse(evidence?.fetchedAt ?? "");
+  const age = Date.now() - fetchedAt;
+  if (evidence?.status !== "ok" || !Number.isFinite(age) || age < 0 || age > FRESHNESS_MS)
+    return { reason: `merge evidence is insufficient; ${ahead.out} commit(s) are not reachable from ${ctx.base} and the PR cache is unavailable or stale`, nextAction: "Refresh Pull requests, then reopen Clean up; Pull to update the local base." };
+  const candidates = evidence.pullRequests.filter((pr) => pr?.state === "merged" && pr.isCrossRepository === false && pr.base === ctx.defaultName && pr.headOid === ref.commit && parseHeadOid(pr.mergeOid));
+  for (const pr of candidates) {
+    const merge = parseHeadOid(pr.mergeOid);
+    if (merge && (await git(ctx.repo.path, ["merge-base", "--is-ancestor", merge, ctx.base])).ok)
+      return { mergedBy: "pull-request", pullRequest: pr.number };
+  }
+  if (candidates.length)
+    return { reason: "the cached PR merge commit is not reachable from the local base", nextAction: "Pull to update the local base, then reopen Clean up." };
+  const changed = evidence.pullRequests.some((pr) => pr?.state === "merged" && pr.isCrossRepository === false && pr.base === ctx.defaultName && pr.head === ref.name && pr.headOid && pr.headOid !== ref.commit);
+  return changed
+    ? { reason: "the branch head differs from its cached merged PR head", nextAction: "Inspect the branch's additional commits before deleting it." }
+    : { reason: `merge evidence is insufficient; ${ahead.out} commit(s) are not reachable from ${ctx.base}`, nextAction: "Refresh Pull requests or inspect the branch's changes locally." };
 }
 
 const linked = (ctx: Context) => ctx.listed.filter((w) => !w.isMain && !w.bare && !w.prunable);
@@ -196,7 +227,10 @@ async function judgeWorktree(ctx: Context, w: Worktree): Promise<CleanupWorktree
   if (work.state === "uncommitted") return { ...item, reason: "the worktree has uncommitted changes" };
   const change = branchChange(w.branch);
   if (change && ctx.activeChanges.has(change)) return { ...item, reason: `it is part of the active change ${change}` };
-  if ((work.state === "unpushed" || work.state === "pushed") && recentlyWorked(lastCommitAt)) return { ...item, reason: `it has unmerged work from the last ${RECENT_WORK_DAYS} days` };
+  const head = work.state !== "merged" && w.branch ? await git(w.path, ["rev-parse", "--verify", "HEAD^{commit}"]) : undefined;
+  const proof = head?.ok && w.branch ? await mergeProof(ctx, { name: w.branch, commit: head.out }) : undefined;
+  if ((work.state === "unpushed" || work.state === "pushed") && !proof?.mergedBy && recentlyWorked(lastCommitAt)) return { ...item, reason: `it has recent work without sufficient merge evidence; ${proof?.reason ?? "inspect the branch"}` };
+  if (proof?.mergedBy) item.work = { state: "merged", base: ctx.base };
   const check = await checkWorktreeRemovable(w.path, true);
   return check.removable ? { ...item, removable: true } : { ...item, reason: check.reason };
 }
@@ -224,41 +258,43 @@ async function branchRefs(repoPath: string): Promise<BranchRef[]> {
  * `worktreeRemovable` says whether the linked worktree a branch is checked out in is itself removable (the preview);
  * applying passes nothing, since by then every worktree that was going to be removed is gone.
  */
-async function judgeBranch(ctx: Context, ref: BranchRef, worktreeRemovable: (path: string) => boolean = () => false): Promise<CleanupBranch> {
-  const item: CleanupBranch = { ...ref, removable: false };
-  if (ref.name === ctx.mainBranch) return { ...item, reason: "it is checked out in the main checkout" };
+async function judgeBranch(ctx: Context, ref: BranchRef, worktreeRemovable: (path: string) => boolean = () => false, prune = false): Promise<CleanupBranch> {
+  const fetchedAt = ctx.evidence?.fetchedAt;
+  const item: CleanupBranch = { ...ref, removable: false, evidenceFetchedAt: fetchedAt && Number.isFinite(Date.parse(fetchedAt)) ? fetchedAt : undefined };
+  if (ref.name === ctx.mainBranch) return { ...item, reason: "it is checked out in the main checkout", nextAction: "Keep this branch while it is checked out in the main checkout." };
   const base = ctx.base;
-  if (!base) return { ...item, reason: "the default branch is unknown" };
+  if (!base) return { ...item, reason: "the default branch is unknown", nextAction: "Inspect the repository's default branch configuration." };
 
-  const ahead = await git(ctx.repo.path, ["rev-list", "--count", `${base}..${ref.commit}`]);
-  if (!ahead.ok) return { ...item, reason: `could not compare it with ${base}` };
-  let merged = ahead.out === "0";
-  if (merged) item.mergedBy = "ancestry";
-  else if (await contentIsInBase(ctx.repo.path, base, ref.commit)) {
-    merged = true;
-    item.mergedBy = "content";
-  }
+  const proof = await mergeProof(ctx, ref);
+  if (proof.reason?.startsWith("could not compare")) return { ...item, ...proof };
+  const merged = !!proof.mergedBy;
+  item.mergedBy = proof.mergedBy;
+  item.pullRequest = proof.pullRequest;
   const change = branchChange(ref.name);
-  if (change && ctx.activeChanges.has(change)) return { ...item, reason: `it is part of the active change ${change}` };
-  if (!merged && recentlyWorked(ref.lastCommitAt)) return { ...item, reason: `it has unmerged work from the last ${RECENT_WORK_DAYS} days` };
+  if (change && ctx.activeChanges.has(change)) return { ...item, reason: `it is part of the active change ${change}`, nextAction: "Finish or archive the active change first." };
+  if (!merged && recentlyWorked(ref.lastCommitAt)) return { ...item, reason: `it has recent work without sufficient merge evidence; ${proof.reason}`, nextAction: proof.nextAction };
 
   const stale = ctx.listed.find((w) => !w.isMain && w.prunable && w.branch === ref.name);
-  if (stale) return { ...item, reason: "it is checked out in a stale worktree record — prune it, then clean up again" };
+  if (stale) {
+    if (ctx.sessions.has(stale.path)) return { ...item, reason: "an agent session is running in it", nextAction: "End the session before cleaning up its branch." };
+    if (!prune) return { ...item, reason: "it is checked out in a stale worktree record — select pruning with this branch", nextAction: "Select pruning together with this branch." };
+    item.prunePath = stale.path;
+  }
   const holder = linked(ctx).find((w) => w.branch === ref.name);
   if (holder) {
     item.worktreePath = holder.path;
-    if (!worktreeRemovable(holder.path)) return { ...item, reason: `it is checked out in the worktree ${holder.path}, which is kept` };
+    if (!worktreeRemovable(holder.path)) return { ...item, reason: `it is checked out in the worktree ${holder.path}, which is kept`, nextAction: "Inspect the worktree's blocker above; finish its work or end its running session first." };
   }
   return { ...item, removable: true, ...(merged ? {} : { reason: "old work not associated with an active change" }) };
 }
 
 /** Read-only: what cleanup could remove in `repo`, and why everything else is kept. */
-export async function previewCleanup(repo: RepoConfig, sessions: Set<string> = new Set()): Promise<CleanupPreview> {
-  const ctx = await context(repo, sessions);
+export async function previewCleanup(repo: RepoConfig, sessions: Set<string> = new Set(), evidence?: RepoPullRequests): Promise<CleanupPreview> {
+  const ctx = await context(repo, sessions, evidence);
   const worktrees = await Promise.all(linked(ctx).map((w) => judgeWorktree(ctx, w)));
   const removable = new Set(worktrees.filter((w) => w.removable).map((w) => w.path));
   const refs = (await branchRefs(repo.path)).filter((b) => b.name !== ctx.defaultName);
-  const branches = await mapLimit(refs, BRANCH_CONCURRENCY, (b) => judgeBranch(ctx, b, (path) => removable.has(path)));
+  const branches = await mapLimit(refs, BRANCH_CONCURRENCY, (b) => judgeBranch(ctx, b, (path) => removable.has(path), true));
   const prunable = ctx.listed.filter((w) => !w.isMain && w.prunable).map((w) => ({ path: w.path }));
   return { repoId: repo.id, base: ctx.base, worktrees, prunable, branches };
 }
@@ -267,11 +303,12 @@ export async function previewCleanup(repo: RepoConfig, sessions: Set<string> = n
  * Removes what the user selected, in order — worktrees, stale records, branches — re-checking each item first. Items
  * that are no longer safe, or were never the repository's own, are kept and reported. One failure never stops the rest.
  */
-export function applyCleanup(repo: RepoConfig, selection: CleanupSelection, sessions: Set<string> = new Set()): Promise<CleanupResult> {
+export function applyCleanup(repo: RepoConfig, selection: CleanupSelection, sessions: Set<string> = new Set(), evidence?: RepoPullRequests): Promise<CleanupResult> {
   return holdingLock(repo, async () => {
     const items: CleanupItemResult[] = [];
+    const pruneBlockers = new Map<string, string>();
 
-    let ctx = await context(repo, sessions);
+    let ctx = await context(repo, sessions, evidence);
     for (const requested of selection.worktrees) {
       const w = linked(ctx).find((l) => l.path === requested);
       if (!w) {
@@ -290,11 +327,12 @@ export function applyCleanup(repo: RepoConfig, selection: CleanupSelection, sess
     }
 
     if (selection.prune) {
-      const before = (await context(repo, sessions)).listed.filter((w) => !w.isMain && w.prunable).map((w) => w.path);
+      const before = (await context(repo, sessions, evidence)).listed.filter((w) => !w.isMain && w.prunable).map((w) => w.path);
       if (before.length > 0) {
         const pruned = await gitWrite(repo.path, ["worktree", "prune"]);
-        const after = new Set((await context(repo, sessions)).listed.filter((w) => w.prunable).map((w) => w.path));
+        const after = new Set((await context(repo, sessions, evidence)).listed.filter((w) => w.prunable).map((w) => w.path));
         for (const path of before) {
+          if (after.has(path)) pruneBlockers.set(path, pruned.ok ? "git kept the stale worktree record" : "git refused to prune the stale worktree record");
           items.push(
             after.has(path)
               ? { kind: "prune", id: path, outcome: "kept", reason: pruned.ok ? "git kept the record" : "git refused to prune" }
@@ -305,7 +343,7 @@ export function applyCleanup(repo: RepoConfig, selection: CleanupSelection, sess
     }
 
     if (selection.branches.length > 0) {
-      ctx = await context(repo, sessions);
+      ctx = await context(repo, sessions, evidence);
       const refs = new Map((await branchRefs(repo.path)).map((b) => [b.name, b]));
       for (const { name, commit } of selection.branches) {
         const id = typeof name === "string" ? name : String(name);
@@ -328,7 +366,8 @@ export function applyCleanup(repo: RepoConfig, selection: CleanupSelection, sess
         }
         const judged = await judgeBranch(ctx, ref);
         if (!judged.removable) {
-          items.push({ kind: "branch", id, outcome: "kept", reason: judged.reason });
+          const stale = ctx.listed.find((w) => w.prunable && w.branch === name);
+          items.push({ kind: "branch", id, outcome: "kept", reason: (stale && pruneBlockers.get(stale.path)) || judged.reason });
           continue;
         }
         const deleted = await gitWrite(repo.path, ["branch", "-D", "--", name]);

@@ -8,10 +8,10 @@
 
 ## 2. Popup presentation and surrounding surfaces
 
-- [~] 2.1 Add portalled positioning within the closest dialog or document body, viewport bounds, above/below placement and internal scrolling; DOM geometry cases pass. User: inspect narrow-width and 200% zoom behavior in the demo.
-- [~] 2.2 Implement pointer/touch commit, outside dismissal, one open dropdown at a time and listener cleanup; DOM tests pass for row activation, internal scrolling, outside focus, one-open ownership and cleanup. User: verify option selection by touch on a real touch device.
+- [x] 2.1 Add portalled positioning within the closest dialog or document body, viewport bounds, above/below placement and internal scrolling; DOM geometry cases pass. User confirmed narrow-width and 200% zoom behavior in the demo.
+- [x] 2.2 Implement pointer/touch commit, outside dismissal, one open dropdown at a time and listener cleanup; DOM tests pass for row activation, internal scrolling, outside focus, one-open ownership and cleanup. User confirmed touch selection on a real device.
 - [x] 2.3 Integrate dropdown Escape handling with `modal.tsx`, setup and detail handlers as needed; wrapper DOM tests verify the first Escape closes only the dropdown, the next follows dialog behavior, and unmount releases coordinator ownership.
-- [~] 2.4 Style compact and form variants using existing theme tokens, selected checkmarks, active outlines, disabled states, chevron and reduced-motion-aware entrance; automated theme contrast and reduced-motion checks pass. User: inspect long labels, both themes, and reduced-motion appearance in the demo.
+- [x] 2.4 Style compact and form variants using existing theme tokens, selected checkmarks, active outlines, disabled states, chevron and reduced-motion-aware entrance; automated theme contrast and reduced-motion checks pass. User confirmed long labels, both themes, and reduced-motion appearance in the demo.
 
 ## 3. Filters and settings migration
 
@@ -27,6 +27,6 @@
 
 ## 5. Integration and release note
 
-- [x] 5.1 Confirmed `src/ui/` has no remaining native `<select>` elements; `bun run check` passes with 2,386 tests across 194 files, both builds pass, `dist/spec-control --version` prints `dev`, and strict OpenSpec validation passes.
-- [~] 5.2 Automated DOM/style checks cover keyboard, Escape, scrolling, themes, contrast, reduced motion, and no save while browsing. User confirmed the console Agent dropdown looks good. Still required: in the demo and macOS wrapper, check filters/settings/setup/creation in both themes, narrow viewport, 200% zoom, pointer and touch, keyboard-only use, screen-reader names/selection, modal Escape, scrolling, reduced motion, and confirm no new network requests.
+- [x] 5.1 Confirmed `src/ui/` has no remaining native `<select>` elements; `bun run check` passes with 2,406 tests across 194 files, both builds pass, `dist/spec-control --version` prints `dev`, and strict OpenSpec validation passes.
+- [x] 5.2 Automated DOM/style checks cover keyboard, Escape, scrolling, themes, contrast, reduced motion, and no save while browsing. User confirmed the console Agent dropdown looks good and all remaining demo/macOS wrapper checks: filters/settings/setup/creation in both themes, narrow viewport, 200% zoom, pointer and touch, keyboard-only use, screen-reader names/selection, modal Escape, scrolling, reduced motion, and no new network requests.
 - [x] 5.3 Added an independent What's new entry describing shared searchable dropdowns; wording matches the UI and `bun test test/whatsNew.test.ts` passes.
