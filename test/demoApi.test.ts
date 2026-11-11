@@ -388,9 +388,12 @@ test("the overview's per-project settings change the in-memory config at once, w
   expect((await api.state()).repos.find((r) => r.id === first.id)?.name).toBe("Renamed");
   await expect(api.renameRepo(first.id, " ")).rejects.toMatchObject({ status: 400 });
 
-  expect((await api.setRepoAgent(first.id, { enabled: false })).repos[0].agent).toEqual({ enabled: false });
+  expect((await api.setRepoAgent(first.id, { enabled: false })).repos[0].agent).toMatchObject({ enabled: false, allowedCommands: ["go test ./..."] });
   expect((await api.setRepoAgent(first.id, { permissionProfile: "less-friction" })).repos[0].agent?.permissionProfile).toBe("less-friction");
   expect((await api.setRepoAgent(first.id, { permissionProfile: null })).repos[0].agent?.permissionProfile).toBeUndefined();
+  expect((await api.setRepoAgent(first.id, { allowedCommands: [" bun   run lint ", "bun run lint"] })).repos[0].agent?.allowedCommands).toEqual(["bun run lint"]);
+  await expect(api.setRepoAgent(first.id, { allowedCommands: ["git push"] })).rejects.toMatchObject({ status: 400 });
+  expect((await api.setRepoAgent(first.id, { allowedCommands: [] })).repos[0].agent?.allowedCommands).toBeUndefined();
   await expect(api.setRepoAgent(first.id, { agentId: "nope" })).rejects.toMatchObject({ status: 400 });
   await expect(api.setRepoAgent(first.id, {})).rejects.toMatchObject({ status: 400 });
 

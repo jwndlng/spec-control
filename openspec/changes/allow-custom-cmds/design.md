@@ -61,7 +61,7 @@ Extend shared demo settings behavior and add synthetic example commands; update 
 - Runtime support differs → ship useful Claude allowances and explicit unsupported notices for other current adapters; never weaken approval settings to simulate support.
 - Settings and launch could drift → reuse normalization and adapter output, and exercise fresh start, resume and project-console branches with fake agents.
 - Concurrent project updates could overwrite unrelated settings → use the existing serialized config updater and patch semantics; include preservation checks.
-- The existing main `dashboard-api` spec has a misplaced `## ADDED Requirements` header → strict change validation currently passes but reports that archive would refuse this target; coordinate a separate repair before syncing or archiving this change.
+- The existing main `dashboard-api` spec had a misplaced `## ADDED Requirements` header → moved its permission-profile requirements back under the main `## Requirements` section so strict validation and archive can parse them.
 
 ## Migration Plan
 

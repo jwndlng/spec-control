@@ -807,6 +807,12 @@ button.badge.worktree-path.done { color: var(--success); }
 .project-settings .setting-line:first-child { border-top: 0; }
 .project-settings .setting-label { font-size: 12px; color: var(--fg-body); white-space: nowrap; }
 .project-settings .setting-line .input.agent-picker, .project-settings .setting-line .input.pr-titles-picker, .project-settings .setting-line .input.auto-fetch-picker { max-width: 12rem; }
+.project-settings .setting-line:has(.custom-commands-editor) { align-items: flex-start; }
+.custom-commands-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; width: min(100%, 34rem); padding: 8px 0; }
+.custom-commands-editor > .hint, .custom-commands-editor > .notice, .custom-command-list { grid-column: 1 / -1; margin: 0; }
+.custom-command-entry { display: grid; gap: 4px; font-size: 12px; }
+.custom-command-list { padding: 0; list-style: none; }
+.custom-command-list li { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-top: 1px solid var(--border-light); }
 /* Disable is not a setting: set apart below them. */
 .project-settings .setting-line.setting-disable { margin-top: var(--gap-1); border-top-color: var(--border); }
 /* Empty, the live region takes no room; it says Saving… or Disabling… under the lines while a save runs. */
