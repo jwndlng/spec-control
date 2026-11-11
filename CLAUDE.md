@@ -50,7 +50,7 @@ bun test test/scanner.test.ts   # a single test file
 1. **Read-only towards tracked repositories, with enumerated exceptions.** The dashboard writes to a tracked
    repository only in response to an explicit user action, only to the paths enumerated in the "never writes"
    requirement of `openspec/specs/dashboard-api/spec.md`, deletes nothing there beyond the worktrees, branches, change directories and confirmed change leftovers enumerated below, and runs a git
-   command that writes only where enumerated below. Today that list has nine entries: the managed sections of `openspec/config.yaml` (applying shared config profiles,
+   command that writes only where enumerated below. Today that list has ten entries: the managed sections of `openspec/config.yaml` (applying shared config profiles,
    `src/server/sharedConfig.ts`), only when neither `openspec/` nor `openspec/config.yaml` is a symbolic link, written by
    renaming over it a temporary `openspec/.config.yaml.<random>.tmp` the apply created exclusively and removes whenever
    that rename does not happen; for agent sessions, off by default, a session's git worktree, created with
@@ -113,11 +113,11 @@ bun test test/scanner.test.ts   # a single test file
    directory) — and the same deletion and `git add --all` for the main checkout's copy of a change archived on the
    default branch that none of whose files is in `HEAD`, confirmed as a stale leftover in a stale change's cleanup,
    after its files were re-checked by content hash and those that differ from the archive's copy were copied under
-   `~/.spec-control/branch-backups/` (`removeStaleChangeDirectory`, `POST /api/repos/<id>/changes/<name>/stale-cleanup`); and the **home migration** — once, when the user starts a binary that finds only the pre-rename home,
+   `~/.spec-control/branch-backups/` (`removeStaleChangeDirectory`, `POST /api/repos/<id>/changes/<name>/stale-cleanup`); and **confirming a task** — only when the user activates **Mark confirmed** for one `[~]` task in an active change's detail view, re-reading the framework-provided task file and comparing the complete displayed content and target line, refusing stale or non-awaiting content, checking every path segment beneath the repository for symbolic links, atomically replacing only that marker with `[x]`, and triggering a scan only after success (`src/server/taskConfirmation.ts`, `POST /api/repos/<id>/changes/<name>/tasks/confirm`); or, from the explicit **Mark all complete and Ship** choice, confirming the verified, untruncated task-file version shown in Ship preflight, atomically marking its remaining tasks `[x]`, and continuing Ship only after success (`SessionManager.shipNow`, `POST /api/sessions/<id>/ship`); automatic shipping never changes task files. Both operations use the framework-provided task path, reject stale content and symbolic-link paths, preserve unrelated content, and do not invoke git or the OpenSpec CLI; and the **home migration** — once, when the user starts a binary that finds only the pre-rename home,
    `git worktree repair` of each session worktree the dashboard created, with its new path under
    `~/.spec-control/worktrees/`, which rewrites only that worktree's record in the repository and its `.git` file and is
    retried on later starts until it succeeds (`src/server/homeMigration.ts` through `repairMovedWorktree` in
-   `src/server/sessions/worktree.ts`). Those six modules and the home migration are the only places that write to a
+   `src/server/sessions/worktree.ts`). Those seven modules and the home migration are the only places that write to a
    tracked repository, and every writing git command they run goes through `gitWrite` (`src/server/gitWrite.ts`): `-c
    core.hooksPath=` an empty folder under `~/.spec-control/` and automatic maintenance off, so no hook of the
    repository, of the user's global hooks folder or of a template ever runs (`test/gitWrite.test.ts` fails on a writing

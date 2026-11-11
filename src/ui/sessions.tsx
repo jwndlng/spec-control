@@ -240,7 +240,14 @@ export function SessionProvider({
     if (shipping.current.size > 0) return;
     shipping.current.add(id);
     try {
-      const result = await api.shipSession(id);
+      let result = await api.shipSession(id);
+      while (result.preflight) {
+        const preview = result.preflight;
+        const choice = await new Promise<ShipChoice>((answer) => setShipAsk({ preview, answer }));
+        setShipAsk(undefined);
+        if (choice === "cancel") return;
+        result = await api.shipSession(id, choice === "finish" ? { finishTasks: true } : choice === "confirm" ? { confirmAllTasks: true, confirmation: preview.token } : { confirmation: preview.token });
+      }
       reportShip({ reportUnsent, reportAutoMerge }, id, result);
       setShipResult(result);
     } finally { shipping.current.delete(id); }

@@ -355,7 +355,7 @@ The detail view SHALL offer a toggle that shows the selected file's source text 
 - **THEN** that file is also shown as raw source
 
 ### Requirement: Tasks are shown as a read-only checklist
-When the tasks artifact is selected, its task list SHALL be rendered as checkboxes reflecting each task's state, together with the same progress the card shows. A task SHALL be drawn in one of three states: **done**, ticked; **needs you** (`- [~]`), a third state that is neither ticked nor empty and is announced as mixed rather than as done or not done; and **open**, empty. Where any task needs the user, the view SHALL say in words how many do — `N tasks need you` (`1 task needs you`) — and that each is something to check or do that only the user can, confirmed with **Validate** or when archiving; and it SHALL list those tasks' text above the checklist, in file order, so what the user has to do is the first thing the view shows. The checkboxes MUST NOT be operable in any state: the dashboard MUST NOT write a change to the repository from this view.
+When the tasks artifact is selected, its task list SHALL be rendered as checkboxes reflecting each task's state, together with the same progress the card shows. A task SHALL be drawn in one of three states: **done**, ticked; **needs you** (`- [~]`), a third state that is neither ticked nor empty and is announced as mixed rather than as done or not done; and **open**, empty. Where any task needs the user, the view SHALL say in words how many do — `N tasks need you` (`1 task needs you`) — and that each is something to check or do that only the user can, confirmed with **Validate**, when archiving, or by the explicit confirmation control; and it SHALL list those tasks' text above the checklist, in file order, so what the user has to do is the first thing the view shows. The checkboxes MUST NOT be operable in any state. A separate **Mark confirmed** action SHALL be available only for a `- [~]` task and MUST require explicit user activation.
 
 #### Scenario: Checklist
 - **WHEN** the tasks artifact has 12 tasks of which 4 are ticked
@@ -368,6 +368,10 @@ When the tasks artifact is selected, its task list SHALL be rendered as checkbox
 #### Scenario: Not editable
 - **WHEN** the user clicks a checkbox in the tasks view, in any of the three states
 - **THEN** nothing is sent to the server and the repository is unchanged
+
+#### Scenario: Explicit human confirmation
+- **WHEN** the user activates **Mark confirmed** for one `- [~]` task and the displayed task file is still current
+- **THEN** only that task marker changes to `[x]` after server confirmation, and refreshed progress is shown
 
 ### Requirement: Navigation between board and detail view
 Each board card SHALL open the detail view for its change through its **Show details** action, which carries the board and its filters. The detail view SHALL offer a way back to the board it was opened from with that board's filters intact; when the detail view was opened directly by URL, it SHALL lead to the board of its repository. Opening **Show details** in a new tab or window SHALL land on the same detail view.

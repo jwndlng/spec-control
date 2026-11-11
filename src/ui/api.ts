@@ -82,6 +82,8 @@ export interface Api {
   changeArtifacts(repoId: string, change: string): Promise<ChangeArtifacts>;
   /** Read-only: one file of a change. `ApiError` 400 for a bad path, 404 when it is not a file of the change, 413 when too large. */
   artifactFile(repoId: string, change: string, path: string): Promise<ArtifactFileContent>;
+  /** Confirms one displayed `[~]` task by line number against its complete displayed file version. */
+  confirmTask(repoId: string, change: string, expectedText: string, lineNumber: number): Promise<{ confirmed: true }>;
   /** What the dashboard observed, newest first. Read-only history; nothing else depends on it. */
   activity(query?: ActivityQuery): Promise<ActivityPage>;
   config(): Promise<Config>;
@@ -318,6 +320,7 @@ export const httpApi: Api = {
   state: () => call<Snapshot>("/api/state"),
   changeArtifacts: (repoId, change) => call<ChangeArtifacts>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/artifacts`),
   artifactFile: (repoId, change, path) => call<ArtifactFileContent>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/file?path=${encodeURIComponent(path)}`),
+  confirmTask: (repoId, change, expectedText, lineNumber) => call(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/tasks/confirm`, { method: "POST", body: JSON.stringify({ expectedText, lineNumber }) }),
   activity: async (query = {}) => {
     try {
       return await call<ActivityPage>(`/api/activity${activityQueryString(query)}`);
@@ -447,6 +450,7 @@ export const api: Api = {
   state: () => current.state(),
   changeArtifacts: (...args) => current.changeArtifacts(...args),
   artifactFile: (...args) => current.artifactFile(...args),
+  confirmTask: (...args) => current.confirmTask(...args),
   activity: (query) => current.activity(query),
   config: () => current.config(),
   saveConfig: (...args) => current.saveConfig(...args),

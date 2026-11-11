@@ -1,10 +1,10 @@
 // One change with its artifacts, as an overlay over the board it belongs to. The header comes from the snapshot the
-// boards use; file lists and file text are fetched on demand from the read-only artifact endpoints. Dismissal asks
-// for confirmation; the common permission picker saves the change override through its scoped API.
+// boards use; file lists and file text are fetched on demand. Explicit writes are limited to confirming an awaiting
+// task and dismissing the change, each after its own user action and server-side recheck.
 import type { ComponentChildren, RefObject } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, DismissPreview, DismissResult, RepoSnapshot, Snapshot, TaskProgress } from "../shared/types.ts";
-import { ChangePermissionPicker } from "./changePermissionPicker.tsx";
+import type { AgentPermissionProfileId, ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, DismissPreview, DismissResult, RepoSnapshot, Snapshot, TaskProgress } from "../shared/types.ts";
+import { parseTaskLine } from "../shared/taskLine.ts";
 import { ApiError, api } from "./api.ts";
 import { CopyButton, CopyRefButton, Meter } from "./kanban.tsx";
 import { type LinkResolver, renderMarkdown } from "./markdown.tsx";
@@ -88,12 +88,14 @@ export function artifactLinks(repoId: string, changeName: string, shownFile: str
 
 /** Same line shape and the same three states the scanner counts, so the checklist's label cannot disagree with the boxes below it. */
 export function taskProgress(markdown: string): TaskProgress {
-  const boxes = markdown.match(/^\s*(?:[-*+]|\d+[.)])\s+\[\s*[^\]\s]?\s*\]/gm) ?? [];
-  const state = (box: string) => box.slice(box.indexOf("[") + 1, box.lastIndexOf("]")).trim();
+  const states = markdown.split(/\r?\n/).flatMap((line) => {
+    const task = parseTaskLine(line);
+    return task ? [task.state] : [];
+  });
   return {
-    done: boxes.filter((b) => state(b).toLowerCase() === "x").length,
-    awaiting: boxes.filter((b) => state(b) === "~").length,
-    total: boxes.length,
+    done: states.filter((state) => state.toLowerCase() === "x").length,
+    awaiting: states.filter((state) => state === "~").length,
+    total: states.length,
   };
 }
 
@@ -102,12 +104,16 @@ export function taskProgress(markdown: string): TaskProgress {
  * Plain text, rendered as text — what the user has to check or do, shown before the checklist.
  */
 export function awaitingTaskTexts(markdown: string): string[] {
-  const texts: string[] = [];
-  for (const line of markdown.split(/\r?\n/)) {
-    const match = /^\s*(?:[-*+]|\d+[.)])\s+\[\s*~\s*\]/.exec(line);
-    if (match) texts.push(line.slice(match[0].length).trim());
+  return awaitingTaskRows(markdown).map((task) => task.text);
+}
+
+export function awaitingTaskRows(markdown: string): { text: string; lineNumber: number }[] {
+  const rows: { text: string; lineNumber: number }[] = [];
+  for (const [index, line] of markdown.split(/\r?\n/).entries()) {
+    const task = parseTaskLine(line);
+    if (task?.state === "~") rows.push({ text: task.text, lineNumber: index + 1 });
   }
-  return texts;
+  return rows;
 }
 
 export function absoluteFilePath(changeDir: string, file: string): string {
@@ -483,7 +489,28 @@ export function FileList({ artifact, selected, onSelect }: { artifact: ChangeArt
 }
 
 /** The content column for one file state. `rendered` is the memoised Markdown of `state.text`. */
-export function FileContent({ state, raw, isTasks, rendered, filePath }: { state: FileState; raw: boolean; isTasks: boolean; rendered: ComponentChildren; filePath?: string }) {
+function AwaitingTaskList({ tasks, onConfirmTask }: { tasks: { text: string; lineNumber: number }[]; onConfirmTask?: (lineNumber: number) => Promise<void> }) {
+  const [pendingLine, setPendingLine] = useState<number>();
+  const [confirmedLine, setConfirmedLine] = useState<number>();
+  const [confirmError, setConfirmError] = useState<string>();
+  const inFlight = useRef(false);
+  const confirm = async (lineNumber: number) => {
+    if (!onConfirmTask || inFlight.current) return;
+    inFlight.current = true;
+    setPendingLine(lineNumber); setConfirmError(undefined);
+    try { await onConfirmTask(lineNumber); setConfirmedLine(lineNumber); }
+    catch (err) { setConfirmError(err instanceof Error ? err.message : String(err)); }
+    finally { inFlight.current = false; setPendingLine(undefined); }
+  };
+  return <>
+    <ul class="needs-you-list">{tasks.map(({ text, lineNumber }) => (
+      <li>{text}{onConfirmTask && <button type="button" class="button small" disabled={pendingLine !== undefined || confirmedLine === lineNumber} onClick={() => void confirm(lineNumber)}>{pendingLine === lineNumber ? "Confirming…" : confirmedLine === lineNumber ? "Confirmed" : "Mark confirmed"}</button>}</li>
+    ))}</ul>
+    {confirmError && <p class="notice warn" role="alert">{confirmError} <button type="button" class="button small" onClick={() => void api.scan().catch(() => undefined)}>Refresh</button></p>}
+  </>;
+}
+
+export function FileContent({ state, raw, isTasks, rendered, filePath, onConfirmTask }: { state: FileState; raw: boolean; isTasks: boolean; rendered: ComponentChildren; filePath?: string; onConfirmTask?: (lineNumber: number) => Promise<void> }) {
   if (state.status === "too-large") {
     return (
       <div class="notice warn detail-problem">
@@ -502,7 +529,7 @@ export function FileContent({ state, raw, isTasks, rendered, filePath }: { state
     );
   }
   const progress = isTasks ? taskProgress(state.text) : undefined;
-  const needsYou = progress && (progress.awaiting ?? 0) > 0 ? awaitingTaskTexts(state.text) : [];
+  const needsYou = progress && (progress.awaiting ?? 0) > 0 ? awaitingTaskRows(state.text) : [];
   return (
     <>
       {progress && progress.total > 0 && (
@@ -514,13 +541,9 @@ export function FileContent({ state, raw, isTasks, rendered, filePath }: { state
                 <strong>
                   {needsYou.length} {needsYou.length === 1 ? "task needs" : "tasks need"} you
                 </strong>{" "}
-                — each is something to check or do that only you can. Confirm them with <strong>Validate</strong> on the card, or when archiving.
+                — each is something to check or do that only you can. Confirm with <strong>Validate</strong>, when archiving, or here.
               </p>
-              <ul class="needs-you-list">
-                {needsYou.map((text) => (
-                  <li>{text}</li>
-                ))}
-              </ul>
+              {onConfirmTask ? <AwaitingTaskList tasks={needsYou} onConfirmTask={onConfirmTask} /> : <ul class="needs-you-list">{needsYou.map(({ text }) => <li>{text}</li>)}</ul>}
             </div>
           )}
         </div>
@@ -792,7 +815,7 @@ export function ChangeDetail({
           ) : !current ? (
             <p class="detail-hint">Loading…</p>
           ) : (
-            <FileContent state={current} raw={query.raw} isTasks={selection.artifactId === "tasks"} rendered={rendered} filePath={filePath} />
+            <FileContent state={current} raw={query.raw} isTasks={selection.artifactId === "tasks"} rendered={rendered} filePath={filePath} onConfirmTask={selection.artifactId === "tasks" && !change.archived ? async (lineNumber) => { if (current.status !== "ok") throw new Error("Task content is unavailable; refresh before confirming."); await api.confirmTask(repoId, changeName, current.text, lineNumber); } : undefined} />
           )}
             </>
           )}
