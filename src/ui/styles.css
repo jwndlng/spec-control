@@ -1936,6 +1936,17 @@ a.badge.needs-you:focus-visible { outline: 2px solid var(--brand); outline-offse
    — and its host is absolutely positioned, so that is nothing — leaving a few pixels of blue frame. */
 .console-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-top: 2px solid var(--info); border-left: 1px solid var(--info-border); }
 .console-pane > .session-head { gap: 10px; padding: 14px var(--detail-pad, 20px); border-bottom-color: var(--info-border); background: var(--bg-section); }
+.console-ship-primary { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.console-ship-action { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.console-ship-action > span { color: var(--fg-subtle); font-size: 12px; }
+.console-ship-primary .ship-operation-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; }
+.console-more-actions { align-self: flex-start; }
+.console-more-actions > summary { width: max-content; color: var(--fg-subtle); font-size: 12px; cursor: pointer; }
+.console-more-actions > summary:hover, .console-more-actions > summary:focus-visible { color: var(--fg-heading); }
+.console-action-groups { display: grid; gap: 14px; margin-top: 8px; }
+.console-action-group { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+.console-action-heading { color: var(--fg-subtle); font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+.console-action-group .row { gap: 6px; }
 /* The terminal is the part that scrolls, so it needs a bounded box: the detail content column does not scroll here. */
 .detail-content:has(.console-pane) { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
 .detail-content > .console-pane { flex: 1; min-height: 0; max-width: none; }

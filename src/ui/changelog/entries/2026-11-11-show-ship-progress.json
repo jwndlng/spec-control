@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-11-show-ship-progress",
+  "date": "2026-11-11",
+  "title": "See Ship progress and results",
+  "summary": "Ship shows its current server-observed step and keeps verified outcomes visible if it fails. Open or reused pull requests stay linked from the session after reload, and a failed Ship can be retried safely. The Console tab keeps Ship prominent with a plain-language explanation and groups the other actions under More actions."
+}

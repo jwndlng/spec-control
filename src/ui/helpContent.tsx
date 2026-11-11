@@ -215,6 +215,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             asks the agent to verify remaining work and prepare a follow-up. Fast-forward ships automatically only
             when every task is checked. <strong>Finish tasks</strong> and <strong>Finish checks</strong> do not ship.
             Draft artifacts prepares `openspec/changes/&lt;change&gt;/pull-request.md`, Implement updates it with delivered behavior and checks run, and Ship uses it as the body of a new pull request. Older changes without the file get a short fallback; an existing pull request is left alone.
+            While Ship runs, its status reports the server-observed step. A failed Ship keeps verified commit or push progress and can be retried; after a reload, the status and pull request link are recovered from the session. A timed-out remote operation is marked unknown until retry reconciles its outcome.
             <strong>Resolve conflicts</strong> asks the agent to bring the branch up to date.
             An archived card whose work is still pending offers <strong>Continue archive</strong> to open its console:
             resume its session to review unfinished tasks, or use <strong>Ship</strong> to open its pull request.

@@ -82,12 +82,13 @@ interface SessionUi {
    */
   start(repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; removeDuplicate?: boolean; resolveConflicts?: boolean; endProposal?: boolean }): Promise<string | undefined>;
   ship(id: string): Promise<void>;
+  shippingIds: ReadonlySet<string>;
   saveConfig(config: Config): void;
   refresh(): Promise<void>;
 }
 
 const noop = async () => undefined;
-const Context = createContext<SessionUi>({ config: null, snapshot: null, sessions: [], consoles: [], consoleOpen: false, showConsole: () => {}, integrations: [], showIntegration: () => {}, projectConsoles: [], showProjectConsole: () => {}, agents: [], worktrees: [], focusTick: { tick: 0 }, reportUnsent: () => {}, reportAutoMerge: () => {}, requestEnd: () => {}, openPanel: () => {}, openChangeConsole: () => {}, start: noop, ship: noop, refresh: noop, saveConfig: () => {} });
+const Context = createContext<SessionUi>({ config: null, snapshot: null, sessions: [], consoles: [], consoleOpen: false, showConsole: () => {}, integrations: [], showIntegration: () => {}, projectConsoles: [], showProjectConsole: () => {}, agents: [], worktrees: [], focusTick: { tick: 0 }, reportUnsent: () => {}, reportAutoMerge: () => {}, requestEnd: () => {}, openPanel: () => {}, openChangeConsole: () => {}, start: noop, ship: noop, shippingIds: new Set(), refresh: noop, saveConfig: () => {} });
 
 export const useSessionUi = () => useContext(Context);
 
@@ -236,20 +237,29 @@ export function SessionProvider({
 
   const [shipResult, setShipResult] = useState<ShipResult>();
   const shipping = useRef(new Set<string>());
+  const [shippingIds, setShippingIds] = useState<ReadonlySet<string>>(new Set());
   const ship = useCallback(async (id: string) => {
     if (shipping.current.size > 0) return;
     shipping.current.add(id);
+    setShippingIds(new Set(shipping.current));
     try {
       const result = await api.shipSession(id);
       reportShip({ reportUnsent, reportAutoMerge }, id, result);
       setShipResult(result);
-    } finally { shipping.current.delete(id); }
-  }, []);
+      await refresh();
+    } catch (error) {
+      await refresh();
+      throw error;
+    } finally {
+      shipping.current.delete(id);
+      setShippingIds(new Set(shipping.current));
+    }
+  }, [refresh, reportUnsent, reportAutoMerge]);
 
   const shown = consoleOpen && enabled;
   const value = useMemo(
-    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, projectConsoleSetup, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, ship, refresh, saveConfig: onConfig }),
-    [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, projectConsoleSetup, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, autoMerge, error, openPanel, openConsole, start, ship, refresh],
+    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, projectConsoleSetup, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, ship, shippingIds, refresh, saveConfig: onConfig }),
+    [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, projectConsoleSetup, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, error, openPanel, openConsole, start, ship, shippingIds, refresh],
   );
   const answerFastForward = useCallback(
     (choice: FastForwardChoice | undefined) => {

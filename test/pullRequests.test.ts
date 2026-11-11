@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pullRequestsCachePath } from "../src/server/paths.ts";
+import { failureOf } from "../src/server/gh.ts";
 import { githubRepoFromRemote, parseMergeable, parsePullRequest, PullRequests, type RepoTarget, summarizeChecks } from "../src/server/pullRequests.ts";
 import type { PullRequest } from "../src/shared/types.ts";
 import { checkRun, ghPr, installFakeGh, statusContext, type GhHarness } from "./ghHelpers.ts";
@@ -10,6 +11,14 @@ import { gitIn, tempDir, useTempHome } from "./helpers.ts";
 // Spawning the fake gh in a real process is fast, but CI runners are not; the 5 s default is too tight for the
 // tests that start several at once.
 setDefaultTimeout(30_000);
+
+test("a timed-out gh mutation carries unknown outcome instead of confirmed failure", () => {
+  expect(failureOf({ ok: false, out: "", err: "", timedOut: true, missing: false }, "create a pull request")).toMatchObject({
+    kind: "failed",
+    reason: "gh timed out",
+    outcomeUnknown: true,
+  });
+});
 
 let gh: GhHarness;
 let cleanupHome: () => Promise<void>;

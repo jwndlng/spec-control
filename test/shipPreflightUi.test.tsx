@@ -8,6 +8,7 @@ import { SessionProvider, useSessionUi } from "../src/ui/sessions.tsx";
 import { ShipResultDialog } from "../src/ui/shipResultDialog.tsx";
 
 const originalShip = api.shipSession;
+const originalSessions = api.sessions;
 const originalWindow = globalThis.window;
 const originalDocument = globalThis.document;
 let root: HTMLElement;
@@ -16,6 +17,7 @@ afterEach(() => {
   render(null, root);
   browser.happyDOM.abort();
   api.shipSession = originalShip;
+  api.sessions = originalSessions;
   globalThis.window = originalWindow;
   globalThis.document = originalDocument;
 });
@@ -27,7 +29,7 @@ const result = (patch: Partial<ShipResult> = {}): ShipResult => ({
 } as ShipResult);
 function Probe() {
   const ui = useSessionUi();
-  return <button type="button" onClick={() => void ui.ship("s1")}>Ship</button>;
+  return <button type="button" disabled={ui.shippingIds.has("s1")} onClick={() => void ui.ship("s1")}>{ui.shippingIds.has("s1") ? "Shipping…" : "Ship"}</button>;
 }
 function setup() {
   browser = new Window({ url: "http://localhost/board" });
@@ -58,6 +60,22 @@ test("Ship submits once without task confirmation and shows its PR and unresolve
   expect(document.activeElement?.textContent).toBe("Close");
   await click("Close");
   expect(root.querySelector('[role="dialog"]')).toBeNull();
+});
+
+test("Ship acknowledges immediately and blocks another request while the server is working", async () => {
+  setup();
+  let finish!: (value: ShipResult) => void;
+  let calls = 0;
+  api.shipSession = async () => { calls++; return new Promise<ShipResult>((resolve) => { finish = resolve; }); };
+  api.sessions = async () => ({ sessions: [], agents: [], presets: [], worktrees: [] });
+  await act(async () => { render(<SessionProvider config={null}><Probe /></SessionProvider>, root); });
+  await act(async () => { root.querySelector("button")!.click(); });
+  expect(root.querySelector("button")?.textContent).toBe("Shipping…");
+  expect((root.querySelector("button") as HTMLButtonElement).disabled).toBe(true);
+  await act(async () => { root.querySelector("button")!.click(); });
+  expect(calls).toBe(1);
+  await act(async () => { finish(result()); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(root.querySelector("button")?.textContent).toBe("Ship");
 });
 
 for (const state of ["created", "existing"] as const) {
