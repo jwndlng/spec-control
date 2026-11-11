@@ -180,6 +180,13 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             instead of the starters, and the console offers the next step — sent into that session, as a prompt.
           </li>
           <li>
+            <strong>Permission profile for this change</strong> is one control above the artifact and Console tabs.
+            Choose <strong>Inherit from project</strong> to use the project profile, then the global default, then Minimum;
+            choosing a profile overrides only this change. Saving… and Saved announce progress; a refused save shows its
+            reason and keeps the previous selection so you can retry. Changes apply on the next session start. When a running
+            session uses a different profile, the control names both profiles; it leaves that session running unchanged.
+          </li>
+          <li>
             Choose a <strong>Default model</strong> in Settings → Agent sessions, a profile's <strong>Model</strong>, or its expandable{" "}
             <strong>Phase models</strong>. A phase inherits the profile model, then the global default; leaving all three empty uses the CLI default. Models
             apply on session start; running sessions keep theirs. Fast-forward uses the profile or global model throughout. Custom command arguments can contain{" "}
