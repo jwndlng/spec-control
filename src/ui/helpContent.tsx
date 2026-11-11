@@ -198,7 +198,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           <li>
             Ship first reads tasks from the session checkout. Unfinished or unreadable tasks offer <strong>Finish tasks</strong>, <strong>Ship anyway</strong> and Cancel.
             Finish tasks does not ship. Ship anyway keeps unresolved markers for PR-dependent checks and withholds docs auto-merge. Automatic merging of implementation and archive PRs waits until every task is marked complete; proposal PRs can still merge before implementation.
-            After a linked implementation PR merges, <strong>Finish checks</strong> on the card and Console tab asks the agent to verify actual evidence and prepare a follow-up PR; cached merge status never completes a task.
+            After a linked implementation PR merges, <strong>Finish checks</strong> on the card and Console tab asks the agent to verify actual evidence and prepare a follow-up PR; cached merge status never completes a task. Open <strong>PR freshness</strong> for the relative fetch age and exact timestamp; use <strong>Retry PR refresh</strong> if refreshing failed.
             Fast-forward includes the same completion instructions and automatically ships only when every task is marked complete.
             <strong>Ship</strong> commits, pushes and opens the pull request on the server, after the task review. <strong>Finish tasks</strong> and <strong>Finish checks</strong> send requests to the agent; they do not ship.
             Draft artifacts prepares `openspec/changes/&lt;change&gt;/pull-request.md`, Implement updates it with delivered behavior and checks run, and Ship uses it as the body of a new pull request. Older changes without the file get a short fallback; an existing pull request is left alone.
