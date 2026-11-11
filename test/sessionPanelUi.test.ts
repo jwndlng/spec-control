@@ -10,8 +10,6 @@ const sessionsSource = readFileSync(join(import.meta.dir, "..", "src", "ui", "se
 const detailSource = readFileSync(join(import.meta.dir, "..", "src", "ui", "changeDetail.tsx"), "utf8");
 const projectSettingsSource = readFileSync(join(import.meta.dir, "..", "src", "ui", "projectSettings.tsx"), "utf8");
 
-const controls = readFileSync(join(import.meta.dir, "..", "src", "ui", "sessions.tsx"), "utf8");
-
 /** A request that stays in flight until the test lets it finish. */
 function pending() {
   let finish: (ok: boolean) => void = () => {};
@@ -71,21 +69,18 @@ test("the panel's header actions go through the guard and are disabled while one
 });
 
 test("the agent picker in the console pane renders when multiple agents exist, and displays running agent hint when different", () => {
-  expect(panel).toContain('aria-label="Change agent"');
+  const picker = panel.slice(panel.indexOf('<div class="row change-agent-picker">'), panel.indexOf("{agentError &&"));
+  expect(picker).toContain("<Select aria-label=\"Change agent\"");
+  expect(picker).not.toContain("<select");
   expect(panel).toContain("ui.config.agentSessions.agents.length > 1");
   expect(panel).toContain("setChangeAgent(repoId, change, agentId || null)");
   expect(panel).toContain("This session uses {session.agentName}; the next session starts {nextAgent.name}.");
 });
 
-test("the change console offers a permission profile override selector and calls the scoped API", () => {
-  expect(panel).toContain('aria-label="Change permission profile"');
-  expect(panel).toContain("api.setChangePermissionProfile(repoId, change");
-  expect(panel).toContain("repo.agentOverrides?.[change ?? \"\"]?.permissionProfile");
-});
-
-test("change detail and project settings expose inherited permission profile selectors", () => {
-  expect(detailSource).toContain('aria-label="Permission profile for this change"');
-  expect(detailSource).toContain("api.setChangePermissionProfile(repoId, changeName");
+test("change detail owns the single permission picker; project settings keep their own", () => {
+  expect(panel).not.toContain("setChangePermissionProfile");
+  expect(panel).not.toContain("change-permission-picker");
+  expect(detailSource).toContain('<ChangePermissionPicker key={`${repoId}/${changeName}`}');
   expect(projectSettingsSource).toContain("PermissionProfilePicker({ repo, config, tracking })");
   expect(projectSettingsSource).toContain('aria-label={`Permission profile for ${repo.name}`}');
 });

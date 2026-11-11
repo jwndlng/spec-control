@@ -1,7 +1,5 @@
-This change replaces native selectors with a shared controlled dropdown across filters, settings, setup and creation forms. Short lists support keyboard navigation and type-ahead; lists with eight or more options support local search. The picker preserves caller-owned values, supports disabled options, positions within dialogs or the viewport, and dismisses without saving. Help and What's new describe the delivered behavior.
+This change replaces native selectors with a shared controlled dropdown across filters, settings, setup, creation forms, and the console Agent picker. Short lists support keyboard navigation and type-ahead; lists with eight or more options support local search. The picker preserves caller-owned values, supports disabled options, positions within dialogs or the viewport, and dismisses without saving. Help and What's new describe the behavior.
 
-Checks passed:
+Checks passed: `bun run lint` (204 warnings, 2 infos); 275 focused migration and dropdown tests across 16 files; `bun run build`; `bun run build:demo`; `dist/spec-control --version` (`dev`); and `bunx openspec validate dropdown-ui --strict --json`. The console Agent picker and dropdown DOM tests pass (23 tests across 2 files).
 
-- `bun run check` — lint, typecheck and 2,336 tests across 187 files.
-- `bun run build`, `bun run build:demo`, and `dist/spec-control --version` (`dev`).
-- `bunx openspec validate dropdown-ui --strict --json`.
+`bun run check` is currently blocked at typecheck by missing symbols in mainline `tick-off-tasks-ui` code (`shipPreviews`, `artifactsReady`, `ShipChoice`/`setShipAsk`, and `ShipPreflight`/`preview`/`click`). GitHub PR #491's CI check failed on these errors and an additional missing `ChangePermissionPicker` import; this branch fixes that import. The full suite passed before syncing current main (2,336 tests), but the current merged tree has not passed `bun run check`.

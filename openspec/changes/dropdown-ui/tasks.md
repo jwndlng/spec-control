@@ -17,7 +17,7 @@
 
 - [x] 3.1 Migrate auto-refresh, board age, overview sort and pull-request project/state selects in `app.tsx`, `boardFilters.tsx`, `overview.tsx` and `pullRequests.tsx`; affected tests pass for values, conversions, URL/filter behavior and callbacks.
 - [x] 3.2 Migrate `projectSettings.tsx` and `agentSettings.tsx` through existing setting wrappers; affected tests pass for option order, inheritance choices, busy disables, errors and save callbacks.
-- [x] 3.3 Migrate permission and agent controls in `changeDetail.tsx` and `sessionPanel.tsx`, preserving scope and inheritance wording; affected tests pass for placement, behavior and no save while browsing.
+- [x] 3.3 Migrate permission controls in `changeDetail.tsx` and the consolidated `changePermissionPicker.tsx`, plus the console Agent picker in `sessionPanel.tsx`; preserve scope/inheritance wording and verify placement, behavior and no save while browsing.
 - [x] 3.4 Update `src/ui/helpContent.tsx` to explain opening, searching, keyboard selection and dismissing dropdowns; Help tests pass.
 
 ## 4. Setup and creation forms migration
@@ -27,6 +27,6 @@
 
 ## 5. Integration and release note
 
-- [x] 5.1 `src/ui/` has no remaining native `<select>` elements; `bun run check` passes (lint, typecheck and 2,336 tests), both builds pass, `dist/spec-control --version` prints `dev`, and strict OpenSpec validation passes.
+- [ ] 5.1 `src/ui/` has no remaining native `<select>` elements; both builds, binary version, strict OpenSpec validation, and 275 focused migration tests pass. On the current tree, `bun run check` stops at typecheck on mainline `tick-off-tasks-ui` errors: `SessionManager.shipPreviews`, `artifactsReady`, `ShipChoice`/`setShipAsk`, and `ShipPreflight`/`preview`/`click` are undefined in server/session/test files. GitHub PR #491's `check (ubuntu-latest)` failed with the same errors; this dropdown branch fixes the additional missing `ChangePermissionPicker` import. Run `bun run check` again after mainline fixes those errors.
 - [~] 5.2 Automated DOM/style checks cover keyboard, Escape, scrolling, themes, contrast, reduced motion, and no save while browsing. User: in the demo and macOS wrapper, check filters/settings/setup/creation in both themes, narrow viewport, 200% zoom, pointer and touch, keyboard-only use, screen-reader names/selection, modal Escape, scrolling, reduced motion, and confirm no new network requests.
 - [x] 5.3 Added an independent What's new entry describing shared searchable dropdowns; wording matches the UI and `bun test test/whatsNew.test.ts` passes.

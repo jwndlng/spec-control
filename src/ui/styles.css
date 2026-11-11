@@ -1898,6 +1898,12 @@ a.badge.needs-you:hover { border-color: var(--warning); }
 a.badge.needs-you:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 /* The third task state: neither ticked nor empty, and as inoperable as the other two. */
 .markdown li.task.awaiting > input[type="checkbox"] { accent-color: var(--warning); }
+.detail-permission-picker { display: flex; flex-direction: column; gap: 6px; padding: 14px var(--detail-pad); border-bottom: 1px solid var(--border-light); background: var(--bg-section); font-size: 12px; }
+.detail-permission-picker label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--fg-heading); font-weight: 500; }
+.detail-permission-picker select { max-width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-raised); }
+.detail-permission-picker select:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.detail-permission-picker p { margin: 0; color: var(--fg-subtle); }
+.detail-permission-picker [role="status"] { color: var(--fg-subtle); }
 .detail-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 calc(var(--detail-pad) - 14px); background: var(--bg-section); border-bottom: 1px solid var(--border-light); }
 .detail-tab {
   display: inline-flex; align-items: center; gap: 8px; padding: 13px 14px 12px; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;

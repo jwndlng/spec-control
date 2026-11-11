@@ -144,6 +144,19 @@ interface Context {
   managedRoot: string;
   /** Real paths of worktrees with a running agent session. */
   sessions: Set<string>;
+  activeChanges: Set<string>;
+}
+
+const RECENT_WORK_DAYS = 30;
+function branchChange(branch: string | undefined): string | undefined {
+  if (!branch) return undefined;
+  if (branch.startsWith("chore/archive-")) return branch.slice("chore/archive-".length);
+  const slash = branch.indexOf("/");
+  return slash < 0 ? undefined : branch.slice(slash + 1);
+}
+function recentlyWorked(date: string | undefined): boolean {
+  const at = date ? Date.parse(date) : NaN;
+  return Number.isFinite(at) && Date.now() - at <= RECENT_WORK_DAYS * 24 * 60 * 60 * 1000;
 }
 
 async function context(repo: RepoConfig, sessions: Set<string>): Promise<Context> {
@@ -166,7 +179,10 @@ async function context(repo: RepoConfig, sessions: Set<string>): Promise<Context
     }
   }
   const listed = listedOut.ok ? parseWorktrees(`${listedOut.out}\n`) : [];
-  return { repo, base, defaultName, listed, mainBranch: listed.find((w) => w.isMain)?.branch, managedRoot: join(root, repo.id), sessions };
+  const activeChanges = new Set((await readdir(join(repo.path, "openspec/changes"), { withFileTypes: true }).catch(() => []))
+    .filter((entry) => entry.isDirectory() && entry.name !== "archive")
+    .map((entry) => entry.name));
+  return { repo, base, defaultName, listed, mainBranch: listed.find((w) => w.isMain)?.branch, managedRoot: join(root, repo.id), sessions, activeChanges };
 }
 
 const linked = (ctx: Context) => ctx.listed.filter((w) => !w.isMain && !w.bare && !w.prunable);
@@ -177,7 +193,11 @@ async function judgeWorktree(ctx: Context, w: Worktree): Promise<CleanupWorktree
   const item: CleanupWorktree = { path: w.path, branch: w.branch, work, lastCommitAt, managed, locked: w.locked || undefined, removable: false };
   if (ctx.sessions.has(w.path)) return { ...item, reason: "an agent session is running in it" };
   if (w.locked && !managed) return { ...item, reason: `it is locked${w.lockReason ? ` (${w.lockReason})` : ""}` };
-  const check = await checkWorktreeRemovable(w.path, work.state === "merged");
+  if (work.state === "uncommitted") return { ...item, reason: "the worktree has uncommitted changes" };
+  const change = branchChange(w.branch);
+  if (change && ctx.activeChanges.has(change)) return { ...item, reason: `it is part of the active change ${change}` };
+  if ((work.state === "unpushed" || work.state === "pushed") && recentlyWorked(lastCommitAt)) return { ...item, reason: `it has unmerged work from the last ${RECENT_WORK_DAYS} days` };
+  const check = await checkWorktreeRemovable(w.path, true);
   return check.removable ? { ...item, removable: true } : { ...item, reason: check.reason };
 }
 
@@ -212,9 +232,15 @@ async function judgeBranch(ctx: Context, ref: BranchRef, worktreeRemovable: (pat
 
   const ahead = await git(ctx.repo.path, ["rev-list", "--count", `${base}..${ref.commit}`]);
   if (!ahead.ok) return { ...item, reason: `could not compare it with ${base}` };
-  if (ahead.out === "0") item.mergedBy = "ancestry";
-  else if (await contentIsInBase(ctx.repo.path, base, ref.commit)) item.mergedBy = "content";
-  else return { ...item, reason: `${ahead.out} commit(s) not in ${base}` };
+  let merged = ahead.out === "0";
+  if (merged) item.mergedBy = "ancestry";
+  else if (await contentIsInBase(ctx.repo.path, base, ref.commit)) {
+    merged = true;
+    item.mergedBy = "content";
+  }
+  const change = branchChange(ref.name);
+  if (change && ctx.activeChanges.has(change)) return { ...item, reason: `it is part of the active change ${change}` };
+  if (!merged && recentlyWorked(ref.lastCommitAt)) return { ...item, reason: `it has unmerged work from the last ${RECENT_WORK_DAYS} days` };
 
   const stale = ctx.listed.find((w) => !w.isMain && w.prunable && w.branch === ref.name);
   if (stale) return { ...item, reason: "it is checked out in a stale worktree record — prune it, then clean up again" };
@@ -223,7 +249,7 @@ async function judgeBranch(ctx: Context, ref: BranchRef, worktreeRemovable: (pat
     item.worktreePath = holder.path;
     if (!worktreeRemovable(holder.path)) return { ...item, reason: `it is checked out in the worktree ${holder.path}, which is kept` };
   }
-  return { ...item, removable: true };
+  return { ...item, removable: true, ...(merged ? {} : { reason: "old work not associated with an active change" }) };
 }
 
 /** Read-only: what cleanup could remove in `repo`, and why everything else is kept. */

@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-10-simplify-overview-messages",
+  "date": "2026-11-10",
+  "title": "Quieter Finish checks cards",
+  "summary": "Finish checks keeps cards concise. Open PR freshness for the fetch age and exact timestamp, or retry a failed PR refresh directly from the card."
+}
