@@ -2013,15 +2013,23 @@ The preset Implement and Fast-forward prompts SHALL ask the agent to complete an
 - **THEN** the prompt asks the agent to complete the parts it can, mark the task `- [~]`, and state exactly what the person must do
 
 ### Requirement: Ship preflight exposes unfinished tasks
-Before Ship, the dashboard SHALL inspect task state in the session's own checkout and preserve an accurate summary of unfinished or unknown tasks for the user. When the change's required artifacts are ready, unresolved tasks SHALL NOT prevent an explicit Ship action from committing, pushing or opening its pull request. Ship SHALL NOT edit task files, mark tasks complete, or claim that unresolved checks passed. If tasks cannot be read, Ship SHALL report that their state is unknown and SHALL still allow the explicit action when the required artifacts are ready. The dashboard SHALL continue to gate Implement and automatic implementation on task completion under their existing requirements.
+Before Ship commits, pushes or opens a pull request, the dashboard SHALL read task state from the session's own checkout and show unresolved tasks. When any remain, it SHALL offer to ask the agent to finish them and SHALL require explicit confirmation to ship with unresolved tasks. For a verified, untruncated task summary, it SHALL also offer the explicit **Mark all complete and Ship** choice. Only that user choice may mark remaining task markers complete; it MUST compare the complete task-file version shown in the preflight, and automatic shipping MUST NOT change task files.
 
 #### Scenario: Open tasks before shipping
 - **WHEN** Ship is activated for an artifact-ready change with an open task
 - **THEN** Ship proceeds and reports the task as unresolved without requiring a task-specific override
 
 #### Scenario: Person needed before shipping
-- **WHEN** Ship is activated for an artifact-ready change with a task marked as needing a person
-- **THEN** Ship proceeds and reports that task for review without changing its state
+- **WHEN** Ship is activated and a task is marked `- [~]`
+- **THEN** the preflight shows that task and asks the user to review it; it may mark it complete only after the user chooses **Mark all complete and Ship**
+
+#### Scenario: Explicitly confirm all remaining tasks
+- **WHEN** the user chooses **Mark all complete and Ship** for a verified, untruncated preflight
+- **THEN** the dashboard marks remaining tasks complete only if the displayed task-file version still matches, then continues shipping
+
+#### Scenario: Stale or unverified task summary
+- **WHEN** the summary is truncated, unverified, or the task file changed after preflight
+- **THEN** the bulk confirmation choice is unavailable or returns a refreshed preflight without changing the file
 
 #### Scenario: A check requires a pull request
 - **WHEN** a remaining check requires a pull request or its CI

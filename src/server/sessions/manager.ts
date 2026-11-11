@@ -183,6 +183,7 @@ interface Live {
 export interface ManagerDeps {
   getConfig: () => Config;
   getSnapshot: () => Snapshot;
+  triggerScan?: () => void;
   store?: SessionStore;
   refreshPullRequests?: (repoId: string) => Promise<void>;
   listPullRequests?: (repoId: string) => Promise<readonly PullRequest[]>;
@@ -229,6 +230,7 @@ export function defaultShipTitle(
 export class SessionManager {
   private sessions = new Map<string, Session>();
   private live = new Map<string, Live>();
+  private shipPreviews = new Map<string, { token: string; fingerprint: string; at: number }>();
   /** `end` started by an exit handler and not finished yet: its writes are what `close` and `shutdown` must wait for. */
   private ending = new Map<string, Promise<void>>();
   private readonly store: SessionStore;
@@ -760,7 +762,9 @@ export class SessionManager {
     };
     this.sessions.set(session.id, session);
     await this.store.saveMeta(session);
-    this.start(session, launchWithoutPrompt(agent, resolveModel(config, agent)), agentEnv(agent, process.env));
+    const policy = resolvePermissionPolicy(config, repo.id);
+    const permissionArgs = permissionAdapters.resolve(agent.id).preview(agent, policy).args;
+    this.start(session, withPermissionArgs(agent, launchWithoutPrompt(agent, resolveModel(config, agent)), permissionArgs), agentEnv(agent, process.env));
     for (const removed of await this.store.prune(this.list())) this.sessions.delete(removed);
     return { session, created: true };
   }
@@ -1026,7 +1030,35 @@ export class SessionManager {
     if (!SHIPPABLE_WORK.includes(work.state)) throw new SessionError(409, `there is nothing to ship (${work.state})`);
 
     if (options?.finishTasks) return this.finishTasksNow(session);
-    const { summary, artifactsReady } = await this.sessionTasks(session);
+    const scanned = this.deps.getSnapshot().repos.find((r) => r.id === session.repoId);
+    const document = await readShipTaskDocument(session.worktreePath, session.change, scanned?.framework);
+    if (!document.artifactsReady) throw new SessionError(409, "Required change artifacts are not ready in this checkout.");
+    const preflightRequired = !tasksSettled(document.summary);
+    if (automatic && preflightRequired && !isProposalSession(session)) throw new SessionError(409, "Tasks are unresolved or unverified. Finish tasks first.");
+    if (!automatic && preflightRequired) {
+      const preview = this.shipPreviews.get(id);
+      const confirmed = preview && options?.confirmation === preview.token && document.fingerprint === preview.fingerprint && Date.now() - preview.at <= 5 * 60_000;
+      if (!confirmed) {
+        const token = randomUUID();
+        this.shipPreviews.set(id, { token, fingerprint: document.fingerprint, at: Date.now() });
+        return { ...session, shipped: false, submitted: false, autoMerge: false, autoMergeInstructionIncluded: false, preflight: { token, summary: document.summary } };
+      }
+      if (options?.confirmAllTasks) {
+        if (!document.summary.verified || document.summary.truncated || !document.tasksPath || !document.changeDir) throw new SessionError(409, document.summary.reason ?? "The task file cannot be safely confirmed.");
+        const confirmedTasks = await confirmAllTasks(document.tasksPath, session.worktreePath, document.changeDir, document.content);
+        if (confirmedTasks !== "ok") {
+          const fresh = await readShipTasks(session.worktreePath, session.change, scanned?.framework);
+          const token = randomUUID();
+          this.shipPreviews.set(id, { token, fingerprint: fresh.fingerprint, at: Date.now() });
+          return { ...session, shipped: false, submitted: false, autoMerge: false, autoMergeInstructionIncluded: false, preflight: { token, summary: fresh.summary } };
+        }
+        this.deps.triggerScan?.();
+      }
+      this.shipPreviews.delete(id);
+    } else if (options?.confirmAllTasks) {
+      throw new SessionError(409, "There are no unresolved tasks to mark complete.");
+    }
+    const { summary, fingerprint, artifactsReady } = await this.sessionTasks(session);
     if (!artifactsReady) throw new SessionError(409, "Required change artifacts are not ready in this checkout.");
     const unresolved = !tasksSettled(summary);
     const proposalAutoShip = automatic && isProposalSession(session);
@@ -1656,7 +1688,12 @@ export class SessionManager {
     const resume = resumeLaunch(agent, resolveModel(this.deps.getConfig(), agent, isChangeless(session) ? undefined : session.action));
     if (!resume) throw new SessionError(400, "this agent has no resume command configured");
     if (!Bun.which(resume[0])) throw new SessionError(503, `${agent.name} was not found (${resume[0]})`);
-    if (!isChangeless(session)) {
+    if (isProjectConsole(session)) {
+      const config = this.deps.getConfig();
+      const policy = resolvePermissionPolicy(config, session.repoId);
+      const permissionArgs = permissionAdapters.resolve(agent.id).preview(agent, policy).args;
+      await this.restart(session, undefined, withPermissionArgs(agent, resume, permissionArgs), agentEnv(agent, process.env));
+    } else if (!isChangeless(session)) {
       const launch = await this.permissionLaunch(session, agent, "", resume, resolveModel(this.deps.getConfig(), agent, session.action));
       await this.restart(session, repoPath, launch.argv, agentEnv(agent, process.env), launch.typed);
     } else await this.restart(session, repoPath, resume, agentEnv(agent, process.env));

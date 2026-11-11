@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "preact/hooks";
 import type { ShipPreflight } from "../shared/types.ts";
 
-export type ShipChoice = "finish" | "ship" | "cancel";
+export type ShipChoice = "finish" | "confirm" | "ship" | "cancel";
 export function ShipPreflightDialog({ preview, answer }: { preview: ShipPreflight; answer: (choice: ShipChoice) => void }) {
   const cancel = useRef<HTMLButtonElement>(null);
   useEffect(() => cancel.current?.focus(), []);
@@ -49,6 +49,7 @@ export function ShipPreflightDialog({ preview, answer }: { preview: ShipPrefligh
             Finish tasks asks the agent to complete the remaining work without shipping. Ship anyway opens a PR with unresolved checks, including checks that
             need its CI. Tasks stay unresolved until verified; docs auto-merge is withheld.
           </p>
+          {summary.verified && !summary.truncated && summary.done < summary.total && <p>Mark all complete and Ship records every remaining task as complete and proceeds to shipping. Choose it only when you have completed and verified all listed work.</p>}
         </div>
         <div class="row">
           <button type="button" class="btn sm ghost" ref={cancel} onClick={() => answer("cancel")}>
@@ -57,6 +58,9 @@ export function ShipPreflightDialog({ preview, answer }: { preview: ShipPrefligh
           <button type="button" class="btn sm primary" onClick={() => answer("finish")}>
             Finish tasks
           </button>
+          {summary.verified && !summary.truncated && summary.done < summary.total && <button type="button" class="btn sm" onClick={() => answer("confirm")}>
+            Mark all complete and Ship
+          </button>}
           <button type="button" class="btn sm" onClick={() => answer("ship")}>
             Ship anyway
           </button>

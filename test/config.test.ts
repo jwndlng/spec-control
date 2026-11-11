@@ -60,6 +60,18 @@ test("permission profile config defaults to minimum and rejects invalid profiles
   expect(() => validateConfig({ ...defaultConfig(), agentSessions: { ...defaultAgentSessions(), agents: [{ ...CLAUDE_PROFILE, launchArgs: ["--dangerously-bypass-approvals-and-sandbox"] }] } })).toThrow(/bypass/);
 });
 
+test("optional project commands normalize in config and older configs remain valid", async () => {
+  const old = defaultConfig();
+  old.repos = [newRepoConfig(join(work, "acme", "beta-soc"), true)];
+  expect(validateConfig(old).repos[0]?.agent?.allowedCommands).toBeUndefined();
+  old.repos[0] = { ...old.repos[0]!, agent: { enabled: true, allowedCommands: [" bun   run lint ", "bun run lint"] } };
+  expect(validateConfig(old).repos[0]?.agent?.allowedCommands).toEqual(["bun run lint"]);
+  await saveConfig(old);
+  expect((await loadConfig()).config.repos[0]?.agent?.allowedCommands).toEqual(["bun run lint"]);
+  old.repos[0] = { ...old.repos[0]!, agent: { enabled: true, allowedCommands: ["git push origin main"] } };
+  expect(() => validateConfig(old)).toThrow();
+});
+
 test("rename keeps id; id derives from path", () => {
   const repo = newRepoConfig("/tmp/x/my-repo");
   expect(repo.id).toBe(repoId("/tmp/x/my-repo"));

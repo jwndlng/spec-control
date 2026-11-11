@@ -35,18 +35,25 @@ for (const [name, content, verified] of [
   ["unknown", "no task checkboxes\n", false],
   ["complete", "- [x] Verified check\n", true],
 ] as const) {
-  test(`explicit Ship reports ${name} tasks without confirmation or agent interaction`, async () => {
+test(`Ship preflight reports ${name} tasks and requires an explicit choice`, async () => {
     const { h, s, tasks, seen } = await setup();
     h.config.repos[0].agent = { enabled: true, autoMergeDocs: true };
     await writeFile(tasks, content);
-    const result = await h.manager.ship(s.id);
-    expect(result).toMatchObject({ submitted: true, taskSummary: { verified } });
-    expect(result.preflight).toBeUndefined();
+    const preflight = await h.manager.ship(s.id);
+    if (name === "complete") {
+      expect(preflight).toMatchObject({ submitted: true, taskSummary: { verified } });
+      expect(preflight.preflight).toBeUndefined();
+    } else {
+      expect(preflight).toMatchObject({ submitted: false, preflight: { summary: { verified } } });
+      const shipped = await h.manager.ship(s.id, { confirmation: preflight.preflight!.token });
+      expect(shipped).toMatchObject({ submitted: true, taskSummary: { verified } });
+      expect(shipped.preflight).toBeUndefined();
+      if (name === "open") expect(shipped.taskSummary?.open).toEqual(["Run checks"]);
+      if (name === "awaiting") expect(shipped.taskSummary?.awaiting).toEqual(["Sign in on the real device"]);
+    }
     expect(await readFile(tasks, "utf8")).toBe(content);
     expect(seen.text()).not.toContain("you said: Ship the work");
-    if (name !== "complete") expect(result.autoMerge).toBe(false);
-    if (name === "open") expect(result.taskSummary?.open).toEqual(["Run checks"]);
-    if (name === "awaiting") expect(result.taskSummary?.awaiting).toEqual(["Sign in on the real device"]);
+    if (name !== "complete") expect(preflight.autoMerge).toBe(false);
   });
 }
 
@@ -64,6 +71,20 @@ test("complete tasks proceed without confirmation even when the board snapshot i
   const result = await h.manager.ship(s.id);
   expect(result.submitted).toBe(true);
   expect(result.preflight).toBeUndefined();
+});
+
+test("the Ship-menu bulk confirmation checks every remaining marker from its preflight version, then ships", async () => {
+  const { h, s, tasks } = await setup();
+  await writeFile(tasks, "# Tasks\n\n- [x] Done\n- [ ] Open\n- [~] Needs review\n");
+  const preview = await h.manager.ship(s.id);
+  expect(preview.preflight?.summary).toMatchObject({ done: 1, total: 3, open: ["Open"], awaiting: ["Needs review"] });
+  await writeFile(tasks, "# Tasks\n\n- [x] Done\n- [ ] Changed after preview\n- [~] Needs review\n");
+  const refreshed = await h.manager.ship(s.id, { confirmAllTasks: true, confirmation: preview.preflight!.token });
+  expect(refreshed.preflight?.summary.open).toEqual(["Changed after preview"]);
+  expect(await Bun.file(tasks).text()).toContain("- [ ] Changed after preview");
+  const shipped = await h.manager.ship(s.id, { confirmAllTasks: true, confirmation: refreshed.preflight!.token });
+  expect(shipped).toMatchObject({ shipped: false, submitted: true, pullRequestState: "unavailable" });
+  expect(await Bun.file(tasks).text()).toBe("# Tasks\n\n- [x] Done\n- [x] Changed after preview\n- [x] Needs review\n");
 });
 
 test("bounded task reads fail closed for missing, malformed, symlinked, oversized and empty files", async () => {
@@ -85,7 +106,7 @@ test("bounded task reads fail closed for missing, malformed, symlinked, oversize
   expect((await readShipTasks(s.worktreePath, "upgrade-runtime", "unknown")).summary.verified).toBe(false);
 });
 
-test("a direct Ship API request reports unresolved tasks without confirmation", async () => {
+test("a direct Ship API request cannot bypass the unresolved-task preflight with a made-up token", async () => {
   const { h, s, tasks } = await setup();
   await writeFile(tasks, "- [ ] Run check\n");
   const fetch = createFetchHandler({ state: { sessions: h.manager } as AppState, indexHtml: "" });
@@ -97,7 +118,7 @@ test("a direct Ship API request reports unresolved tasks without confirmation", 
     }),
   );
   expect(response.status).toBe(200);
-  expect(await response.json()).toMatchObject({ submitted: true, taskSummary: { open: ["Run check"] } });
+  expect(await response.json()).toMatchObject({ submitted: false, preflight: { summary: { open: ["Run check"] } } });
 });
 
 function merged(h: Harness): RepoPullRequests {

@@ -12,5 +12,5 @@ Repository cleanup currently keeps every unmerged branch, even when no active Op
 
 ## Impact
 - `src/server/cleanup.ts`
-- `src/shared/types.ts`
+- `src/server/api.ts` (equivalent optional-chain form to keep repo lint passing)
 - `test/cleanup.test.ts`

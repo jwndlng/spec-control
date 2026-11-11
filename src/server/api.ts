@@ -4,6 +4,7 @@ import { availableName } from "../shared/nameHints.ts";
 import { isChangeDirName } from "../shared/changeNames.ts";
 import { labelKey } from "../shared/labels.ts";
 import { withAutoFetch, withPrTitleConvention, withRepoAgent } from "../shared/repoSettings.ts";
+import { normalizeCustomCommands } from "../shared/customCommands.ts";
 import { MAX_PAGE, type ActivityLog, type PageQuery } from "./activity/log.ts";
 import { isTimeZone, pageEvents } from "../shared/activity.ts";
 import type { AutoFetchSeconds, BranchDeleteRequest, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequest, PullRequestsResponse, PullResult, RepoPullRequests, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Session, StaleCleanupRequest, StaleCleanupResult, UpdateStatus } from "../shared/types.ts";
@@ -40,6 +41,7 @@ import { canonicalPath, gitExecutable } from "./paths.ts";
 import { resolvePermissionPolicy } from "./sessions/permissionResolver.ts";
 import { permissionAdapters } from "./sessions/permissionAdapters.ts";
 import { PROTECTED_COMMANDS } from "./sessions/protectedCommands.ts";
+import { confirmTask } from "./taskConfirmation.ts";
 
 export interface AppState {
   config: Config;
@@ -270,15 +272,17 @@ async function postRepoName(state: AppState, req: Request, id: string): Promise<
  */
 async function postRepoAgent(state: AppState, req: Request, id: string): Promise<Response> {
   const body = await readJson(req);
-  const { enabled, agentId, autoMergeDocs, permissionProfile } = body;
-  if (enabled === undefined && agentId === undefined && autoMergeDocs === undefined && permissionProfile === undefined) return json({ error: "send enabled, agentId, autoMergeDocs or permissionProfile" }, 400);
+  const { enabled, agentId, autoMergeDocs, permissionProfile, allowedCommands } = body;
+  if (enabled === undefined && agentId === undefined && autoMergeDocs === undefined && permissionProfile === undefined && allowedCommands === undefined) return json({ error: "send enabled, agentId, autoMergeDocs, permissionProfile or allowedCommands" }, 400);
   if (enabled !== undefined && typeof enabled !== "boolean") return json({ error: "enabled must be true or false" }, 400);
   if (agentId !== undefined && agentId !== null && typeof agentId !== "string") return json({ error: "agentId must be an agent id or null" }, 400);
   if (autoMergeDocs !== undefined && typeof autoMergeDocs !== "boolean") return json({ error: "autoMergeDocs must be true or false" }, 400);
   if (permissionProfile !== undefined && permissionProfile !== null && (typeof permissionProfile !== "string" || !["minimum", "less-friction", "full-automation"].includes(permissionProfile))) return json({ error: "permissionProfile must be a valid profile or null" }, 400);
+  const normalizedCommands = allowedCommands === undefined ? undefined : normalizeCustomCommands(allowedCommands);
+  if (normalizedCommands?.error) return json({ error: normalizedCommands.error }, 400);
   return updateRepo(state, id, (repo) => {
     if (typeof agentId === "string" && !state.config.agentSessions.agents.some((a) => a.id === agentId)) throw new TrackingError(400, `unknown agent ${agentId}`);
-    return withRepoAgent(repo, { enabled, agentId, autoMergeDocs, permissionProfile: permissionProfile as import("../shared/types.ts").AgentPermissionProfileId | null | undefined });
+    return withRepoAgent(repo, { enabled, agentId, autoMergeDocs, permissionProfile: permissionProfile as import("../shared/types.ts").AgentPermissionProfileId | null | undefined, allowedCommands: allowedCommands === undefined ? undefined : normalizedCommands?.commands ?? [] });
   });
 }
 
@@ -672,6 +676,7 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
       if (sub === "ship") {
         const body = req.body ? await readJson(req) : {};
         if (body.finishTasks !== undefined && typeof body.finishTasks !== "boolean") return json({ error: "finishTasks must be a boolean" }, 400);
+        if (body.confirmAllTasks !== undefined && typeof body.confirmAllTasks !== "boolean") return json({ error: "confirmAllTasks must be a boolean" }, 400);
         if (body.confirmation !== undefined && typeof body.confirmation !== "string") return json({ error: "confirmation must be a preview token" }, 400);
         const title = typeof body.title === "string" && body.title.trim() ? body.title.trim() : undefined;
         return json(await sessions.ship(id, { ...body, title }));
@@ -784,6 +789,7 @@ async function postSharedConfigApply(state: AppState, req: Request): Promise<Res
 }
 
 const ARTIFACT_ROUTE = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/(artifacts|file)$/;
+const CONFIRM_TASK_ROUTE = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/tasks\/confirm$/;
 const FILE_ERROR_STATUS = { "bad-path": 400, "not-found": 404, "too-large": 413 } as const;
 
 /**
@@ -816,6 +822,36 @@ async function artifactRoutes(state: AppState, url: URL, match: RegExpExecArray)
   return result.ok ? json(result.file) : json({ error: result.message }, FILE_ERROR_STATUS[result.reason]);
 }
 
+/** Explicitly changes one awaiting marker in the active change's framework-provided task file. */
+async function postConfirmTask(state: AppState, req: Request, match: RegExpExecArray): Promise<Response> {
+  let repoId: string;
+  let changeName: string;
+  try { repoId = decodeURIComponent(match[1]); changeName = decodeURIComponent(match[2]); }
+  catch { return json({ error: "malformed URL encoding" }, 400); }
+  const repo = state.config.repos.find((r) => r.enabled && r.id === repoId);
+  if (!repo) return json({ error: NOT_TRACKED }, 404);
+  const scanned = state.scanner.snapshot.repos.find((r) => r.id === repoId);
+  if (!scanned?.ok) return json({ error: "repository has not been successfully scanned" }, 409);
+  let body: unknown;
+  try { body = await req.json(); } catch { return json({ error: "body must be JSON" }, 400); }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "body must be an object" }, 400);
+  const { expectedText, lineNumber } = body as Record<string, unknown>;
+  if (typeof expectedText !== "string" || Buffer.byteLength(expectedText) > 1024 * 1024 || !Number.isSafeInteger(lineNumber) || (lineNumber as number) < 1) return json({ error: "expectedText and a positive lineNumber are required" }, 400);
+  const framework = frameworkById(scanned.framework);
+  if (!framework) return json({ error: "unknown change" }, 404);
+  const checkout = scanned.changes.find((c) => c.name === changeName)?.checkout;
+  const source = new LocalRepoSource(checkout && !checkout.isMain ? checkout.path : repo.path);
+  const found = await changeDirFor(source, changeName, framework);
+  if (!found.ok) return found.reason === "invalid-name" ? json({ error: "invalid change name" }, 400) : json({ error: "unknown change" }, 404);
+  if (found.entry.archived) return json({ error: "archived changes cannot be confirmed" }, 409);
+  const outputs = await framework.readChangeOutputs(source, await framework.readProject(source), found.entry);
+  if (!outputs.tasksPath) return json({ error: "this change has no task file" }, 409);
+  const result = await confirmTask(outputs.tasksPath, source.path, found.entry.dir, expectedText, lineNumber as number);
+  if (result !== "ok") return json({ error: "the task file changed or this task is no longer awaiting confirmation; refresh and try again" }, 409);
+  state.scanner.trigger();
+  return json({ confirmed: true });
+}
+
 /**
  * The one API route that writes into a tracked repository outside `openspec/config.yaml`: creates
  * `openspec/changes/<name>/` with its schema marker and, if given, `prompt.md`, `depends-on.yaml` and `issue.yaml`, then stages that
@@ -828,7 +864,7 @@ async function postCreateChange(state: AppState, req: Request, repoId: string): 
   if (!repo) return json({ error: "unknown repository" }, 404);
   if (!repo.enabled) return json({ error: "repository is disabled" }, 409);
   const scanned = state.scanner.snapshot.repos.find((r) => r.id === repoId);
-  if (!scanned || !scanned.ok) return json({ error: "repository has not been successfully scanned" }, 409);
+  if (!scanned?.ok) return json({ error: "repository has not been successfully scanned" }, 409);
   let body: Record<string, unknown>;
   try {
     body = await readJson(req);
@@ -1517,6 +1553,8 @@ function routeRequest({ state, indexHtml }: AppOptions): (req: Request, url: URL
       if (pathname === "/api/projects" && req.method === "POST") return projectRoute(state, req);
       const artifactMatch = req.method === "GET" ? ARTIFACT_ROUTE.exec(pathname) : null;
       if (artifactMatch) return artifactRoutes(state, url, artifactMatch);
+      const confirmTaskMatch = req.method === "POST" ? CONFIRM_TASK_ROUTE.exec(pathname) : null;
+      if (confirmTaskMatch) return postConfirmTask(state, req, confirmTaskMatch);
       if (req.method === "POST" && pathname === "/api/worktrees/remove") return postWorktreeRemove(state, req);
       if (req.method === "POST" && pathname === "/api/worktrees/editor") return postWorktreeEditor(state, req);
       if (req.method === "GET" && pathname === "/api/state") return json(state.autoFetcher?.withOutcomes(state.scanner.snapshot) ?? state.scanner.snapshot);
