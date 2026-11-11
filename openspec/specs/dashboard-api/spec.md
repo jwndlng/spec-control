@@ -1697,7 +1697,6 @@ repository.
 - **WHEN** `PUT /api/config` is sent with `agentSessions.endMergedSessions: "yes"`
 - **THEN** the response is `400` naming `agentSessions.endMergedSessions` and the saved configuration is unchanged
 
-## ADDED Requirements
 
 ### Requirement: Permission profiles configuration and effective permissions endpoint
 The API SHALL support querying and validating agent permission configurations:
