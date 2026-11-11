@@ -10,13 +10,14 @@ export interface Filters {
   q: string;
   /** Keep only changes with activity within this many days; 0 is off. */
   activeDays: number;
+  runningOnly: boolean;
   hideArchived: boolean;
   /** Keep only archived changes that still have to be pushed or merged. On by default: only `merged=1` turns it off. */
   hideMerged: boolean;
   layout: BoardLayout;
 }
 
-export const EMPTY_FILTERS: Filters = { repos: [], q: "", activeDays: 0, hideArchived: false, hideMerged: true, layout: "auto" };
+export const EMPTY_FILTERS: Filters = { repos: [], q: "", activeDays: 0, runningOnly: false, hideArchived: false, hideMerged: true, layout: "auto" };
 
 /** Below this window width, `auto` stacks the columns. */
 export const STACK_BELOW_PX = 1280;
@@ -34,6 +35,7 @@ export function parseFilters(search: string): Filters {
     repos: (p.get("repos") ?? "").split(",").filter(Boolean),
     q: p.get("q") ?? "",
     activeDays: Number.isFinite(active) && active > 0 ? Math.floor(active) : 0,
+    runningOnly: p.get("running") === "1",
     hideArchived: p.get("archived") === "0",
     hideMerged: p.get("merged") !== "1",
     layout: p.get("layout") === "lanes" || p.get("layout") === "stack" ? (p.get("layout") as BoardLayout) : "auto",
@@ -45,6 +47,7 @@ export function serializeFilters(f: Filters): string {
   if (f.repos.length) p.set("repos", f.repos.join(","));
   if (f.q) p.set("q", f.q);
   if (f.activeDays > 0) p.set("active", String(f.activeDays));
+  if (f.runningOnly) p.set("running", "1");
   if (f.hideArchived) p.set("archived", "0");
   if (!f.hideMerged) p.set("merged", "1");
   if (f.layout !== "auto") p.set("layout", f.layout);
@@ -88,5 +91,5 @@ export function activeTags(filters: Filters, repos: { id: string; name: string }
 
 /** Whether any filter differs from the defaults. */
 export function hasActiveFilters(f: Filters): boolean {
-  return f.q !== "" || f.repos.length > 0 || f.activeDays > 0 || f.hideArchived || !f.hideMerged;
+  return f.runningOnly || f.q !== "" || f.repos.length > 0 || f.activeDays > 0 || f.hideArchived || !f.hideMerged;
 }

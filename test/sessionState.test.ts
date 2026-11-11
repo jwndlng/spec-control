@@ -57,9 +57,9 @@ test("a pending archive can be continued even without a pull request or session"
 test("a Ready card without a design shows Implement with Draft in the menu", () => {
   const controls = cardSessionControls(config, [], card({ artifacts: artifacts("ready") }));
   expect(controls.main).toEqual({ kind: "start", action: "implement" });
-  expect(controls.menu).toEqual([{ kind: "start", action: "draft" }, { kind: "start", action: "custom" }]);
-  // With the design written there is nothing else: no arrow part.
-  expect(cardSessionControls(config, [], card()).menu).toEqual([{ kind: "start", action: "custom" }]);
+  expect(controls.menu).toEqual([{ kind: "start", action: "draft" }, { kind: "start", action: "archive" }, { kind: "start", action: "custom" }]);
+  // With required artifacts ready, Archive remains available even while implementation is unfinished.
+  expect(cardSessionControls(config, [], card()).menu).toEqual([{ kind: "start", action: "archive" }, { kind: "start", action: "custom" }]);
 });
 
 test("a card whose pull request's checks run shows the waiting label with its starters in the menu", () => {
@@ -106,12 +106,12 @@ test("a running proposal session's card shows its badge and no starter", () => {
 test("a proposal console in Ready recommends Implement, as ending the proposal session first", () => {
   const running = proposal();
   const steps = consoleSteps(config, [running], card({ artifacts: artifacts("ready") }), running);
-  expect(steps).toEqual({ into: ["draft"], endFirst: ["implement"] });
+  expect(steps).toEqual({ into: ["draft"], endFirst: ["implement", "archive"] });
   // In Drafts it offers Draft alone, sent into it; Fast-forward never ends it.
   expect(consoleSteps(config, [running], card({ stage: "drafts", artifacts: [{ id: "proposal", status: "ready" as const, required: true }] }), running)?.endFirst).not.toContain("fastForward");
   // Any other running session takes every step itself, and an ended one takes none.
   const impl = session({ state: "running", exitCode: undefined });
-  expect(consoleSteps(config, [impl], card({ artifacts: artifacts("ready") }), impl)).toEqual({ into: ["draft", "implement"], endFirst: [] });
+  expect(consoleSteps(config, [impl], card({ artifacts: artifacts("ready") }), impl)).toEqual({ into: ["draft", "implement", "archive"], endFirst: [] });
   expect(consoleSteps(config, [session()], card(), session())).toBeUndefined();
 });
 

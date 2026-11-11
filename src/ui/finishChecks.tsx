@@ -2,6 +2,7 @@ import { useRef, useState } from "preact/hooks";
 import { mergedImplementation } from "../shared/pullRequestLink.ts";
 import type { ChangeSnapshot } from "../shared/types.ts";
 import { api } from "./api.ts";
+import { relTime } from "./format.ts";
 import { usePullRequests } from "./pullRequests.tsx";
 import { useSessionUi } from "./sessions.tsx";
 import { sessionsEnabledFor } from "./sessionState.ts";
@@ -16,14 +17,15 @@ export function FinishChecks({ card }: { card: Pick<ChangeSnapshot, "repoId" | "
   const pr = change && mergedImplementation(change, prs.data?.repos);
   if (!pr || !sessionsEnabledFor(ui.config, card.repoId)) return null;
   const list = prs.data?.repos.find((r) => r.repoId === card.repoId);
-  const freshness = `Cached PR #${pr.number}, last fetched ${list?.fetchedAt ?? "at an unknown time"}${list?.status === "failed" ? "; latest refresh failed" : ""}. The agent must verify current evidence.`;
+  const age = relTime(list?.fetchedAt);
+  const refreshFailed = list?.status === "failed" || !!prs.error;
   return (
     <>
       <button
         type="button"
         class="btn sm"
         disabled={busy}
-        title={freshness}
+        title="Ask the agent to finish unresolved checks"
         onClick={async () => {
           if (guard.current) return;
           guard.current = true;
@@ -44,7 +46,21 @@ export function FinishChecks({ card }: { card: Pick<ChangeSnapshot, "repoId" | "
       >
         {busy ? "Starting…" : "Finish checks"}
       </button>
-      <span class="hint">{freshness}</span>
+      <details class="hint">
+        <summary>PR freshness</summary>
+        <span>
+          Cached PR #{pr.number}. {age === "—" ? "Fetch time unknown." : `Fetched ${age === "just now" ? age : `${age} ago`}.`}
+          {list?.fetchedAt && <> <time dateTime={list.fetchedAt}>{list.fetchedAt}</time></>}
+        </span>
+      </details>
+      {refreshFailed && (
+        <span class="notice danger" role="status">
+          PR refresh failed.{' '}
+          <button type="button" class="btn sm" disabled={prs.running !== undefined} onClick={() => void prs.refresh({ repoId: card.repoId, force: true })}>
+            {prs.running !== undefined ? "Refreshing…" : "Retry PR refresh"}
+          </button>
+        </span>
+      )}
       {error && (
         <span class="notice danger" role="status">
           {error}
