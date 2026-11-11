@@ -1582,9 +1582,16 @@ export interface CleanupBranch {
   lastCommitAt?: string;
   upstream?: string;
   /** How the branch's work was found in the base: its commits are in it, or its changed files' content is. */
-  mergedBy?: "ancestry" | "content";
+  mergedBy?: "ancestry" | "content" | "pull-request";
+  /** When cached PR evidence was fetched; no cleanup operation refreshes it. */
+  evidenceFetchedAt?: string;
+  /** Matching merged PR when its head and locally reachable merge commit prove the merge. */
+  pullRequest?: number;
+  nextAction?: string;
   /** The linked worktree the branch is checked out in; the branch can only go together with that worktree. */
   worktreePath?: string;
+  /** Prunable record holding this branch; pruning must be selected with it. */
+  prunePath?: string;
   removable: boolean;
   reason?: string;
 }
@@ -1729,6 +1736,8 @@ export interface PullRequest {
   mergeable?: "mergeable" | "conflicting" | "unknown";
   /** The commit the head branch points at, 40 hexadecimal characters; absent when GitHub reported none or a cache predates it. */
   headOid?: string;
+  /** The merged PR's merge commit; used only with an exact head and local base ancestry proof. */
+  mergeOid?: string;
   /**
    * Every file it changes is under `openspec/`, as GitHub reports it — asked only for open pull requests of a GitHub
    * repository that an enabled project with docs auto-merge maps to. The paths themselves are never kept. Absent

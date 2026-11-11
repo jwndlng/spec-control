@@ -1,21 +1,23 @@
 # Reviewer notes
 
-This branch adds the proposal, design, spec delta, and task list for
-`recognize-merged-cleanup-branches`. It delivers no runtime changes.
+Cleanup can select a branch together with its stale worktree record and prune
+the record before rechecking/deleting the branch in one confirmation. Failed
+pruning keeps the branch; moved heads and running sessions remain protected.
+Selection dependencies, the demo, Help, and a What's new entry cover this flow.
 
-Implementation remains incomplete (0/6 tasks): merged PR merge-commit identity is
-not parsed/cached (1.1), cleanup still uses only ancestry/content proofs (1.2),
-and stale worktree records still require a second cleanup pass (1.3). Evidence
-freshness/recovery UI, Help/demo updates (1.4), feature-specific regression tests
-(1.5), and this change's What's new entry (1.6) are absent. These require
-implementation work; none requires a user-only check.
+Cleanup also accepts fresh cached, same-repository/default-base PR evidence
+when the branch head matches exactly and the merge commit is in the local base,
+including squash/rebase merges followed by later base edits. Stale, fork,
+wrong-base, and changed-head evidence does not prove a merge. Kept branches show
+evidence age and next steps; preview never fetches or queries GitHub.
+
+Active-change protection and main's independent age-based eligibility for old
+unrelated work are preserved.
 
 Checks run:
 
+- `bun run check`: lint, typecheck and all 2,381 tests passed after merging main's verification fixes.
+- Focused cleanup, API, parser/cache, UI, demo and changelog suite: 111 passed.
+- `bun run build` and compiled cleanup API smoke passed: exact PR proof after
+  later base edits, removal/deletion, and no gh calls.
 - `openspec validate recognize-merged-cleanup-branches --strict` passed.
-- `bun test test/cleanup.test.ts test/cleanupApi.test.ts test/cleanupUi.test.ts test/pullRequests.test.ts test/pullRequestsApi.test.ts test/whatsNew.test.ts`
-  passed outside the sandbox: 84 tests, 0 failures. These cover existing behavior,
-  not the unimplemented requirements above.
-- After merging current `main`, `bun run check` passed outside the sandbox:
-  lint, typecheck, and 2,347 tests (0 failures). The earlier prompt-migration
-  failure is fixed by `main`; the earlier scanner timeouts did not recur.

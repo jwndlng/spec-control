@@ -632,6 +632,33 @@ test("a cache from an earlier version, or one carrying drift, has no head commit
 
 // ---- whether the head is in a fork (resolve-pr-conflicts 1.1) ----
 
+test("merge identity is parsed, queried and cached defensively without extra GitHub calls", async () => {
+  const oid = "a".repeat(40);
+  for (const bad of [null, {}, { oid: "--all" }, { oid: "a".repeat(39) }, { oid: 1 }, oid]) {
+    expect(parsePullRequest(ghPr({ number: 1, mergeCommit: bad }))?.mergeOid).toBeUndefined();
+  }
+  await gh.scenario({ repos: { "acme/alpha-infra": { open: [], closed: [ghPr({
+    number: 81, state: "MERGED", mergedAt: new Date().toISOString(), headRefOid: "b".repeat(40),
+    mergeCommit: { oid }, isCrossRepository: false,
+  })] } } });
+  const targets: RepoTarget[] = [{ id: "merge", path: await repoAt("merge-evidence", ALPHA), isGit: true }];
+  await gh.forget();
+  const answer = await newStore().refresh(targets, { force: true });
+  expect(answer.repos[0].pullRequests[0]).toMatchObject({ mergeOid: oid, headOid: "b".repeat(40), base: "main", isCrossRepository: false });
+  expect((await gh.calls()).filter((c) => c.argv[0] === "pr")).toHaveLength(2);
+  for (const call of (await gh.calls()).filter((c) => c.argv[0] === "pr")) expect(fieldsOf(call)).toContain("mergeCommit");
+  await gh.forget();
+  expect((await newStore().list(targets)).repos[0].pullRequests[0].mergeOid).toBe(oid);
+  expect(await gh.calls()).toEqual([]);
+  const stored = JSON.parse(await readFile(pullRequestsCachePath(), "utf8"));
+  stored.repos["acme/alpha-infra"].pullRequests[0].mergeOid = "--all";
+  await writeFile(pullRequestsCachePath(), JSON.stringify(stored));
+  expect((await newStore().list(targets)).repos[0].pullRequests[0].mergeOid).toBeUndefined();
+  delete stored.repos["acme/alpha-infra"].pullRequests[0].mergeOid;
+  await writeFile(pullRequestsCachePath(), JSON.stringify(stored));
+  expect((await newStore().list(targets)).repos[0].pullRequests[0].mergeOid).toBeUndefined();
+});
+
 test("isCrossRepository is read with the same pr list, kept only as a boolean, and an old cache leaves it unknown", async () => {
   await gh.scenario({
     login: "demo-user",
