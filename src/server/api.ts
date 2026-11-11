@@ -828,7 +828,7 @@ async function postCreateChange(state: AppState, req: Request, repoId: string): 
   if (!repo) return json({ error: "unknown repository" }, 404);
   if (!repo.enabled) return json({ error: "repository is disabled" }, 409);
   const scanned = state.scanner.snapshot.repos.find((r) => r.id === repoId);
-  if (!scanned || !scanned.ok) return json({ error: "repository has not been successfully scanned" }, 409);
+  if (!scanned?.ok) return json({ error: "repository has not been successfully scanned" }, 409);
   let body: Record<string, unknown>;
   try {
     body = await readJson(req);
