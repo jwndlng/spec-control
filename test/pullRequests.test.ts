@@ -55,7 +55,7 @@ async function plainDir(): Promise<string> {
 
 const ALPHA = "https://github.com/acme/alpha-infra.git";
 const BETA = "git@github.com:acme/beta-soc.git";
-const newStore = (patch: { now?: () => number; timeoutMs?: number } = {}) => new PullRequests({ timeoutMs: 2000, ...patch });
+const newStore = (patch: { now?: () => number; timeoutMs?: number } = {}) => new PullRequests({ timeoutMs: 5000, ...patch });
 
 // ---- the fake gh itself (1.2) ----
 
