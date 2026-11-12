@@ -13,6 +13,8 @@ bun run dev        # build the UI, serve http://127.0.0.1:4711 from source
 bun run check      # lint + typecheck + tests — run before every push; CI runs exactly this
 bun run build      # dist/spec-control (UI and fonts embedded); --version prints dev, or $SPEC_CONTROL_VERSION
 bun test test/scanner.test.ts   # a single test file
+bun run test:fast  # local iteration; skips the twenty slowest integration-heavy test files
+bun run test:serial # full suite in one process, for diagnosing shared-resource issues
 ```
 
 ## Layout

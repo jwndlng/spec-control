@@ -57,7 +57,7 @@ jobs:
       # Lint, typecheck, the demo and the clean tree do not depend on the platform; Linux checks them for this commit.
       - name: Test
         if: runner.os != 'Linux'
-        run: bun test
+        run: bun run test
 
       - name: Build single binary
         run: bun run build

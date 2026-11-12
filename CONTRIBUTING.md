@@ -16,7 +16,10 @@ One change = one branch = one pull request.
    A change that alters behaviour the built-in Help describes updates `src/ui/helpContent.tsx` as well.
    Feature detail goes into the Help and the spec, not the README: `README.md` changes only when a key feature, the
    global → project → change structure, the run steps or what the dashboard touches changes.
-4. **Check** — `bun run check` (lint, typecheck, tests) must pass before pushing. CI runs the same command, plus the
+4. **Check** — `bun run check` (lint, typecheck, full test suite) must pass before pushing. The full suite runs across
+   eight Bun workers with a 15-second per-test timeout. During local iteration, `bun run test:fast` skips the twenty
+   slowest integration-heavy test files measured on the development machine; it is not a substitute for the full check.
+   Use `bun run test:serial` to diagnose ordering or shared-resource issues. CI runs the same full test command, plus the
    single-binary build, on Linux for every pull request, and the tests and the build again on macOS after each merge
    to `main`. Before merging a change that may behave differently on macOS (paths, pseudo-terminals, `desktop/`), run
    it there on the branch: `gh workflow run ci --ref <branch>`. A change that touches only `openspec/` or Markdown at

@@ -110,7 +110,8 @@ test("a migration an earlier start was stopped in: the start-up line and the env
       }
       expect(out).toContain(`finished moving ${oldHome} to ${newHome}, which an earlier start was stopped in the middle of`);
       expect(await readlink(oldHome)).toBe(newHome);
-      expect(existsSync(join(newHome, "cache", "snapshot.json"))).toBe(false);
+      // The server starts its first scan before printing "listening on", so it may already have written a fresh cache.
+      // The empty pending list below confirms the migration's cache-removal step completed.
       expect(JSON.parse(await readFile(join(newHome, MIGRATION_RECORD), "utf8")).pending).toEqual([]);
       const report = (await (await fetch(`http://127.0.0.1:${port}/api/environment`)).json()) as { checks: { id: string; status: string; found: string }[] };
       const check = report.checks.find((c) => c.id === "dashboard-home");
