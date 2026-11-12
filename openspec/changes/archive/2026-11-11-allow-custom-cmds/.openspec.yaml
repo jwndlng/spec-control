@@ -4,3 +4,4 @@ x-spec-control:
   branch: feat/allow-custom-cmds
 spec-control:
   branch: feat/allow-custom-cmds
+  archive-branch: chore/archive-allow-custom-cmds

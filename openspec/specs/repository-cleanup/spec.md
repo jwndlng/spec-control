@@ -23,9 +23,11 @@ or **kept with a reason**:
   always removable.
 - **Branches**: every local branch except the default branch. A branch is removable only if the base is known and
   either every commit on the branch is reachable from the base, or every file the branch changed since it forked from
-  the base has the same content in the base (which recognises squash and rebase merges). A branch MUST be kept when it
+  the base has the same content in the base (which recognises squash and rebase merges), or exact merged PR evidence satisfies "Cleanup recognizes the exact merged PR head", or the existing relevance-based rule finds old unrelated work eligible. A branch MUST be kept when it
   is the default branch or the branch the main checkout is on, and when it is checked out in a linked worktree that is
   not itself removable. A branch checked out in a removable worktree SHALL be marked as depending on that worktree.
+
+The relevance-based cleanup rules on main SHALL be preserved: work associated with an active change is kept; old unrelated work remains eligible without merge proof, while recent work without sufficient merge evidence is kept. Exact PR evidence is an additional merge proof, not a new prerequisite for age-based deletion. Dirty work, running sessions, external locks, protected branches, and changed heads remain protected.
 
 Every kept item's reason SHALL be stated in words (for example: uncommitted files, commits not in the base with their
 count, session running, locked, checked out in the main checkout, default branch unknown). The preview MUST NOT write
@@ -139,6 +141,8 @@ reload.
 #### Scenario: Restoring a deleted branch
 - **WHEN** the user runs the restore command shown for a deleted branch
 - **THEN** the branch exists again at the same commit
+
+A branch selected with a stale-record dependency SHALL be re-evaluated after pruning in the same cleanup operation. A failed prune SHALL keep its dependent branch with the actual reason; a successful prune SHALL NOT require the user to reopen cleanup.
 
 ### Requirement: Cleanup never touches more than it lists
 Cleanup MUST NOT contact a remote, delete or change a remote-tracking branch, delete a remote branch, force a worktree
@@ -294,3 +298,33 @@ sharing one repository never remove worktrees or delete branches of it at the sa
 - **WHEN** `/w/acme/monorepo/packages/a` and `/w/acme/monorepo/packages/b` are tracked and the user confirms a cleanup of
   `b` while a cleanup of `a` runs
 - **THEN** the cleanup of `b` is refused as busy and nothing is removed for it
+
+### Requirement: Cleanup recognizes the exact merged PR head
+Cleanup SHALL accept cached PR merge proof only for a same-repository PR targeting the default branch, with an exact local head match and a merge commit reachable from the local base. Local ancestry/content proofs and age-based eligibility SHALL remain alternatives. Missing, stale, mismatched, or fork evidence SHALL NOT prove a merge. Preview SHALL NOT fetch or query GitHub.
+
+#### Scenario: Cache freshness
+- **WHEN** cleanup evaluates cached PR evidence
+- **THEN** only a successful cache fetched within five minutes, with a valid non-future timestamp, can establish a PR merge proof
+
+#### Scenario: Squash merge followed by edits
+- **WHEN** a branch head exactly matches a merged PR head, its merge commit is in the base, and the base later edited the same files
+- **THEN** the branch is recognized as merged despite failure of final file-content comparison
+
+#### Scenario: More work after merge
+- **WHEN** a local branch has a new commit beyond the head recorded on its merged PR
+- **THEN** that PR does not authorize deleting the branch
+
+#### Scenario: Cached merge not yet in local base
+- **WHEN** cached GitHub evidence reports merged but its merge commit is not reachable from the local base
+- **THEN** cleanup keeps the branch and offers Refresh/Pull guidance rather than treating the evidence as sufficient
+
+### Requirement: Kept branches show evidence and recovery
+Every branch SHALL appear in cleanup, except the protected default branch. Kept items SHALL state the concrete blocker, the evidence freshness when applicable, and a relevant next action. Missing merge evidence SHALL be distinguished from proven additional work. Cleanup SHALL NOT weaken dirty-file, running-session, external-lock, main-checkout, or changed-head protections.
+
+#### Scenario: Evidence unavailable
+- **WHEN** local comparisons fail and no exact merged PR evidence exists
+- **THEN** cleanup explains that merge evidence is insufficient and offers refresh or inspection, without claiming definitively that the work was never merged
+
+#### Scenario: Stale worktree dependency
+- **WHEN** a merged branch is held only by a prunable record
+- **THEN** it is selectable with the prune dependency and can be removed in one confirmed cleanup

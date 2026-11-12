@@ -80,9 +80,10 @@ export function demoPreview(state: DemoCleanupState, repo: RepoSnapshot): Cleanu
       const item: CleanupBranch = { name, commit: fakeCommit(`${repo.id}/${name}`), removable: false };
       const holder = all.find((w) => w.branch === name);
       if (holder?.isMain) return { ...item, reason: "it is checked out in the main checkout" };
-      if (!merged.has(name)) return { ...item, reason: `${unmerged.get(name) ?? holder?.unpushed ?? 1} commit(s) not in origin/main` };
-      const mergedItem: CleanupBranch = { ...item, mergedBy: name.startsWith("chore/") ? "ancestry" : "content" };
-      if (holder?.prunable) return { ...mergedItem, reason: "it is checked out in a stale worktree record — prune it, then clean up again" };
+      const evidenceFetchedAt = repo.scannedAt;
+      if (!merged.has(name)) return { ...item, evidenceFetchedAt, reason: `merge evidence is insufficient; ${unmerged.get(name) ?? holder?.unpushed ?? 1} commit(s) not in origin/main`, nextAction: "Refresh Pull requests or inspect the branch's changes locally." };
+      const mergedItem: CleanupBranch = { ...item, mergedBy: name === "fix/state-lock-timeout" ? "pull-request" : name.startsWith("chore/") ? "ancestry" : "content", ...(name === "fix/state-lock-timeout" ? { pullRequest: 81, evidenceFetchedAt } : {}) };
+      if (holder?.prunable) return { ...mergedItem, removable: true, prunePath: holder.path };
       if (holder) {
         if (!removable.has(holder.path))
           return { ...mergedItem, worktreePath: holder.path, reason: `it is checked out in the worktree ${holder.path}, which is kept` };
@@ -118,6 +119,7 @@ export function demoApply(state: DemoCleanupState, repo: RepoSnapshot, selection
     if (!b) items.push({ kind: "branch", id: name, outcome: "kept", reason: "no such branch" });
     else if (b.commit !== commit) items.push({ kind: "branch", id: name, outcome: "kept", reason: "it changed since the preview" });
     else if (!b.removable) items.push({ kind: "branch", id: name, outcome: "kept", reason: b.reason });
+    else if (b.prunePath) items.push({ kind: "branch", id: name, outcome: "kept", reason: "it is checked out in a stale worktree record — select pruning with this branch" });
     else {
       state.deletedBranches.add(key(repo.id, name));
       items.push({ kind: "branch", id: name, outcome: "deleted", commit });

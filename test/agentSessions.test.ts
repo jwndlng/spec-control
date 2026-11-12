@@ -2,7 +2,7 @@
 import { launchCommand, launchWithoutPrompt, resolveModel, resumeLaunch, withPermissionArgs } from "../src/server/sessions/agents.ts";
 import { defaultConfig } from "../src/server/config.ts";
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionActivity } from "../src/server/activity/events.ts";
 import type { SessionManager } from "../src/server/sessions/manager.ts";
@@ -165,7 +165,10 @@ test("Ship commits uncommitted changes, pushes branch to origin, and opens PR vi
   await setupFakeRemote(h.repoPath);
 
   const events: SessionActivity[] = [];
-  const manager = h.newManager({ onActivity: (_s, a) => events.push(a) });
+  let releaseList!: () => void;
+  let listStarted!: () => void;
+  const listing = new Promise<void>((resolve) => { listStarted = resolve; });
+  const manager = h.newManager({ onActivity: (_s, a) => events.push(a), listPullRequests: () => new Promise((resolve) => { releaseList = () => resolve([]); listStarted(); }) });
   managers.push(manager);
 
   const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
@@ -177,11 +180,17 @@ test("Ship commits uncommitted changes, pushes branch to origin, and opens PR vi
   await putFile(session.worktreePath, "src/keys.ts", "export const key = '123';\n");
 
   // Run Ship
-  const result = await manager.ship(session.id);
+  const firstShip = manager.ship(session.id);
+  await listing;
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "running", stage: "pull-request", committed: true, pushed: true });
+  expect(manager.ship(session.id)).toBe(firstShip);
+  releaseList();
+  const result = await firstShip;
   expect(result.shipped).toBe(true);
   expect(result.pullRequestUrl).toBe("https://github.com/acme/demo-ops/pull/99");
   expect(result.pullRequestNumber).toBe(99);
   expect(result.pullRequestState).toBe("created");
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "succeeded", stage: "done", pullRequestState: "created", pullRequestUrl: result.pullRequestUrl, committed: true, pushed: true });
 
   // Verify .openspec.yaml has recorded branch
   const marker = await Bun.file(join(session.worktreePath, `openspec/changes/${IMPLEMENT}/.openspec.yaml`)).text();
@@ -203,6 +212,13 @@ test("Ship commits uncommitted changes, pushes branch to origin, and opens PR vi
 
   // Verify activity event was reported
   expect(events.some((e) => e.kind === "session-shipped")).toBe(true);
+
+  // The session list after a dashboard restart carries the terminal operation and PR identity back to the UI.
+  await manager.shutdown();
+  const recovered = h.newManager();
+  managers.push(recovered);
+  await recovered.init();
+  expect(recovered.get(session.id).shipOperation).toMatchObject({ state: "succeeded", stage: "done", pullRequestUrl: "https://github.com/acme/demo-ops/pull/99" });
 });
 
 test("Ship uses a non-empty fallback for blank and unsafe description artifacts", async () => {
@@ -225,6 +241,143 @@ test("Ship uses a non-empty fallback for blank and unsafe description artifacts"
     expect(bodyIndex).toBeGreaterThanOrEqual(0);
     expect(create?.argv[bodyIndex + 1]).toBe(`Review the OpenSpec artifacts for ${IMPLEMENT}.`);
   }
+});
+
+test("Ship failure after push preserves the verified outcome and retry safely opens one PR", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  let lookups = 0;
+  const manager = h.newManager({ listPullRequests: async () => {
+    lookups++;
+    if (lookups === 1) throw new Error("pull request lookup unavailable");
+    return [];
+  } });
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified\n");
+  await putFile(session.worktreePath, "src/ship-retry.ts", "export {};\n");
+  await expect(manager.ship(session.id)).rejects.toThrow("pull request lookup unavailable");
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "failed", failedStage: "pull-request", committed: true, pushed: true });
+  const shippedOid = git(session.worktreePath, "rev-parse", "HEAD");
+  const retry = await manager.ship(session.id);
+  expect(retry).toMatchObject({ shipped: true, pullRequestState: "created", pullRequestUrl: "https://github.com/acme/demo-ops/pull/99" });
+  expect(git(session.worktreePath, "rev-parse", "HEAD")).toBe(shippedOid);
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "succeeded", stage: "done", pushed: true });
+});
+
+test("Ship commit failure is reported before push and can be retried", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  const manager = h.newManager();
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified\n");
+  await putFile(session.worktreePath, "src/ship-commit.ts", "export {};\n");
+  const lock = git(session.worktreePath, "rev-parse", "--path-format=absolute", "--git-path", "index.lock");
+  await writeFile(lock, "locked for test\n");
+  await expect(manager.ship(session.id)).rejects.toThrow(/index\.lock|could not commit/i);
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "failed", failedStage: "committing", committed: false, pushed: false });
+  await rm(lock, { force: true });
+  expect(await manager.ship(session.id)).toMatchObject({ shipped: true, pullRequestState: "created" });
+});
+
+test("Ship push rejection preserves the local commit and can be retried after remote permission is restored", async () => {
+  const h = await harness();
+  const bare = await setupFakeRemote(h.repoPath);
+  const manager = h.newManager();
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified\n");
+  await putFile(session.worktreePath, "src/ship-push.ts", "export {};\n");
+  const hook = join(bare, "hooks", "pre-receive");
+  await writeFile(hook, "#!/bin/sh\nprintf 'permission denied by remote\\n' >&2\nexit 1\n");
+  await chmod(hook, 0o755);
+  await expect(manager.ship(session.id)).rejects.toThrow(/permission denied/i);
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "failed", failedStage: "pushing", committed: true, pushed: false });
+  await rm(hook, { force: true });
+  expect(await manager.ship(session.id)).toMatchObject({ shipped: true, pullRequestState: "created" });
+});
+
+test("PR creation failure after push is reported and safe retry creates the PR", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  const manager = h.newManager({ listPullRequests: async () => [] });
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified\n");
+  await putFile(session.worktreePath, "src/ship-pr.ts", "export {};\n");
+  await gh.scenario({ mode: "fail", stderr: "gh: authentication denied" });
+  await expect(manager.ship(session.id)).rejects.toThrow(/not signed in/i);
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "failed", failedStage: "pull-request", committed: true, pushed: true });
+  const head = git(session.worktreePath, "rev-parse", "HEAD");
+  await gh.scenario({});
+  expect(await manager.ship(session.id)).toMatchObject({ shipped: true, pullRequestState: "created" });
+  expect(git(session.worktreePath, "rev-parse", "HEAD")).toBe(head);
+});
+
+test("a refresh failure after PR creation keeps its verified link and retry reuses that PR", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  let refreshes = 0;
+  const manager = h.newManager({
+    listPullRequests: async () => [],
+    refreshPullRequests: async () => {
+      refreshes++;
+      if (refreshes === 1) {
+        await gh.scenario({ mode: "fail", stderr: "a pull request already exists: https://github.com/acme/demo-ops/pull/99" });
+        throw new Error("pull request refresh failed");
+      }
+      await gh.scenario({});
+    },
+  });
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified\n");
+  await putFile(session.worktreePath, "src/ship-refresh.ts", "export {};\n");
+  await expect(manager.ship(session.id)).rejects.toThrow("pull request refresh failed");
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "failed", failedStage: "refreshing", pullRequestState: "created", pullRequestUrl: "https://github.com/acme/demo-ops/pull/99", pushed: true });
+  const retry = await manager.ship(session.id);
+  expect(retry).toMatchObject({ shipped: true, pullRequestState: "existing", pullRequestUrl: "https://github.com/acme/demo-ops/pull/99" });
+  expect((await gh.calls()).filter((call) => call.argv.includes("create"))).toHaveLength(2);
+});
+
+test("a timed-out PR create stays outcome-unknown until retry finds the existing PR", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  let lookups = 0;
+  let creates = 0;
+  const existing = pr({ number: 99, url: "https://github.com/acme/demo-ops/pull/99", head: `feat/${IMPLEMENT}` });
+  const manager = h.newManager({
+    listPullRequests: async () => ++lookups === 1 ? [] : [existing],
+    createPullRequest: async () => {
+      creates++;
+      return { ok: false, failure: { kind: "failed", reason: "gh timed out", outcomeUnknown: true } };
+    },
+  });
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified\n");
+  await putFile(session.worktreePath, "src/ship-timeout.ts", "export {};\n");
+  await expect(manager.ship(session.id)).rejects.toThrow("pull request outcome is unknown");
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "unknown", stage: "pull-request", committed: true, pushed: true });
+  expect(manager.get(session.id).shipOperation?.pullRequestUrl).toBeUndefined();
+  const retry = await manager.ship(session.id);
+  expect(retry).toMatchObject({ shipped: true, pullRequestState: "existing", pullRequestUrl: existing.url });
+  expect(creates).toBe(1);
+});
+
+test("a dashboard restart converts an in-flight Ship record to an unknown outcome", async () => {
+  const h = await harness();
+  const manager = h.newManager();
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const now = new Date().toISOString();
+  manager.get(session.id).shipOperation = { operationId: "123e4567-e89b-12d3-a456-426614174000", state: "running", stage: "pushing", startedAt: now, updatedAt: now, committed: true, pushed: false };
+  await manager.close(session.id);
+  const recovered = h.newManager();
+  managers.push(recovered);
+  await recovered.init();
+  expect(recovered.get(session.id).shipOperation).toMatchObject({ state: "unknown", stage: "pushing", committed: true, error: expect.stringContaining("remote outcome is unknown") });
 });
 
 test("Ship uses the fallback when the description artifact is absent", async () => {

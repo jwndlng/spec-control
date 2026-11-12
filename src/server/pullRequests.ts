@@ -7,7 +7,7 @@
 // It writes nothing to a repository, runs no git command but the read-only `config --get remote.origin.url`
 // that discovery already uses, and changes nothing on GitHub.
 //
-// Everything it keeps is display-only: the cache is never an input to scanning, columns, counts or actions.
+// Cleanup may use exact merged head/merge identities as additional evidence, checked against local git.
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { PullRequest, PullRequestsResponse, RepoPullRequests } from "../shared/types.ts";
@@ -34,7 +34,7 @@ export const WATCH_MIN_GAP_MS = 60_000;
 const CACHE_VERSION = 1;
 
 /** Only the documented `--json` fields; anything else is parsed defensively or ignored. */
-const FIELDS = "number,title,url,author,headRefName,baseRefName,isDraft,state,createdAt,mergedAt,closedAt,reviewDecision,reviewRequests,statusCheckRollup,mergeable,headRefOid,isCrossRepository";
+const FIELDS = "number,title,url,author,headRefName,baseRefName,isDraft,state,createdAt,mergedAt,closedAt,reviewDecision,reviewRequests,statusCheckRollup,mergeable,headRefOid,isCrossRepository,mergeCommit";
 /**
  * Asked for in addition only on the open call, and only for a GitHub repository an enabled project with docs auto-merge
  * maps to (agent-merges-docs-prs D2): enough to answer "docs-only", and dropped right after parsing.
@@ -148,6 +148,7 @@ export function parsePullRequest(raw: unknown, viewer?: string): PullRequest | u
   const mergedAt = str(entry.mergedAt) || undefined;
   const closedAt = str(entry.closedAt) || undefined;
   const headOid = parseHeadOid(entry.headRefOid);
+  const mergeOid = parseHeadOid((entry.mergeCommit as Record<string, unknown> | null)?.oid);
   const docsOnly = parseDocsOnly(entry);
   const isCrossRepository = parseCrossRepository(entry.isCrossRepository);
   // The paths are read here and nowhere else: only the answer is kept, cached and sent to the browser.
@@ -168,6 +169,7 @@ export function parsePullRequest(raw: unknown, viewer?: string): PullRequest | u
     checks: summarizeChecks(entry.statusCheckRollup),
     mergeable: parseMergeable(entry.mergeable),
     ...(headOid ? { headOid } : {}),
+    ...(mergeOid ? { mergeOid } : {}),
     ...(docsOnly !== undefined ? { docsOnly } : {}),
     ...(isCrossRepository !== undefined ? { isCrossRepository } : {}),
   };
@@ -178,10 +180,11 @@ export function parsePullRequest(raw: unknown, viewer?: string): PullRequest | u
  * it is one, docs-only only when it says exactly that — so an old or edited cache can never trigger a merge.
  */
 function fromCache(pr: PullRequest): PullRequest {
-  const { headOid, docsOnly, isCrossRepository, ...rest } = pr;
+  const { headOid, mergeOid, docsOnly, isCrossRepository, ...rest } = pr;
   const head = parseHeadOid(headOid);
+  const merge = parseHeadOid(mergeOid);
   const cross = parseCrossRepository(isCrossRepository);
-  return { ...rest, mergeable: parseMergeable(pr.mergeable), ...(head ? { headOid: head } : {}), ...(typeof docsOnly === "boolean" ? { docsOnly } : {}), ...(cross !== undefined ? { isCrossRepository: cross } : {}) };
+  return { ...rest, mergeable: parseMergeable(pr.mergeable), ...(head ? { headOid: head } : {}), ...(merge ? { mergeOid: merge } : {}), ...(typeof docsOnly === "boolean" ? { docsOnly } : {}), ...(cross !== undefined ? { isCrossRepository: cross } : {}) };
 }
 
 /** When a pull request left the open list; undefined while it is open. */

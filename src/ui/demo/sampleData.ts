@@ -162,7 +162,7 @@ export const DEMO_PROFILES: SharedProfile[] = [
  * or one without a worktree), and branches with commits `main` lacks. Worktree branches not listed count as unmerged.
  */
 export const DEMO_BRANCHES: Record<string, { merged: string[]; unmerged: [string, number][] }> = {
-  "lantern-infra": { merged: ["chore/upgrade-terraform", "fix/state-lock-timeout", "chore/archive-pin-terraform-providers"], unmerged: [["experiment/plan-cache", 4]] },
+  "lantern-infra": { merged: ["chore/upgrade-terraform", "fix/state-lock-timeout", "chore/archive-pin-terraform-providers", "feat/abandoned-dns-module"], unmerged: [["experiment/plan-cache", 4]] },
   "harbor-web": { merged: ["fix/focus-ring-contrast"], unmerged: [] },
 };
 

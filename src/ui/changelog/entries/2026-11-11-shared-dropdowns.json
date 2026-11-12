@@ -1,0 +1,7 @@
+{
+  "id": "2026-11-11-shared-dropdowns",
+  "date": "2026-11-11",
+  "title": "Searchable dropdowns",
+  "summary": "Dropdowns now share the same accessible, keyboard-friendly controls across filters, settings, setup and forms. Longer lists can be searched locally without changing or saving a value.",
+  "order": 1
+}

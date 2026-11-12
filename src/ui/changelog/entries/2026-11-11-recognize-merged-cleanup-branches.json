@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-11-recognize-merged-cleanup-branches",
+  "date": "2026-11-11",
+  "title": "Clean up branches in one pass",
+  "summary": "On a project's board, **Clean up** also recognizes an exact merged PR head when its merge commit is in your local base, even after later base edits. Prune stale worktree records and delete their eligible branches in one confirmation; kept branches show evidence age and next steps."
+}
