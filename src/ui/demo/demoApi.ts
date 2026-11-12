@@ -6,7 +6,7 @@ import { labelKey, labelProblem, MAX_LABEL_COLORS } from "../../shared/labels.ts
 import { availableName } from "../../shared/nameHints.ts";
 import { summarizeWorkInProgress } from "../../shared/workInProgress.ts";
 import { AUTO_FETCH_SECONDS, DEFAULT_AUTO_FETCH_SECONDS } from "../../shared/types.ts";
-import type { ChangeSnapshot, Config, DismissFile, DismissPreview, FolderPickResult, GithubClone, GithubCloneProgress, GithubRepoEntry, IntegratableRepo, PullBlockingFile, PullResult, RepoConfig, RepoSharedConfig, RepoSnapshot, SharedConfigApplyResult, SharedConfigPreview, SharedProfile, Snapshot, UpdateStatus } from "../../shared/types.ts";
+import type { ChangeSnapshot, Config, DeleteFilesPreview, DeleteFilesResult, DismissFile, DismissPreview, DismissResult, DismissedChange, FolderPickResult, GithubClone, GithubCloneProgress, GithubRepoEntry, IntegratableRepo, PullBlockingFile, PullResult, RepoConfig, RepoSharedConfig, RepoSnapshot, SharedConfigApplyResult, SharedConfigPreview, SharedProfile, Snapshot, UpdateStatus } from "../../shared/types.ts";
 import { parseGithubRepo } from "../../shared/github.ts";
 import { isProjectName } from "../../shared/types.ts";
 import { parseTaskLine } from "../../shared/taskLine.ts";
@@ -194,11 +194,11 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
     return { repoId, current: sharedState(repoId), before, after, digest: demoDigest(before, after), refusal };
   };
 
-  // What the visitor dismissed: gone from the board until a reload. Keyed by repository id and change name.
-  const dismissed = new Set<string>();
+  // In-memory equivalent of the server's dashboard-home dismissal records.
+  const dismissed = new Map<string, DismissedChange>();
   const dismissKey = (repoId: string, name: string) => `${repoId}\0${name}`;
-  const withoutDismissed = (repo: RepoSnapshot): RepoSnapshot =>
-    repo.changes.some((c) => !c.archived && dismissed.has(dismissKey(repo.id, c.name))) ? { ...repo, changes: repo.changes.filter((c) => c.archived || !dismissed.has(dismissKey(repo.id, c.name))) } : repo;
+  const demoIdentity = (repoId: string, change: ChangeSnapshot) => change.created ? `created:${change.created}` : `fallback:demo:${repoId}:${change.name}`;
+  const deletedFileKeys = new Set<string>();
 
   /** The board without session worktrees: what the sessions themselves are validated against. */
   /** Every repository the sample can describe: the tracked ones, plus any that has been integrated in this session. */
@@ -208,7 +208,7 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
     generatedAt,
     repos: config.repos.filter((r) => r.enabled).map((r) => {
       const known = sampleRepo(r.id);
-      return known ? withoutDismissed(known) : emptyRepo(r.id, r.name, r.path);
+      return known ? known : emptyRepo(r.id, r.name, r.path);
     }),
   });
 
@@ -293,7 +293,7 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
           }
           return { ...change, tasks: { done, total, awaiting, ...(awaitingTasks.length ? { awaitingTasks } : {}) } };
         }) } : undefined;
-        const repo = withTasks ? cleanedUp(withoutDismissed({ ...withTasks, name: r.name })) : emptyRepo(r.id, r.name, r.path);
+        const repo = withTasks ? cleanedUp({ ...withTasks, name: r.name, changes: withTasks.changes.filter((change) => !deletedFileKeys.has(dismissKey(r.id, change.name)) || [change.checkout, ...(change.otherCheckouts ?? [])].some((c) => c && !c.isMain)) }) : emptyRepo(r.id, r.name, r.path);
         // A session's worktree is a worktree of its repository, so `git worktree list` — the snapshot — has it too.
         const sessionWorktrees = config.agentSessions.enabled ? demoSessions.gitWorktrees(r.id) : [];
         const worktrees = [...repo.worktrees, ...sessionWorktrees];
@@ -365,16 +365,19 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
     const dir = found.archived ? `${repo.path}/openspec/changes/archive/${found.archived}-${change}` : `${repo.path}/openspec/changes/${change}`;
     return { change: found, dir };
   };
-  /**
-   * The sample's files of an active change in the main checkout, all committed — except a draft's scratch notes, so the
-   * confirmation's "lost for good" can be seen. A change only a linked worktree holds is refused, as by the server.
-   */
+  /** Reversible dismissal preview, including every checkout that holds the logical change. */
   const demoDismissPreview = (repoId: string, name: string): DismissPreview => {
     const { change } = findChange(repoId, name);
     if (change.archived) throw new ApiError(404, `"${name}" is archived; only active changes can be dismissed`);
     const checkouts = [change.checkout, ...(change.otherCheckouts ?? [])].filter((c) => c !== undefined);
-    const holder = checkouts.find((c) => !c.isMain);
-    if (checkouts.length > 0 && !checkouts.some((c) => c.isMain)) throw new ApiError(404, `"${name}" lives only in the worktree on ${holder?.branch ?? holder?.path}`);
+    return { repoId, name, identity: demoIdentity(repoId, change), ...(change.created ? { created: change.created } : {}), copies: checkouts.map((c) => ({ path: c.path, ...(c.branch ? { branch: c.branch } : {}) })), message: "This hides the change from the board. Its files stay in every checkout, and any running agent continues." };
+  };
+  /** File deletion remains a separate, main-checkout-only simulation. */
+  const demoDeleteFilesPreview = (repoId: string, name: string): DeleteFilesPreview => {
+    const { change } = findChange(repoId, name);
+    if (change.archived) throw new ApiError(404, `"${name}" is archived`);
+    const checkouts = [change.checkout, ...(change.otherCheckouts ?? [])].filter((c) => c !== undefined);
+    if (checkouts.length > 0 && !checkouts.some((c) => c.isMain)) throw new ApiError(404, `"${name}" exists only in a linked worktree`);
     const paths = [".openspec.yaml", ...Object.values(sampleArtifactFiles(change)).flatMap((byPath) => Object.keys(byPath))];
     const files: DismissFile[] = paths.sort().map((path) => ({ path, state: "restorable" }));
     if (change.stage === "drafts") files.push({ path: "notes.md", state: "lost" });
@@ -763,16 +766,28 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
       attempt(() => {
         throw new ApiError(409, "the demo has no leftovers to clean up");
       }),
-    // Dismissing in the demo deletes nothing anywhere: the change leaves the in-memory board until a reload.
+    // Dismiss persists only a reversible in-memory record until the demo is reloaded.
     dismissPreview: (repoId, name) => attempt(() => demoDismissPreview(repoId, name)),
-    dismissChange: (repoId, name, fingerprint) =>
+    dismissChange: (repoId, name, identity) =>
       attempt(() => {
         const preview = demoDismissPreview(repoId, name);
-        if (fingerprint !== preview.fingerprint) throw new ApiError(409, `"${name}" changed since it was shown; look at it again before dismissing`);
-        dismissed.add(dismissKey(repoId, name));
-        generatedAt = new Date(now()).toISOString();
-        return { name, staged: true };
+        if (identity !== preview.identity) throw new ApiError(409, `"${name}" changed identity; refresh and try again`);
+        dismissed.set(dismissKey(repoId, name), { repoId, name, identity, ...(preview.created ? { created: preview.created } : {}), dismissedAt: new Date(now()).toISOString() });
+        return { name, identity, dismissed: true as const };
       }),
+    dismissedChanges: (repoId) => attempt(() => ({ changes: [...dismissed.values()].filter((d) => d.repoId === repoId && snapshot().repos.find((r) => r.id === repoId)?.changes.some((c) => c.name === d.name && !c.archived)) })),
+    restoreChange: (repoId, name, identity) => attempt(() => {
+      const record = dismissed.get(dismissKey(repoId, name));
+      if (record?.identity === identity) dismissed.delete(dismissKey(repoId, name));
+      return { name, identity, dismissed: false as const };
+    }),
+    deleteFilesPreview: (repoId, name) => attempt(() => demoDeleteFilesPreview(repoId, name)),
+    deleteChangeFiles: (repoId, name, fingerprint) => attempt(() => {
+      const preview = demoDeleteFilesPreview(repoId, name);
+      if (fingerprint !== preview.fingerprint) throw new ApiError(409, `"${name}" changed since it was shown`);
+      deletedFileKeys.add(dismissKey(repoId, name));
+      return { name, staged: true };
+    }),
     scan: () => {
       generatedAt = new Date(now()).toISOString();
       return reply({ started: true });

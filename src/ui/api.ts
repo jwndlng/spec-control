@@ -1,7 +1,7 @@
 import type { ActivityQuery } from "../shared/activity.ts";
 import type { RepoAgentPatch } from "../shared/repoSettings.ts";
 import type { AgentPermissionProfileId, EditorAvailability, EditorStarted, GithubClone, GithubClonesResponse, GithubRepoList, KeepAwakeStatus } from "../shared/types.ts";
-import type { ActivityPage, AutoMergePromptResult, BranchDeletePreview, BranchDeleteRequest, BranchDeleteResult, ConsoleSession, ProjectConsoleLike, CleanupPreview, CleanupResult, CleanupSelection, ChangeIssueRef, CreateChangeResponse, DismissPreview, DismissResult, EnvironmentReport, EnvironmentView, FolderPickResult, PromptResult, PullRequestsResponse, PullResolve, PullResult, RepoIssues, SessionCleanup, SetupState, ShipRequest, ShipResult, StaleCleanupPreview, StaleCleanupRequest, StaleCleanupResult, StartResult, UpdateStatus, WorkStatus } from "../shared/types.ts";
+import type { ActivityPage, AutoMergePromptResult, BranchDeletePreview, BranchDeleteRequest, BranchDeleteResult, ConsoleSession, ProjectConsoleLike, CleanupPreview, CleanupResult, CleanupSelection, ChangeIssueRef, CreateChangeResponse, DeleteFilesPreview, DeleteFilesResult, DismissedChange, DismissPreview, DismissResult, EnvironmentReport, EnvironmentView, FolderPickResult, PromptResult, PullRequestsResponse, PullResolve, PullResult, RepoIssues, SessionCleanup, SetupState, ShipRequest, ShipResult, StaleCleanupPreview, StaleCleanupRequest, StaleCleanupResult, StartResult, UpdateStatus, WorkStatus } from "../shared/types.ts";
 import type { AgentAvailability, AutoFetchSeconds, ArtifactFileContent, ChangeArtifacts, Config, CreateProjectResponse, DiscoverResult, IntegrationSession, PrTitleConvention, RepoConfig, ScanTriggerResult, Session, SessionAction, SessionWorktree, SharedConfig, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Snapshot } from "../shared/types.ts";
 import { socketOrigin } from "./url.ts";
 
@@ -207,13 +207,13 @@ export interface Api {
    * pending on that session, whose `cleanup` later holds the outcome (cleanup-background).
    */
   staleCleanupInBackground(repoId: string, change: string, request: StaleCleanupRequest, sessionId: string): Promise<{ session: Session; cleanup: SessionCleanup }>;
-  /** Read-only: what dismissing the change would delete, file by file, and whether git could restore each. */
+  /** Read-only preview of reversible logical dismissal. */
   dismissPreview(repoId: string, change: string): Promise<DismissPreview>;
-  /**
-   * Deletes the change's directory from the main checkout and stages that removal — only when it is still what the
-   * preview with `fingerprint` showed; `ApiError` 409 otherwise. The only call that deletes a change.
-   */
-  dismissChange(repoId: string, change: string, fingerprint: string): Promise<DismissResult>;
+  dismissChange(repoId: string, change: string, identity: string): Promise<DismissResult>;
+  dismissedChanges(repoId: string): Promise<{ changes: DismissedChange[] }>;
+  restoreChange(repoId: string, change: string, identity: string): Promise<{ name: string; identity: string; dismissed: false }>;
+  deleteFilesPreview(repoId: string, change: string): Promise<DeleteFilesPreview>;
+  deleteChangeFiles(repoId: string, change: string, fingerprint: string): Promise<DeleteFilesResult>;
   sharedConfig(): Promise<SharedConfig>;
   /** Stores the profiles in the dashboard home; never writes to a repository. */
   saveSharedConfig(config: SharedConfig): Promise<SharedConfig>;
@@ -390,8 +390,12 @@ export const httpApi: Api = {
   staleCleanupInBackground: (repoId, change, request, sessionId) =>
     call(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/stale-cleanup`, { method: "POST", body: JSON.stringify({ ...request, session: sessionId }) }),
   dismissPreview: (repoId, change) => call<DismissPreview>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/dismiss`),
-  dismissChange: (repoId, change, fingerprint) =>
-    call<DismissResult>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/dismiss`, { method: "POST", body: JSON.stringify({ fingerprint }) }),
+  dismissChange: (repoId, change, identity) =>
+    call<DismissResult>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/dismiss`, { method: "POST", body: JSON.stringify({ identity }) }),
+  dismissedChanges: (repoId) => call<{ changes: DismissedChange[] }>(`/api/repos/${encodeURIComponent(repoId)}/dismissed-changes`),
+  restoreChange: (repoId, change, identity) => call(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/restore`, { method: "POST", body: JSON.stringify({ identity }) }),
+  deleteFilesPreview: (repoId, change) => call<DeleteFilesPreview>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/delete-files`),
+  deleteChangeFiles: (repoId, change, fingerprint) => call<DeleteFilesResult>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/delete-files`, { method: "POST", body: JSON.stringify({ fingerprint }) }),
   sharedConfig: () => call<SharedConfig>("/api/shared-config"),
   saveSharedConfig: (config) => call<SharedConfig>("/api/shared-config", { method: "PUT", body: JSON.stringify(config) }),
   previewSharedConfig: (assignments) => call<{ previews: SharedConfigPreview[] }>("/api/shared-config/preview", { method: "POST", body: JSON.stringify({ assignments }) }),
@@ -500,6 +504,10 @@ export const api: Api = {
   staleCleanupInBackground: (...args) => current.staleCleanupInBackground(...args),
   dismissPreview: (...args) => current.dismissPreview(...args),
   dismissChange: (...args) => current.dismissChange(...args),
+  dismissedChanges: (...args) => current.dismissedChanges(...args),
+  restoreChange: (...args) => current.restoreChange(...args),
+  deleteFilesPreview: (...args) => current.deleteFilesPreview(...args),
+  deleteChangeFiles: (...args) => current.deleteChangeFiles(...args),
   sharedConfig: () => current.sharedConfig(),
   saveSharedConfig: (config) => current.saveSharedConfig(config),
   previewSharedConfig: (assignments) => current.previewSharedConfig(assignments),

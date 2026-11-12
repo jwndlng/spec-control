@@ -455,25 +455,22 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
       <header class="session-head">
         {card && repo && ui.config && ui.config.agentSessions.agents.length > 1 && (
           <div class="row change-agent-picker">
-            <label>
-              Agent{" "}
-              <select
-                aria-label="Change agent"
-                value={repo.agent?.changeAgents?.[change ?? ""] ?? ""}
-                disabled={savingAgent}
-                onChange={(event) => void chooseAgent(event.currentTarget.value)}
-              >
-                <option value="">
-                  Project agent (
-                  {ui.config.agentSessions.agents.find((agent) => agent.id === repo.agent?.agentId)?.name ??
-                    ui.config.agentSessions.agents.find((agent) => agent.id === ui.config?.agentSessions.defaultAgent)?.name}
-                  )
-                </option>
-                {ui.config.agentSessions.agents.map((agent) => (
-                  <option value={agent.id}>{agent.name}</option>
-                ))}
-              </select>
-            </label>
+            Agent{" "}
+            <Select aria-label="Change agent"
+              value={repo.agent?.changeAgents?.[change ?? ""] ?? ""}
+              disabled={savingAgent}
+              onChange={(agentId) => void chooseAgent(agentId)}
+              options={[
+                {
+                  value: "",
+                  label: "Project agent (" +
+                    (ui.config.agentSessions.agents.find((agent) => agent.id === repo.agent?.agentId)?.name ??
+                      ui.config.agentSessions.agents.find((agent) => agent.id === ui.config?.agentSessions.defaultAgent)?.name) +
+                    ")",
+                },
+                ...ui.config.agentSessions.agents.map((agent) => ({ value: agent.id, label: agent.name })),
+              ]}
+            />
           </div>
         )}
         {agentError && (

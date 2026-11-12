@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-11-reversible-change-dismissal",
+  "date": "2026-11-11",
+  "title": "Dismiss and restore changes",
+  "summary": "Dismiss hides an active change from the board while preserving its files and agent session. Show dismissed reveals it with Restore; deleting change files remains a separate confirmed action."
+}

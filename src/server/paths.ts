@@ -64,6 +64,11 @@ export function updateCheckPath(): string {
   return join(dashboardHome(), "update-check.json");
 }
 
+/** Reversible change dismissals are dashboard-home state, never stored in a tracked project. */
+export function dismissalsPath(): string {
+  return join(dashboardHome(), "dismissals.json");
+}
+
 export function cachePath(): string {
   return join(dashboardHome(), "cache", "snapshot.json");
 }

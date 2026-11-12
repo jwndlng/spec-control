@@ -95,6 +95,8 @@ export function FilterBar({
   single,
   showing,
   layout,
+  showDismissed = false,
+  onShowDismissed = () => {},
 }: {
   filters: Filters;
   setFilters: (patch: Partial<Filters>) => void;
@@ -105,6 +107,8 @@ export function FilterBar({
   showing: number;
   /** The layout on screen, which the Lanes/Stack switch marks; `filters.layout` may be `auto`. */
   layout: "lanes" | "stack";
+  showDismissed?: boolean;
+  onShowDismissed?: (show: boolean) => void;
 }) {
   const tags = single ? activeTags({ ...filters, repos: [] }, repos) : activeTags(filters, repos);
   return (
@@ -152,8 +156,12 @@ export function FilterBar({
           <span class="switch" aria-hidden="true" />
           Hide merged
         </button>
+        <button type="button" role="switch" aria-checked={showDismissed} class={`control switch-control ${showDismissed ? "on" : ""}`} title="Show dismissed changes with a Restore action" onClick={() => onShowDismissed(!showDismissed)}>
+          <span class="switch" aria-hidden="true" />
+          Show dismissed
+        </button>
         {hasActiveFilters(filters) && (
-          <button type="button" class="btn sm ghost clear-filters" onClick={() => setFilters({ ...EMPTY_FILTERS, layout: filters.layout })}>
+          <button type="button" class="btn sm ghost clear-filters" onClick={() => { setFilters({ ...EMPTY_FILTERS, layout: filters.layout }); onShowDismissed(false); }}>
             <IconRotateCcw size={12} />
             Clear filters
           </button>
