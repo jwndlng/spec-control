@@ -42,6 +42,7 @@ import {
 } from "./sessionState.ts";
 import { ConflictBadge, OpenInEditor, SessionBadgeView, SessionControls, useSessionUi } from "./sessions.tsx";
 import { StaleCleanupOutcome } from "./staleCleanup.tsx";
+import { Select } from "./select.tsx";
 
 export function Copy({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false);

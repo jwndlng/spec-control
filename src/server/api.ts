@@ -1045,7 +1045,8 @@ function cleanupSelection(body: Record<string, unknown>): CleanupSelection | und
 async function getCleanup(state: AppState, repoId: string): Promise<Response> {
   const repo = cleanupTarget(state, repoId);
   if (repo instanceof Response) return repo;
-  return json(await previewCleanup(repo, (await state.sessions?.runningWorktreePaths()) ?? new Set()));
+  const evidence = (await pullRequestStore(state).list([{ id: repo.id, path: repo.path, isGit: true }])).repos[0];
+  return json(await previewCleanup(repo, (await state.sessions?.runningWorktreePaths()) ?? new Set(), evidence));
 }
 
 /** Removes worktrees and deletes branches the user selected and confirmed; the only route that deletes a branch. */
@@ -1055,7 +1056,8 @@ async function postCleanup(state: AppState, req: Request, repoId: string): Promi
   try {
     const selection = cleanupSelection(await readJson(req));
     if (!selection) return json({ error: "expected { worktrees: string[], prune: boolean, branches: { name, commit }[] }" }, 400);
-    const result = await applyCleanup(repo, selection, (await state.sessions?.runningWorktreePaths()) ?? new Set());
+    const evidence = (await pullRequestStore(state).list([{ id: repo.id, path: repo.path, isGit: true }])).repos[0];
+    const result = await applyCleanup(repo, selection, (await state.sessions?.runningWorktreePaths()) ?? new Set(), evidence);
     state.sessions?.forgetWorktrees();
     state.scanner.trigger();
     return json(result);

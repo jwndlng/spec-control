@@ -124,6 +124,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           running sessions still count with the Activity threshold and Hide merged. Clear filters turns it off.
         </p>
         <p>
+          Open a dropdown with a click or Enter, Space or Arrow Down. Arrow keys move through choices; Home and End jump
+          to the first and last enabled choice, and Enter commits it. Short lists also let you type to jump by name. Lists
+          of eight or more choices open a local search field. Escape closes without changing the value; Tab closes and
+          continues through the form. Browsing or searching never saves a setting.
+        </p>
+        <p>
           A card is tinted as <strong>working</strong> while an agent works on its change, and also while the change's pull
           request is open but not ready yet — a draft, a conflict, failing or running checks — whether or not an agent still
           runs. Its badge says why, for example <code>PR #125 · checks running</code>; once every check is green and the
@@ -320,8 +326,14 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           interval.
         </li>
         <li>
-          <strong>Clean up</strong> on a repository's board removes leftover worktrees and local branches whose work is
-          merged. Only what provably holds no work of its own is offered, and nothing goes before you confirm.
+          <strong>Clean up</strong> on a repository's board removes leftover worktrees and local branches after confirmation.
+          Active changes, dirty worktrees, running sessions and external locks are kept. Recent work needs sufficient merge
+          evidence; old unrelated work remains eligible. Alongside local ancestry and file-content comparisons, a fresh
+          cached merged PR can prove the exact branch head merged when its merge commit is in the local base. Cleanup
+          fetches nothing: use <strong>Pull</strong> to update the base and refresh <strong>Pull requests</strong> for current
+          evidence. Kept branches explain the blocker and next step, and show the evidence age when available.
+          A branch held by a stale worktree record can go in the same confirmation as pruning that record;
+          selecting the branch selects pruning, and the branch is checked again after pruning.
         </li>
         <li>
           In a board's <strong>Details</strong>, every worktree whose branch belongs to no active change is marked{" "}

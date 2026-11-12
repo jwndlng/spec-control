@@ -10,6 +10,7 @@ Squash/rebase merges followed by later base edits can defeat cleanup's ancestry/
 - Keep dirty work, running agents, external locks, changed heads, and main/default branches protected.
 - Model stale-record pruning as a dependency and re-evaluate branches in the same confirmed operation.
 - Explain missing evidence separately from proven additional work and offer relevant recovery actions.
+- Preserve current main's active-change and age-based cleanup rules: exact PR proof is an additional way to recognize merged work, not a requirement for deleting old unrelated work. Confirmed by the user after the relevance-based cleanup change merged.
 
 ## Capabilities
 
@@ -24,6 +25,7 @@ None.
 ## Impact
 
 - `src/server/cleanup.ts`
+- `src/server/api.ts` (pass the existing read-only PR cache into cleanup)
 - `src/server/pullRequests.ts (cached merged evidence fields only)`
 - `src/shared/types.ts (cleanup/evidence contracts)`
 - `src/ui/cleanup.tsx`

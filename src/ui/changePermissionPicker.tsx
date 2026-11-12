@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { AgentPermissionProfileId } from "../shared/types.ts";
 import { api } from "./api.ts";
+import { Select } from "./select.tsx";
 import { useSessionUi } from "./sessions.tsx";
 
 export const permissionLabel: Record<AgentPermissionProfileId, string> = {
@@ -44,15 +45,11 @@ export function ChangePermissionPicker({ repoId, changeName }: { repoId: string;
     }
   };
   return <div class="detail-permission-picker">
-    <label>Permission profile for this change <select aria-label="Permission profile for this change" value={selected} disabled={status === "Saving…"} onChange={(event) => {
-      const value = event.currentTarget.value;
-      // Keep the acknowledged selection visible until the server accepts the save, including on refusal.
-      event.currentTarget.value = selected;
-      void save(value);
-    }}>
-      <option value="">Inherit from project ({permissionLabel[inherited]})</option>
-      {Object.entries(permissionLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-    </select></label>
+    <span>Permission profile for this change</span>
+    <Select aria-label="Permission profile for this change" value={selected} disabled={status === "Saving…"} onChange={(value) => void save(value)} options={[
+      { value: "", label: `Inherit from project (${permissionLabel[inherited]})` },
+      ...Object.entries(permissionLabel).map(([value, label]) => ({ value, label })),
+    ]} />
     <p class="hint">Applies only to this change, on the next session start.</p>
     <span role="status">{status}</span>
     {error && <span class="notice danger" role="alert">{error}</span>}

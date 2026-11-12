@@ -27,12 +27,12 @@ test("the threshold lives in the URL as active=, and the former stale parameter 
 
 test("the filter bar captions the selector Activity and selects the threshold from the URL", () => {
   const tree = h(FilterBar, { filters: parseFilters("?active=7"), setFilters: () => {}, repos: [], hues: new Map(), single: true, showing: 0, layout: "lanes" });
-  const control = byTag(tree, "label").find((el) => String(el.props.class ?? "").includes("select-control"));
+  const control = byTag(tree, "div").find((el) => String(el.props.class ?? "").includes("select-control"));
   expect(control).toBeDefined();
   expect(textOf(byTag(control?.props.children, "span"))).toBe("Activity");
   const select = byTag(control?.props.children, "select")[0];
-  expect(select.props.value).toBe(7);
-  const selected = byTag(select.props.children, "option").find((o) => o.props.value === select.props.value);
+  expect(select.props.value).toBe("7");
+  const selected = byTag(select, "option").find((o) => o.props.value === select.props.value);
   expect(textOf(selected?.props.children)).toBe("Last 7 days");
   expect(textOf(tree)).toContain("Last 7 days");
 });

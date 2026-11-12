@@ -12,6 +12,7 @@ import {
   restoreCommand,
   selectionPayload,
   toggleBranch,
+  togglePrune,
   toggleWorktree,
   type Selected,
 } from "./cleanupState.ts";
@@ -84,15 +85,18 @@ function WorktreeRow({ w, selected, onToggle }: { w: CleanupWorktree; selected?:
   );
 }
 
-function BranchRow({ b, selected, onToggle }: { b: CleanupBranch; selected?: boolean; onToggle?: (on: boolean) => void }) {
+export function BranchRow({ b, selected, onToggle }: { b: CleanupBranch; selected?: boolean; onToggle?: (on: boolean) => void }) {
   return (
     <Row selected={selected} onToggle={onToggle}>
       <span>
         <span class="mono">{b.name}</span>
-        {b.mergedBy && <span class="badge">{b.mergedBy === "content" ? "squash-merged" : "merged"}</span>}
+        {b.mergedBy && <span class="badge">{b.mergedBy === "pull-request" ? `merged PR #${b.pullRequest}` : b.mergedBy === "content" ? "squash-merged" : "merged"}</span>}
         {b.lastCommitAt && <span class="hint"> · last commit {relTime(b.lastCommitAt)}</span>}
         {b.removable && b.worktreePath && <span class="hint"> · goes with its worktree</span>}
+        {b.removable && b.prunePath && <span class="hint"> · goes with pruning its stale worktree record</span>}
         {b.reason && <span class="hint"> — {b.reason}</span>}
+        {b.evidenceFetchedAt && <span class="hint"> · PR evidence fetched {relTime(b.evidenceFetchedAt)}</span>}
+        {!b.removable && b.nextAction && <span class="hint"> · {b.nextAction}</span>}
       </span>
     </Row>
   );
@@ -195,8 +199,9 @@ export function CleanupDialog({ repoId, repoName, onClose, onDone }: { repoId: s
               {preview && selected && (
                 <>
                   <div class="hint">
-                    Offered: worktrees without uncommitted files whose work is merged or exists elsewhere, and local branches whose work is in{" "}
-                    <span class="mono">{preview.base ?? "the default branch"}</span>. "Merged" is as of your last fetch — pull first to bring it up to date.
+                    Active changes and recent work without sufficient merge evidence are kept. Old unrelated work remains eligible.
+                    Merge proof uses <span class="mono">{preview.base ?? "the default branch"}</span>, including fresh cached PR evidence whose exact head matches and whose merge commit is in the local base.
+                    "Merged" is as of your last fetch — Pull to update it; Refresh Pull requests for current PR evidence. This dialog does neither.
                     Removing a worktree also deletes its ignored files (dependencies, build output, local environment files). Remote branches are never touched.
                   </div>
                   {!hasRemovable(preview) && <div class="notice">Nothing to clean up.</div>}
@@ -225,7 +230,7 @@ export function CleanupDialog({ repoId, repoName, onClose, onDone }: { repoId: s
                     <>
                       <h3 class="cleanup-heading">Stale worktree records</h3>
                       <label class="check">
-                        <input type="checkbox" checked={selected.prune} onChange={(e) => setSelected({ ...selected, prune: e.currentTarget.checked })} />
+                        <input type="checkbox" checked={selected.prune} onChange={(e) => setSelected(togglePrune(preview, selected, e.currentTarget.checked))} />
                         <span>
                           prune {preview.prunable.length === 1 ? "the record" : `${preview.prunable.length} records`} whose directory is gone:{" "}
                           {preview.prunable.map((p, i) => (
