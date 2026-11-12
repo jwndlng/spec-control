@@ -917,35 +917,64 @@ have been started.
 - **THEN** the response is `403`, no folder is created and no process is started
 
 ### Requirement: Dismiss endpoints
-`GET /api/repos/<id>/changes/<name>/dismiss` SHALL return what dismissing the change would delete, as specified in the `change-dismissal` capability: whether the repository is a git repository, every file in the change's directory in the main checkout with its relative path and whether it is restorable from git or lost for good, the linked worktrees holding a copy of the change with path and branch, and a `fingerprint` of that content. It MUST NOT write anything. `POST /api/repos/<id>/changes/<name>/dismiss` with `{ "fingerprint": <string> }` SHALL re-check and delete the change directory, stage its removal, trigger a rescan of the repository and return `{ "name", "staged" }`. Both routes SHALL accept only a repository that is configured, enabled and whose last scan succeeded — otherwise `404` (unknown) or `409` (not eligible) — and a name matching the change-name pattern other than `archive` — otherwise `400`; the repository's path MUST come from the config, never from the request. A change without an active directory in the main checkout SHALL be answered with `404`, with a reason naming the linked worktree when one holds it. A missing or malformed `fingerprint` SHALL be refused with `400`; a fingerprint that no longer matches, a running agent session for the change and a dismissal of the same change already running SHALL be refused with `409`; every refusal deletes nothing and runs no writing git command. The `POST` route is subject to the same-origin protection. Neither route depends on agent sessions being enabled.
+`GET /api/repos/<id>/changes/<name>/dismiss` SHALL preview reversible dismissal of the server-resolved active change identity and its checkout copies without writing. `POST` to the same route with the preview's identity token SHALL persist dismissal in the dashboard home and return its identity and `dismissed: true`. It SHALL NOT delete or stage files. Both routes SHALL support worktree-only changes and validate configured/enabled/successfully scanned projects and valid nonreserved names. The server SHALL return 400 for malformed input, 404 for unknown changes, and 409 for ineligible projects or changed identities. Mutations SHALL use same-origin protection and SHALL NOT require agent sessions to be enabled.
+
+#### Scenario: Worktree-only dismissal
+- **WHEN** POST confirms the current identity of a change found only in a linked worktree
+- **THEN** it returns 200 with `dismissed: true`, hides the card by default, and changes no repository file
+
+#### Scenario: Old client deletion request
+- **WHEN** a client sends only the legacy deletion fingerprint to the dismissal route
+- **THEN** it receives 400 with an explanation that dismissal is now reversible and no directory is deleted
+
+#### Scenario: Changed identity
+- **WHEN** the preview identity now belongs to an older incarnation of the named change
+- **THEN** POST returns 409 without dismissing the new incarnation
+
+#### Scenario: Foreign origin
+- **WHEN** a foreign origin posts a dismissal
+- **THEN** it receives 403 and no dismissal state changes
 
 #### Scenario: Preview
-- **WHEN** `GET /api/repos/demo-ops/changes/lint-rules/dismiss` is called for a change with one committed and one untracked file
-- **THEN** the response lists both files, the first as restorable and the second as lost for good, with a fingerprint
+- **WHEN** GET dismissal is requested for an active change with committed and untracked files
+- **THEN** it returns the change identity and checkout copies and explains that files are preserved
 
 #### Scenario: Dismiss
-- **WHEN** `POST /api/repos/demo-ops/changes/lint-rules/dismiss` is sent with the fingerprint from the preview
-- **THEN** the response is `200` with `{ "name": "lint-rules", "staged": true }`, the directory is gone and a rescan is triggered
+- **WHEN** POST dismissal confirms the current identity token
+- **THEN** it returns 200 with `dismissed: true`, preserves the directory and index, and updates visibility
 
 #### Scenario: Stale fingerprint
-- **WHEN** a file of the change was modified between the preview and the `POST`
-- **THEN** the response is `409` and the directory is unchanged
+- **WHEN** a caller supplies only the previous destructive API's file fingerprint
+- **THEN** it receives 400 with the revised contract and nothing is deleted or dismissed
 
 #### Scenario: Traversal in the name
 - **WHEN** the name is `..` or `archive`
-- **THEN** the response is `400` and nothing is read or deleted
+- **THEN** the server returns 400 and changes no state
 
 #### Scenario: Worktree-only change
-- **WHEN** either route is called for a change that exists only in a linked worktree on `feat/cloud-deployment`
-- **THEN** the response is `404` with a reason naming `feat/cloud-deployment`, and nothing is deleted
+- **WHEN** either dismissal route names a change found only in a linked worktree
+- **THEN** it supports preview and confirmed dismissal without requiring a main-checkout directory
 
 #### Scenario: Disabled repository
-- **WHEN** either route is called for a disabled repository
-- **THEN** the response is `409` and nothing is read or deleted
+- **WHEN** either route names a disabled repository
+- **THEN** it returns 409 and changes no state
 
-#### Scenario: Foreign origin
-- **WHEN** a page on another origin posts to `/api/repos/<id>/changes/<name>/dismiss`
-- **THEN** the response is `403` and nothing is deleted
+
+### Requirement: Dismissed identities can be listed and restored
+GET `/api/repos/<id>/dismissed-changes` SHALL list project-scoped dismissal records. POST `/api/repos/<id>/changes/<name>/restore` with its recorded identity SHALL remove that dismissal and refresh visibility. Restore SHALL be idempotent, same-origin protected, and scoped to configured projects. It SHALL NOT modify files, git, agent sessions, or remote state.
+
+#### Scenario: Restore twice
+- **WHEN** the same dismissed identity is restored twice
+- **THEN** both operations succeed and the active change appears at most once
+
+
+### Requirement: Deleting change files has a distinct API
+The former destructive dismissal operation SHALL be exposed only through GET/POST `/api/repos/<id>/changes/<name>/delete-files`. Preview, fingerprints, loss warnings, path checks, running-session refusal, deletion scope, and best-effort staging SHALL preserve the previous deletion contract. No caller SHALL infer successful logical dismissal from successful file deletion.
+
+#### Scenario: Deletion confirmation
+- **WHEN** POST delete-files carries a current fingerprint for a safe main-checkout directory
+- **THEN** only its confirmed files are deleted, only their removal is staged, and the result reports staging separately from dismissal
+
 
 ### Requirement: Cleanup endpoints
 `GET /api/repos/<id>/cleanup` SHALL return the repository's cleanup preview as specified in the `repository-cleanup`
