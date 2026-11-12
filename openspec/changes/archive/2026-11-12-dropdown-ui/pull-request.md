@@ -1,0 +1,3 @@
+Replaces native selectors with a shared controlled dropdown across filters, settings, setup, creation forms, and the console Agent picker. Short lists support keyboard navigation and type-ahead; lists of eight or more options support local search. Dropdowns preserve caller values, support disabled options, work within dialogs and the viewport, and dismiss without saving. Help and What's new describe the interactions.
+
+Checks passed: `bun run check` (2,406 tests across 194 files), `bun run build`, `bun run build:demo`, `dist/spec-control --version` (`dev`), and `bunx openspec validate dropdown-ui --strict --json`.

@@ -8,7 +8,9 @@ import { repositoryKey } from "../src/server/git.ts";
 import { worktreesDir } from "../src/server/paths.ts";
 import { scanRepo } from "../src/server/scanner.ts";
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
-import type { CleanupPreview, RepoConfig, StaleCleanupPreview, StaleCleanupRequest } from "../src/shared/types.ts";
+import type { CleanupPreview, RepoConfig, RepoPullRequests, StaleCleanupPreview, StaleCleanupRequest } from "../src/shared/types.ts";
+import { parsePullRequest } from "../src/server/pullRequests.ts";
+import { ghPr, installFakeGh } from "./ghHelpers.ts";
 import { tempDir, treeFingerprint, useTempHome } from "./helpers.ts";
 import { hookLog, installRepoHooks } from "./hookHelpers.ts";
 import { commitFiles, monorepo, squashMerge as squashMergeAt } from "./monorepoHelpers.ts";
@@ -93,6 +95,88 @@ const worktreeOf = (p: CleanupPreview, path: string) => p.worktrees.find((w) => 
 const branchOf = (p: CleanupPreview, name: string) => p.branches.find((b) => b.name === name);
 const branches = (path: string) => git(path, "for-each-ref", "--format=%(refname)", "refs/heads").split("\n").filter(Boolean);
 
+async function mergedEvidenceRepo(kind: "squash" | "rebase" = "squash") {
+  const r = await repoWithOrigin();
+  const wt = await userWorktree(r, "feat/merge-proof");
+  await commit(wt, "proof.txt", "from branch");
+  const headOid = git(wt, "rev-parse", "HEAD");
+  await commit(r.path, "other.txt", "base moved");
+  if (kind === "squash") squashMerge(r, "feat/merge-proof");
+  else git(r.path, "cherry-pick", headOid); // rebase merge: replay onto the advanced base, preserving the PR's original head
+  const mergeOid = git(r.path, "rev-parse", "HEAD");
+  await commit(r.path, "proof.txt", "later base edit");
+  git(r.path, "push", "-q", "origin", "main");
+  git(r.path, "remote", "set-url", "origin", "https://github.com/acme/alpha-infra.git");
+  const evidence: RepoPullRequests = {
+    repoId: r.repo.id, github: "acme/alpha-infra", status: "ok", fetchedAt: new Date().toISOString(),
+    pullRequests: [parsePullRequest(ghPr({ number: 81, state: "MERGED", headRefName: "feat/merge-proof", headRefOid: headOid,
+      mergeCommit: { oid: mergeOid }, isCrossRepository: false, mergedAt: new Date().toISOString() }))!],
+  };
+  return { ...r, wt, headOid, mergeOid, evidence };
+}
+
+for (const kind of ["squash", "rebase"] as const) test(`${kind} PR evidence recognizes the exact merged head after later base edits, with no network or repository writes`, async () => {
+  const r = await mergedEvidenceRepo(kind);
+  const gh = await installFakeGh({ mode: "fail" });
+  try {
+    const before = [await snapshotTree(r.path), await snapshotTree(r.wt)];
+    const p = await previewCleanup(r.repo, new Set(), r.evidence);
+    expect(branchOf(p, "feat/merge-proof")).toMatchObject({ removable: true, mergedBy: "pull-request", pullRequest: 81, worktreePath: r.wt, evidenceFetchedAt: r.evidence.fetchedAt });
+    expect(worktreeOf(p, r.wt)).toMatchObject({ removable: true, work: { state: "merged" } });
+    expect([await snapshotTree(r.path), await snapshotTree(r.wt)]).toEqual(before);
+    expect(await gh.calls()).toEqual([]);
+    const result = await applyCleanup(r.repo, { worktrees: [r.wt], prune: false, branches: [{ name: "feat/merge-proof", commit: r.headOid }] }, new Set(), r.evidence);
+    expect(result.items.map((i) => i.outcome)).toEqual(["removed", "deleted"]);
+    expect(result.items.at(-1)?.commit).toBe(r.headOid);
+    expect(await gh.calls()).toEqual([]);
+  } finally { gh.restore(); }
+});
+
+test("missing, stale, failed, fork, wrong repository/base/head and unfetched evidence never proves recent work merged", async () => {
+  const r = await mergedEvidenceRepo();
+  const pr = r.evidence.pullRequests[0];
+  const patches: Partial<RepoPullRequests>[] = [
+    { repoId: "another" }, { github: "acme/another" }, { status: "failed" }, { fetchedAt: undefined },
+    { fetchedAt: "invalid" }, { fetchedAt: new Date(Date.now() - 6 * 60_000).toISOString() },
+    { fetchedAt: new Date(Date.now() + 60_000).toISOString() }, { pullRequests: [] },
+    ...[{ base: "trunk" }, { isCrossRepository: true }, { isCrossRepository: undefined }, { headOid: "a".repeat(40) },
+      { mergeOid: undefined }, { mergeOid: "--all" }, { mergeOid: r.headOid }, { state: "closed" as const }]
+      .map((patch) => ({ pullRequests: [{ ...pr, ...patch }] })),
+  ];
+  for (const patch of patches) {
+    const evidence = { ...r.evidence, ...patch };
+    const b = branchOf(await previewCleanup(r.repo, new Set(), evidence), "feat/merge-proof")!;
+    expect(b.removable).toBe(false);
+    expect(b.mergedBy).toBeUndefined();
+    expect(b.nextAction).toBeTruthy();
+  }
+  const unfetched = { ...r.evidence, pullRequests: [{ ...pr, mergeOid: r.headOid }] };
+  expect(branchOf(await previewCleanup(r.repo, new Set(), unfetched), "feat/merge-proof")).toMatchObject({ reason: expect.stringContaining("not reachable"), nextAction: expect.stringContaining("Pull") });
+  const result = await applyCleanup(r.repo, { worktrees: [r.wt], prune: false, branches: [{ name: "feat/merge-proof", commit: r.headOid }] }, new Set(), unfetched);
+  expect(result.items.every((i) => i.outcome === "kept")).toBe(true);
+});
+
+test("exact PR evidence preserves dirty work, external locks, running sessions, active changes, main/default branches and moved heads", async () => {
+  const r = await mergedEvidenceRepo();
+  git(r.path, "worktree", "lock", "--reason", "editor", r.wt);
+  expect(worktreeOf(await previewCleanup(r.repo, new Set(), r.evidence), r.wt)).toMatchObject({ removable: false, reason: expect.stringContaining("locked") });
+  git(r.path, "worktree", "unlock", r.wt);
+  expect(worktreeOf(await previewCleanup(r.repo, new Set([r.wt]), r.evidence), r.wt)).toMatchObject({ removable: false, reason: expect.stringContaining("session") });
+  await writeFile(join(r.wt, "untracked.txt"), "keep");
+  expect(worktreeOf(await previewCleanup(r.repo, new Set(), r.evidence), r.wt)).toMatchObject({ removable: false, reason: expect.stringContaining("uncommitted") });
+  await rm(join(r.wt, "untracked.txt"));
+  await mkdir(join(r.path, "openspec/changes/merge-proof"));
+  expect(branchOf(await previewCleanup(r.repo, new Set(), r.evidence), "feat/merge-proof")).toMatchObject({ removable: false, reason: expect.stringContaining("active change") });
+  await rm(join(r.path, "openspec/changes/merge-proof"), { recursive: true });
+  const p = await previewCleanup(r.repo, new Set(), r.evidence);
+  expect(branchOf(p, "main")).toBeUndefined();
+  await commit(r.wt, "additional.txt", "post-merge work");
+  const later = branchOf(await previewCleanup(r.repo, new Set(), r.evidence), "feat/merge-proof")!;
+  expect(later).toMatchObject({ removable: false, reason: expect.stringContaining("head differs"), nextAction: expect.stringContaining("additional commits") });
+  const changed = await applyCleanup(r.repo, { worktrees: [], prune: false, branches: [{ name: "feat/merge-proof", commit: r.headOid }, { name: "main", commit: git(r.path, "rev-parse", "main") }] }, new Set(), r.evidence);
+  expect(changed.items).toMatchObject([{ outcome: "kept", reason: "it changed since the preview" }, { outcome: "kept", reason: "it is the default branch" }]);
+});
+
 test("branch names that could reach git as anything but a branch are refused", () => {
   for (const ok of ["feat/audit-trail", "fix/parser", "chore/archive-x.y", "main"]) expect(isBranchName(ok)).toBe(true);
   for (const bad of ["--all", "-D", "../x", "a..b", "a//b", "a/", "a.", "x.lock", "a/.b", "", " x", 3, undefined]) expect(isBranchName(bad)).toBe(false);
@@ -128,7 +212,7 @@ test("preview: an unmerged branch is kept with its commit count; a fast-forward-
   git(r.path, "push", "-q", "origin", "main");
 
   const p = await previewCleanup(r.repo);
-  expect(branchOf(p, "fix/parser")).toMatchObject({ removable: false, reason: expect.stringContaining("unmerged work from the last 30 days") });
+  expect(branchOf(p, "fix/parser")).toMatchObject({ removable: false, reason: expect.stringContaining("without sufficient merge evidence") });
   expect(branchOf(p, "feat/done")).toMatchObject({ removable: true, mergedBy: "ancestry" });
   expect(worktreeOf(p, wt)).toMatchObject({ managed: false, removable: true });
 });
@@ -165,9 +249,59 @@ test("preview: deleted worktree directories are stale records; locked user workt
 
   const p = await previewCleanup(r.repo, new Set([busy]));
   expect(p.prunable).toEqual([{ path: gone }]);
-  expect(branchOf(p, "feat/gone")).toMatchObject({ removable: false, reason: expect.stringContaining("stale worktree record") });
+  expect(branchOf(p, "feat/gone")).toMatchObject({ removable: true, prunePath: gone });
   expect(worktreeOf(p, locked)).toMatchObject({ removable: false, reason: "it is locked (in use by editor)" });
   expect(worktreeOf(p, busy)).toMatchObject({ removable: false, reason: "an agent session is running in it" });
+});
+
+test("stale records and their branches are removed together, with restore commands and current-head protection", async () => {
+  const r = await repoWithOrigin();
+  const gone = await userWorktree(r, "feat/prunable");
+  await rm(gone, { recursive: true, force: true });
+  const before = branchOf(await previewCleanup(r.repo), "feat/prunable")!;
+  expect(before).toMatchObject({ removable: true, prunePath: gone });
+  const selection = { worktrees: [], prune: true, branches: [{ name: before.name, commit: before.commit }] };
+  const kept = await applyCleanup(r.repo, { ...selection, prune: false });
+  expect(kept.items[0]).toMatchObject({ outcome: "kept", reason: expect.stringContaining("select pruning") });
+  const result = await applyCleanup(r.repo, selection);
+  expect(result.items).toEqual([
+    { kind: "prune", id: gone, outcome: "pruned" },
+    { kind: "branch", id: before.name, outcome: "deleted", commit: before.commit },
+  ]);
+  git(r.path, "branch", before.name, before.commit);
+  expect(git(r.path, "rev-parse", before.name)).toBe(before.commit);
+
+  const moved = await userWorktree(r, "feat/moved-prunable");
+  const old = branchOf(await previewCleanup(r.repo), "feat/moved-prunable")!;
+  await commit(moved, "new.txt", "new work");
+  await rm(moved, { recursive: true, force: true });
+  const changed = await applyCleanup(r.repo, { ...selection, branches: [{ name: old.name, commit: old.commit }] });
+  expect(changed.items.at(-1)).toMatchObject({ outcome: "kept", reason: "it changed since the preview" });
+});
+
+test("failed pruning keeps its dependent branch; running sessions protect stale records' branches", async () => {
+  const r = await repoWithOrigin();
+  const gone = await userWorktree(r, "feat/retained-record");
+  await rm(gone, { recursive: true, force: true });
+  const p = await previewCleanup(r.repo);
+  const b = branchOf(p, "feat/retained-record")!;
+  const bin = await tempDir("osd-prune-refusal-");
+  const realGit = Bun.which("git")!;
+  await writeFile(join(bin, "git"), `#!/bin/sh\ncase "$*" in *"worktree prune"*) echo 'prune refused for test' >&2; exit 1 ;; esac\nexec '${realGit.replace(/'/g, "'\\''")}' "$@"\n`);
+  await chmod(join(bin, "git"), 0o755);
+  const savedPath = process.env.PATH;
+  let result: Awaited<ReturnType<typeof applyCleanup>>;
+  try {
+    process.env.PATH = `${bin}:${savedPath}`;
+    result = await applyCleanup(r.repo, { worktrees: [], prune: true, branches: [{ name: b.name, commit: b.commit }] });
+  } finally {
+    process.env.PATH = savedPath;
+  }
+  expect(result.items).toMatchObject([
+    { outcome: "kept", reason: "git refused to prune" },
+    { outcome: "kept", reason: "git refused to prune the stale worktree record" },
+  ]);
+  expect(branchOf(await previewCleanup(r.repo, new Set([gone])), b.name)).toMatchObject({ removable: false, reason: "an agent session is running in it" });
 });
 
 test("preview: the main checkout's branch is kept, and without a default branch every branch is kept", async () => {
@@ -541,9 +675,9 @@ test("a subfolder project's unmerged branch is kept with its commit count, and a
   git(m.top, "switch", "-q", "main");
 
   const p = await previewCleanup(repo);
-  expect(branchOf(p, "feat/rotate-keys")).toMatchObject({ removable: false, reason: expect.stringContaining("unmerged work from the last 30 days") });
+  expect(branchOf(p, "feat/rotate-keys")).toMatchObject({ removable: false, reason: expect.stringContaining("without sufficient merge evidence") });
   const result = await applyCleanup(repo, { worktrees: [], prune: false, branches: [{ name: "feat/rotate-keys", commit: tip }] });
-  expect(result.items).toMatchObject([{ kind: "branch", id: "feat/rotate-keys", outcome: "kept", reason: expect.stringContaining("unmerged work from the last 30 days") }]);
+  expect(result.items).toMatchObject([{ kind: "branch", id: "feat/rotate-keys", outcome: "kept", reason: expect.stringContaining("without sufficient merge evidence") }]);
   expect(branches(m.top)).toContain("refs/heads/feat/rotate-keys");
 
   squashMergeAt(m.top, "feat/rotate-keys");

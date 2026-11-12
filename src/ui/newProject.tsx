@@ -7,6 +7,7 @@ import { focusOnce } from "./focus.ts";
 import { IconFolderGit, IconPlus } from "./icons.tsx";
 import { Modal } from "./modal.tsx";
 import { useSessionUi } from "./sessions.tsx";
+import { Select } from "./select.tsx";
 
 /** Joins a root and a name for display, without doubling a trailing separator. */
 const joined = (root: string, name: string) => `${root.replace(/[\\/]+$/, "")}/${name}`;
@@ -89,23 +90,11 @@ export function NewProjectDialog({ roots, onClose }: { roots: string[]; onClose:
       <form class="new-change" onSubmit={onSubmit} aria-label="New project">
         {roots.length > 1 && (
           <div class="row">
-            <label class="new-change-project">
+            <div class="new-change-project">
               <span>Workspace root</span>
-              <select
-                class="input"
-                value={validRoot}
-                ref={focusRoot ? focusFirst : undefined}
-                onChange={(e) => setRoot((e.currentTarget as HTMLSelectElement).value)}
-              >
-                <option value="">Choose a workspace root</option>
-                {roots.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
+              <Select class="input" aria-label="Workspace root" value={validRoot} triggerRef={focusRoot ? focusFirst : undefined} onChange={setRoot} options={[{ value: "", label: "Choose a workspace root" }, ...roots.map((root) => ({ value: root, label: root }))]} />
               {validRoot === "" && <span class="hint">choose a workspace root</span>}
-            </label>
+            </div>
           </div>
         )}
         <div class="row">

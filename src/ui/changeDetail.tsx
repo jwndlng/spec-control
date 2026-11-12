@@ -5,7 +5,6 @@ import type { ComponentChildren, RefObject } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentPermissionProfileId, ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, DeleteFilesPreview, DeleteFilesResult, DismissPreview, DismissResult, RepoSnapshot, Snapshot, TaskProgress } from "../shared/types.ts";
 import { parseTaskLine } from "../shared/taskLine.ts";
-import { ChangePermissionPicker } from "./changePermissionPicker.tsx";
 import { ApiError, api } from "./api.ts";
 import { CopyButton, CopyRefButton, Meter } from "./kanban.tsx";
 import { type LinkResolver, renderMarkdown } from "./markdown.tsx";
@@ -25,6 +24,7 @@ import { duplicateNotice, staleHint, staleReason } from "./staleState.ts";
 import { deletedFilesNotice, dismissedNotice, dismissOffer } from "./dismissState.ts";
 import { checkoutHint, daysSince, leftoverHint, pendingArchiveHint, relTime, splitPathLabel } from "./format.ts";
 import { currentQuery, followInApp, href, hrefWithQuery, navigate, replaceQuery } from "./url.ts";
+import { dismissActiveSelect } from "./select.tsx";
 
 export function artifactLabel(id: string): string {
   return id.replace(/[-_]+/g, " ").replace(/^./, (c) => c.toUpperCase());
@@ -195,6 +195,11 @@ export function closeOnEscape(onClose: () => void): (e: KeyboardEvent) => void {
     // Duck-typed rather than `instanceof Element`, so this stays a pure function testable without a DOM.
     const target = e.target as { closest?: (selector: string) => unknown } | null;
     if (typeof target?.closest === "function" && target.closest(TERMINAL_SELECTOR)) return;
+    if (dismissActiveSelect()) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     e.preventDefault();
     onClose();
   };
@@ -645,7 +650,6 @@ export function ChangeDetail({
   const repo = snapshot?.repos.find((r) => r.id === repoId);
   const change = repo?.changes.find((c) => c.name === changeName);
   const known = change !== undefined;
-  const repoConfig = ui.config?.repos.find((r) => r.id === repoId);
 
   // The console's own inputs. A worktree outlives its change, so a change the snapshot no longer carries can still
   // have one — that is what keeps an interrupted archive session reachable once its change is gone from the board.
@@ -789,7 +793,7 @@ export function ChangeDetail({
         onDeleteFiles={onDismissed ? () => setDeletingFiles(true) : undefined}
         pullRequest={detailPullRequest(change, pullRequests.data)}
       />
-      {!change.archived && repoConfig && ui.config?.agentSessions.enabled && <ChangePermissionPicker key={`${repoId}/${changeName}`} repoId={repoId} changeName={changeName} />}
+      {!change.archived && ui.config?.agentSessions.enabled && <ChangePermissionPicker key={`${repoId}/${changeName}`} repoId={repoId} changeName={changeName} />}
       <StaleNotice repo={repo} change={change} />
       {(listing || hasConsole) && (
         <ArtifactTabs artifacts={listing?.artifacts ?? []} selected={selection.artifactId} onSelect={(id) => setQuery({ artifact: id, file: undefined })} console={hasConsole} />

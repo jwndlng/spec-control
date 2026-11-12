@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { type AppState, createFetchHandler } from "../src/server/api.ts";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import { Scanner } from "../src/server/scanner.ts";
+import { pullRequestsCachePath } from "../src/server/paths.ts";
+import { parsePullRequest, PullRequests } from "../src/server/pullRequests.ts";
+import { ghPr, installFakeGh } from "./ghHelpers.ts";
 import type { CleanupPreview, CleanupResult, RepoConfig } from "../src/shared/types.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
 import { git, tempGitRepo } from "./sessionHelpers.ts";
@@ -108,4 +111,35 @@ test("preview, then apply, with agent sessions disabled", async () => {
   ]);
   expect(existsSync(merged)).toBe(false);
   expect(git(active.path, "branch", "--list", "feat/finished")).toBe("");
+});
+
+test("cleanup API consumes the existing PR cache without refreshing it, including after a cache-only restart", async () => {
+  const wt = join(await tempDir("osd-cached-proof-"), "proof");
+  git(active.path, "worktree", "add", "-q", "-b", "feat/cache-proof", wt, "main");
+  await writeFile(join(wt, "proof.txt"), "merged work");
+  git(wt, "add", "-A");
+  git(wt, "commit", "-qm", "branch work");
+  const headOid = git(wt, "rev-parse", "HEAD");
+  git(active.path, "merge", "--squash", "feat/cache-proof");
+  git(active.path, "commit", "-qm", "squash");
+  const mergeOid = git(active.path, "rev-parse", "HEAD");
+  await writeFile(join(active.path, "proof.txt"), "later base edits");
+  git(active.path, "commit", "-qam", "base edits");
+  git(active.path, "remote", "add", "origin", "https://github.com/acme/alpha-infra.git");
+  const fetchedAt = new Date().toISOString();
+  await writeFile(pullRequestsCachePath(), JSON.stringify({ version: 1, repos: { "acme/alpha-infra": { fetchedAt, pullRequests: [parsePullRequest(ghPr({
+    number: 81, state: "MERGED", headRefName: "feat/cache-proof", headRefOid: headOid,
+    mergeCommit: { oid: mergeOid }, isCrossRepository: false,
+  }))] } } }));
+  state.pullRequests = new PullRequests();
+  const gh = await installFakeGh({ mode: "fail" });
+  try {
+    const path = `/api/repos/${active.id}/cleanup`;
+    const preview = (await send("GET", path)).body as CleanupPreview;
+    expect(preview.branches.find((b) => b.name === "feat/cache-proof")).toMatchObject({ removable: true, mergedBy: "pull-request", pullRequest: 81, evidenceFetchedAt: fetchedAt });
+    const result = await send("POST", path, { worktrees: [wt], prune: false, branches: [{ name: "feat/cache-proof", commit: headOid }] });
+    expect(result.status).toBe(200);
+    expect((result.body as CleanupResult).items.map((i) => i.outcome)).toEqual(["removed", "deleted"]);
+    expect(await gh.calls()).toEqual([]);
+  } finally { gh.restore(); }
 });

@@ -1,6 +1,6 @@
 import { readShipTaskDocument, readShipTasks, tasksSettled } from "./taskSummary.ts";
 import { confirmAllTasks } from "../taskConfirmation.ts";
-import { FINISH_TASKS_PROMPT, FINISH_CHECKS_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, type ShipRequest } from "../../shared/types.ts";
+import { FINISH_TASKS_PROMPT, FINISH_CHECKS_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, type ShipOperationStage, type ShipRequest, type ShipOperationStatus } from "../../shared/types.ts";
 // Session manager (design.md D15–D17). A session is an agent CLI running in a terminal inside the change's own git
 // worktree. The manager creates the worktree, starts the process, keeps a scrollback for late or returning viewers,
 // fans output out to attached terminals and takes their input. It does not interpret what the agent prints.
@@ -188,6 +188,8 @@ export interface ManagerDeps {
   store?: SessionStore;
   refreshPullRequests?: (repoId: string) => Promise<void>;
   listPullRequests?: (repoId: string) => Promise<readonly PullRequest[]>;
+  /** Test seam for deterministic PR creation outcomes, including a timed-out/unknown remote result. */
+  createPullRequest?: typeof createPullRequest;
   /** Test seam; the real delay gives an agent time to draw its prompt before text is typed into it. */
   typePromptDelayMs?: number;
   /** Test seam for `ECHO_WINDOW_MS`. */
@@ -233,6 +235,7 @@ export class SessionManager {
   /** `end` started by an exit handler and not finished yet: its writes are what `close` and `shutdown` must wait for. */
   private ending = new Map<string, Promise<void>>();
   private readonly store: SessionStore;
+  private readonly shipping = new Map<string, Promise<ShipResult>>();
   private worktreeCache?: { at: number; list: Promise<SessionWorktree[]> };
 
   private async permissionLaunch(session: ChangeSession, agent: AgentProfile, prompt: string, resume?: string[], model?: string, rawArgv?: string[]): Promise<Launch> {
@@ -263,6 +266,15 @@ export class SessionManager {
   async init(): Promise<void> {
     for (const session of await this.store.loadAll()) {
       this.sessions.set(session.id, session);
+      if (session.shipOperation?.state === "running") {
+        session.shipOperation = {
+          ...session.shipOperation,
+          state: "unknown",
+          updatedAt: new Date().toISOString(),
+          error: "The dashboard stopped during Ship; the remote outcome is unknown. Retry Ship to reconcile it.",
+        };
+        await this.touch(session);
+      }
       if (session.state === "running") await this.end(session, null, "the dashboard was restarted while this session was running");
       // A background cleanup cannot outlive the dashboard either: say it was cut off, so the user can confirm it again.
       if (!isChangeless(session) && BackgroundCleanups.markInterrupted(session)) await this.touch(session);
@@ -973,10 +985,38 @@ export class SessionManager {
   }
 
   ship(id: string, options?: ShipRequest): Promise<ShipResult> {
-    return this.lockedFor(id, () => this.shipNow(id, options));
+    if (options?.finishTasks) return this.lockedFor(id, () => this.shipNow(id, options));
+    const current = this.shipping.get(id);
+    if (current) return current;
+    const session = this.get(id);
+    const now = new Date().toISOString();
+    const status: ShipOperationStatus = {
+      operationId: randomUUID(), state: "running", stage: "preparing", startedAt: now, updatedAt: now,
+      committed: false, pushed: false,
+    };
+    session.shipOperation = status;
+    this.touchLater(session);
+    const update = (stage: ShipOperationStage, patch: Partial<ShipOperationStatus> = {}) => {
+      Object.assign(status, patch, { stage, updatedAt: new Date().toISOString() });
+      session.shipOperation = status;
+      this.touchLater(session);
+    };
+    let promise!: Promise<ShipResult>;
+    promise = this.lockedFor(id, () => this.shipNow(id, options, false, update)).then((result) => {
+      update("done", { state: "succeeded", pullRequestState: result.pullRequestState, pullRequestUrl: result.pullRequestUrl });
+      return result;
+    }, (error: unknown) => {
+      if (status.state === "unknown") this.touchLater(session);
+      else update("failed", { state: "failed", failedStage: status.stage === "failed" || status.stage === "done" ? undefined : status.stage, error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }).finally(() => {
+      if (this.shipping.get(id) === promise) this.shipping.delete(id);
+    });
+    this.shipping.set(id, promise);
+    return promise;
   }
 
-  private async shipNow(id: string, options?: ShipRequest, automatic = false): Promise<ShipResult> {
+  private async shipNow(id: string, options?: ShipRequest, automatic = false, progress?: (stage: ShipOperationStage, patch?: Partial<ShipOperationStatus>) => void): Promise<ShipResult> {
     const session = this.get(id);
     if (isChangeless(session)) throw new SessionError(409, notAChange(session));
     if (session.inPlace) throw new SessionError(409, "this session runs in a folder that is not a git repository — there is no branch to commit or push");
@@ -1080,19 +1120,25 @@ export class SessionManager {
 
     // 3. Stage and commit uncommitted changes if dirty
     if (hasUncommitted) {
+      progress?.("committing");
       const commitRes = await commitWorktreeAll(session.worktreePath, title);
       if (!commitRes.ok) {
         throw new SessionError(500, commitRes.err || "could not commit worktree changes");
       }
     }
+    progress?.("pushing", { committed: true });
 
     // 4. Push branch to origin if configured
     const origin = await originUrl(repo.path);
     if (origin) {
       const pushRes = await pushWorktreeBranch(session.worktreePath, branch, "origin");
       if (!pushRes.ok) {
+        if (pushRes.timedOut) progress?.("pushing", { state: "unknown", pushUnknown: true, error: "git push timed out; the remote outcome is unknown. Retry Ship to verify it." });
         throw new SessionError(500, pushRes.err || "could not push branch to origin");
       }
+      progress?.("pull-request", { pushed: true });
+    } else {
+      progress?.("pull-request");
     }
 
     // 5. Open or reuse pull request on GitHub
@@ -1110,7 +1156,7 @@ export class SessionManager {
         pullRequestNumber = existingPr.number;
       } else {
         const defBranch = (await defaultBranch(repo.path)) ?? "main";
-        const prRes = await createPullRequest(github, {
+        const prRes = await (this.deps.createPullRequest ?? createPullRequest)(github, {
           head: branch,
           base: defBranch,
           title,
@@ -1122,6 +1168,10 @@ export class SessionManager {
           const match = pullRequestUrl?.match(/\/pull\/(\d+)$/);
           pullRequestNumber = match ? Number(match[1]) : undefined;
         } else {
+          if (prRes.failure?.outcomeUnknown) {
+            progress?.("pull-request", { state: "unknown", error: "gh timed out; the pull request may have been created. Retry Ship to check for it." });
+            throw new SessionError(504, "gh timed out; pull request outcome is unknown. Retry Ship to check for an existing pull request.");
+          }
           const existsMatch = prRes.failure?.reason.match(/https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/(\d+)/);
           if (existsMatch) {
             pullRequestState = "existing";
@@ -1132,6 +1182,7 @@ export class SessionManager {
           }
         }
       }
+      progress?.("refreshing", { pullRequestState, ...(pullRequestUrl ? { pullRequestUrl } : {}) });
       await this.deps.refreshPullRequests?.(repo.id);
     }
 

@@ -124,6 +124,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           running sessions still count with the Activity threshold and Hide merged. Clear filters turns it off.
         </p>
         <p>
+          Open a dropdown with a click or Enter, Space or Arrow Down. Arrow keys move through choices; Home and End jump
+          to the first and last enabled choice, and Enter commits it. Short lists also let you type to jump by name. Lists
+          of eight or more choices open a local search field. Escape closes without changing the value; Tab closes and
+          continues through the form. Browsing or searching never saves a setting.
+        </p>
+        <p>
           A card is tinted as <strong>working</strong> while an agent works on its change, and also while the change's pull
           request is open but not ready yet — a draft, a conflict, failing or running checks — whether or not an agent still
           runs. Its badge says why, for example <code>PR #125 · checks running</code>; once every check is green and the
@@ -212,6 +218,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             Fast-forward includes the same completion instructions and automatically ships only when every task is marked complete.
             <strong>Ship</strong> commits, pushes and opens the pull request on the server, after the task review. <strong>Finish tasks</strong> and <strong>Finish checks</strong> send requests to the agent; they do not ship.
             Draft artifacts prepares `openspec/changes/&lt;change&gt;/pull-request.md`, Implement updates it with delivered behavior and checks run, and Ship uses it as the body of a new pull request. Older changes without the file get a short fallback; an existing pull request is left alone.
+            While Ship runs, its status reports the server-observed step. A failed Ship keeps verified commit or push progress and can be retried; after a reload, the status and pull request link are recovered from the session. A timed-out remote operation is marked unknown until retry reconciles its outcome.
             <strong>Resolve conflicts</strong> asks the agent to bring the branch up to date.
             An archived card whose work is still pending offers <strong>Continue archive</strong> to open its console:
             resume its session to review unfinished tasks, or use <strong>Ship</strong> to open its pull request.
@@ -319,8 +326,14 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           interval.
         </li>
         <li>
-          <strong>Clean up</strong> on a repository's board removes leftover worktrees and local branches whose work is
-          merged. Only what provably holds no work of its own is offered, and nothing goes before you confirm.
+          <strong>Clean up</strong> on a repository's board removes leftover worktrees and local branches after confirmation.
+          Active changes, dirty worktrees, running sessions and external locks are kept. Recent work needs sufficient merge
+          evidence; old unrelated work remains eligible. Alongside local ancestry and file-content comparisons, a fresh
+          cached merged PR can prove the exact branch head merged when its merge commit is in the local base. Cleanup
+          fetches nothing: use <strong>Pull</strong> to update the base and refresh <strong>Pull requests</strong> for current
+          evidence. Kept branches explain the blocker and next step, and show the evidence age when available.
+          A branch held by a stale worktree record can go in the same confirmation as pruning that record;
+          selecting the branch selects pruning, and the branch is checked again after pruning.
         </li>
         <li>
           In a board's <strong>Details</strong>, every worktree whose branch belongs to no active change is marked{" "}
