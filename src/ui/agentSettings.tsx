@@ -8,6 +8,7 @@ import { api } from "./api.ts";
 import { addShortcut, moveShortcut, removeShortcut, restoredShortcuts } from "./quickReplies.ts";
 import { argLinesText, argLinesValue, newAgentProfile } from "./sessionState.ts";
 import { followInApp, href } from "./url.ts";
+import { Select } from "./select.tsx";
 
 /** Keep typed spaces until save; clearing removes the override. */
 export function ModelField({
@@ -22,7 +23,7 @@ export function ModelField({
   onChange: (model: string | undefined) => void;
 }) {
   return (
-    <label class="agent-tools">
+    <div class="agent-tools">
       <span class="agent-prompt-label">{label}</span>
       <input
         class="input mono"
@@ -31,7 +32,7 @@ export function ModelField({
         placeholder={inherited ? `Inherit: ${inherited}` : "CLI default"}
         onInput={(e) => onChange(e.currentTarget.value === "" ? undefined : e.currentTarget.value)}
       />
-    </label>
+    </div>
   );
 }
 
@@ -350,17 +351,10 @@ export function withoutAgent(settings: AgentSessionsConfig, id: string): AgentSe
 export function ConsoleAgentPicker({ settings, onChange }: { settings: AgentSessionsConfig; onChange: (consoleAgent: string | undefined) => void }) {
   if (settings.agents.length < 2) return null;
   return (
-    <label class="agent-tools">
+    <div class="agent-tools">
       <span class="hint">The agent the console starts. A running console keeps its own until you end it.</span>
-      <select class="input" aria-label="Console agent" value={settings.consoleAgent ?? ""} onChange={(e) => onChange(e.currentTarget.value || undefined)}>
-        <option value="">default agent</option>
-        {settings.agents.map((a) => (
-          <option key={a.id} value={a.id}>
-            {a.name}
-          </option>
-        ))}
-      </select>
-    </label>
+      <Select class="input" aria-label="Console agent" value={settings.consoleAgent ?? ""} onChange={(value) => onChange(value || undefined)} options={[{ value: "", label: "default agent" }, ...settings.agents.map((agent) => ({ value: agent.id, label: agent.name }))]} />
+    </div>
   );
 }
 
@@ -497,11 +491,9 @@ export function AgentSettings({ draft, update }: Props) {
 
       <fieldset class="agent-fields" disabled={!settings.enabled}>
         <h3>Agent permissions</h3>
-        <label class="agent-tools"><span>Default permission profile</span>
-          <select value={settings.defaultPermissionProfile ?? "minimum"} onChange={(e) => set({ defaultPermissionProfile: e.currentTarget.value as AgentSessionsConfig["defaultPermissionProfile"] })}>
-            <option value="minimum">Minimum</option><option value="less-friction">Less friction (recommended)</option><option value="full-automation">Full automation</option>
-          </select>
-        </label>
+        <div class="agent-tools"><span>Default permission profile</span>
+          <Select aria-label="Default permission profile" value={settings.defaultPermissionProfile ?? "minimum"} onChange={(value) => set({ defaultPermissionProfile: value as AgentSessionsConfig["defaultPermissionProfile"] })} options={[{ value: "minimum", label: "Minimum" }, { value: "less-friction", label: "Less friction (recommended)" }, { value: "full-automation", label: "Full automation" }]} />
+        </div>
         {settings.defaultPermissionProfile === "full-automation" && <>
           <label class="check"><input type="checkbox" checked={settings.optInMerge === true} onChange={(e) => set({ optInMerge: e.currentTarget.checked })} />Autonomous pull request merge</label>
           <label class="check"><input type="checkbox" checked={settings.optInCleanup === true} onChange={(e) => set({ optInCleanup: e.currentTarget.checked })} />Autonomous worktree and branch cleanup</label>

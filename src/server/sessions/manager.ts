@@ -1,5 +1,6 @@
-import { readShipTasks, tasksSettled } from "./taskSummary.ts";
-import { FINISH_TASKS_PROMPT, FINISH_CHECKS_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, type ShipRequest } from "../../shared/types.ts";
+import { readShipTaskDocument, readShipTasks, tasksSettled } from "./taskSummary.ts";
+import { confirmAllTasks } from "../taskConfirmation.ts";
+import { FINISH_TASKS_PROMPT, FINISH_CHECKS_PROMPT, CONVENTIONAL_COMMITS_SHIP_SENTENCE, type ShipOperationStage, type ShipRequest, type ShipOperationStatus } from "../../shared/types.ts";
 // Session manager (design.md D15–D17). A session is an agent CLI running in a terminal inside the change's own git
 // worktree. The manager creates the worktree, starts the process, keeps a scrollback for late or returning viewers,
 // fans output out to attached terminals and takes their input. It does not interpret what the agent prints.
@@ -183,9 +184,12 @@ interface Live {
 export interface ManagerDeps {
   getConfig: () => Config;
   getSnapshot: () => Snapshot;
+  triggerScan?: () => void;
   store?: SessionStore;
   refreshPullRequests?: (repoId: string) => Promise<void>;
   listPullRequests?: (repoId: string) => Promise<readonly PullRequest[]>;
+  /** Test seam for deterministic PR creation outcomes, including a timed-out/unknown remote result. */
+  createPullRequest?: typeof createPullRequest;
   /** Test seam; the real delay gives an agent time to draw its prompt before text is typed into it. */
   typePromptDelayMs?: number;
   /** Test seam for `ECHO_WINDOW_MS`. */
@@ -227,9 +231,11 @@ export function defaultShipTitle(
 export class SessionManager {
   private sessions = new Map<string, Session>();
   private live = new Map<string, Live>();
+  private shipPreviews = new Map<string, { token: string; fingerprint: string; at: number }>();
   /** `end` started by an exit handler and not finished yet: its writes are what `close` and `shutdown` must wait for. */
   private ending = new Map<string, Promise<void>>();
   private readonly store: SessionStore;
+  private readonly shipping = new Map<string, Promise<ShipResult>>();
   private worktreeCache?: { at: number; list: Promise<SessionWorktree[]> };
 
   private async permissionLaunch(session: ChangeSession, agent: AgentProfile, prompt: string, resume?: string[], model?: string, rawArgv?: string[]): Promise<Launch> {
@@ -260,6 +266,15 @@ export class SessionManager {
   async init(): Promise<void> {
     for (const session of await this.store.loadAll()) {
       this.sessions.set(session.id, session);
+      if (session.shipOperation?.state === "running") {
+        session.shipOperation = {
+          ...session.shipOperation,
+          state: "unknown",
+          updatedAt: new Date().toISOString(),
+          error: "The dashboard stopped during Ship; the remote outcome is unknown. Retry Ship to reconcile it.",
+        };
+        await this.touch(session);
+      }
       if (session.state === "running") await this.end(session, null, "the dashboard was restarted while this session was running");
       // A background cleanup cannot outlive the dashboard either: say it was cut off, so the user can confirm it again.
       if (!isChangeless(session) && BackgroundCleanups.markInterrupted(session)) await this.touch(session);
@@ -748,7 +763,9 @@ export class SessionManager {
     };
     this.sessions.set(session.id, session);
     await this.store.saveMeta(session);
-    this.start(session, launchWithoutPrompt(agent, resolveModel(config, agent)), agentEnv(agent, process.env));
+    const policy = resolvePermissionPolicy(config, repo.id);
+    const permissionArgs = permissionAdapters.resolve(agent.id).preview(agent, policy).args;
+    this.start(session, withPermissionArgs(agent, launchWithoutPrompt(agent, resolveModel(config, agent)), permissionArgs), agentEnv(agent, process.env));
     for (const removed of await this.store.prune(this.list())) this.sessions.delete(removed);
     return { session, created: true };
   }
@@ -936,8 +953,6 @@ export class SessionManager {
     });
   }
 
-  private readonly shipPreviews = new Map<string, { token: string; fingerprint: string; at: number }>();
-
   private sessionTasks(session: ChangeSession) {
     const scanned = this.deps.getSnapshot().repos.find((r) => r.id === session.repoId);
     return readShipTasks(session.worktreePath, session.change, scanned?.framework);
@@ -970,10 +985,38 @@ export class SessionManager {
   }
 
   ship(id: string, options?: ShipRequest): Promise<ShipResult> {
-    return this.lockedFor(id, () => this.shipNow(id, options));
+    if (options?.finishTasks) return this.lockedFor(id, () => this.shipNow(id, options));
+    const current = this.shipping.get(id);
+    if (current) return current;
+    const session = this.get(id);
+    const now = new Date().toISOString();
+    const status: ShipOperationStatus = {
+      operationId: randomUUID(), state: "running", stage: "preparing", startedAt: now, updatedAt: now,
+      committed: false, pushed: false,
+    };
+    session.shipOperation = status;
+    this.touchLater(session);
+    const update = (stage: ShipOperationStage, patch: Partial<ShipOperationStatus> = {}) => {
+      Object.assign(status, patch, { stage, updatedAt: new Date().toISOString() });
+      session.shipOperation = status;
+      this.touchLater(session);
+    };
+    let promise!: Promise<ShipResult>;
+    promise = this.lockedFor(id, () => this.shipNow(id, options, false, update)).then((result) => {
+      update("done", { state: "succeeded", pullRequestState: result.pullRequestState, pullRequestUrl: result.pullRequestUrl });
+      return result;
+    }, (error: unknown) => {
+      if (status.state === "unknown") this.touchLater(session);
+      else update("failed", { state: "failed", failedStage: status.stage === "failed" || status.stage === "done" ? undefined : status.stage, error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }).finally(() => {
+      if (this.shipping.get(id) === promise) this.shipping.delete(id);
+    });
+    this.shipping.set(id, promise);
+    return promise;
   }
 
-  private async shipNow(id: string, options?: ShipRequest, automatic = false): Promise<ShipResult> {
+  private async shipNow(id: string, options?: ShipRequest, automatic = false, progress?: (stage: ShipOperationStage, patch?: Partial<ShipOperationStatus>) => void): Promise<ShipResult> {
     const session = this.get(id);
     if (isChangeless(session)) throw new SessionError(409, notAChange(session));
     if (session.inPlace) throw new SessionError(409, "this session runs in a folder that is not a git repository — there is no branch to commit or push");
@@ -988,19 +1031,39 @@ export class SessionManager {
     if (!SHIPPABLE_WORK.includes(work.state)) throw new SessionError(409, `there is nothing to ship (${work.state})`);
 
     if (options?.finishTasks) return this.finishTasksNow(session);
-    const { summary, fingerprint } = await this.sessionTasks(session);
+    const scanned = this.deps.getSnapshot().repos.find((r) => r.id === session.repoId);
+    const document = await readShipTaskDocument(session.worktreePath, session.change, scanned?.framework);
+    if (!document.artifactsReady) throw new SessionError(409, "Required change artifacts are not ready in this checkout.");
+    const preflightRequired = !tasksSettled(document.summary);
+    if (automatic && preflightRequired && !isProposalSession(session)) throw new SessionError(409, "Tasks are unresolved or unverified. Finish tasks first.");
+    if (!automatic && preflightRequired) {
+      const preview = this.shipPreviews.get(id);
+      const confirmed = preview && options?.confirmation === preview.token && document.fingerprint === preview.fingerprint && Date.now() - preview.at <= 5 * 60_000;
+      if (!confirmed) {
+        const token = randomUUID();
+        this.shipPreviews.set(id, { token, fingerprint: document.fingerprint, at: Date.now() });
+        return { ...session, shipped: false, submitted: false, autoMerge: false, autoMergeInstructionIncluded: false, preflight: { token, summary: document.summary } };
+      }
+      if (options?.confirmAllTasks) {
+        if (!document.summary.verified || document.summary.truncated || !document.tasksPath || !document.changeDir) throw new SessionError(409, document.summary.reason ?? "The task file cannot be safely confirmed.");
+        const confirmedTasks = await confirmAllTasks(document.tasksPath, session.worktreePath, document.changeDir, document.content);
+        if (confirmedTasks !== "ok") {
+          const fresh = await readShipTasks(session.worktreePath, session.change, scanned?.framework);
+          const token = randomUUID();
+          this.shipPreviews.set(id, { token, fingerprint: fresh.fingerprint, at: Date.now() });
+          return { ...session, shipped: false, submitted: false, autoMerge: false, autoMergeInstructionIncluded: false, preflight: { token, summary: fresh.summary } };
+        }
+        this.deps.triggerScan?.();
+      }
+      this.shipPreviews.delete(id);
+    } else if (options?.confirmAllTasks) {
+      throw new SessionError(409, "There are no unresolved tasks to mark complete.");
+    }
+    const { summary, fingerprint, artifactsReady } = await this.sessionTasks(session);
+    if (!artifactsReady) throw new SessionError(409, "Required change artifacts are not ready in this checkout.");
     const unresolved = !tasksSettled(summary);
     const proposalAutoShip = automatic && isProposalSession(session);
-    if (unresolved && !proposalAutoShip) {
-      if (automatic) throw new SessionError(409, "Tasks are unresolved or unverified. Use Ship to review them, or Finish tasks first.");
-      const preview = this.shipPreviews.get(id);
-      if (!preview || options?.confirmation !== preview.token || fingerprint !== preview.fingerprint || Date.now() - preview.at > 5 * 60_000) {
-        const token = randomUUID();
-        this.shipPreviews.set(id, { token, fingerprint, at: Date.now() });
-        return { ...session, shipped: false, submitted: false, autoMerge: false, autoMergeInstructionIncluded: false, preflight: { token, summary } };
-      }
-    }
-    this.shipPreviews.delete(id);
+    if (automatic && unresolved && !proposalAutoShip) throw new SessionError(409, "Tasks are unresolved or unverified. Finish tasks first.");
     session.autoShipSuppressed = undefined;
     const branch = session.branch as string;
 
@@ -1057,47 +1120,61 @@ export class SessionManager {
 
     // 3. Stage and commit uncommitted changes if dirty
     if (hasUncommitted) {
+      progress?.("committing");
       const commitRes = await commitWorktreeAll(session.worktreePath, title);
       if (!commitRes.ok) {
         throw new SessionError(500, commitRes.err || "could not commit worktree changes");
       }
     }
+    progress?.("pushing", { committed: true });
 
     // 4. Push branch to origin if configured
     const origin = await originUrl(repo.path);
     if (origin) {
       const pushRes = await pushWorktreeBranch(session.worktreePath, branch, "origin");
       if (!pushRes.ok) {
+        if (pushRes.timedOut) progress?.("pushing", { state: "unknown", pushUnknown: true, error: "git push timed out; the remote outcome is unknown. Retry Ship to verify it." });
         throw new SessionError(500, pushRes.err || "could not push branch to origin");
       }
+      progress?.("pull-request", { pushed: true });
+    } else {
+      progress?.("pull-request");
     }
 
     // 5. Open or reuse pull request on GitHub
     let pullRequestUrl: string | undefined;
     let pullRequestNumber: number | undefined;
+    let pullRequestState: "created" | "existing" | "unavailable" = "unavailable";
 
     const github = origin ? githubRepoFromRemote(origin) : undefined;
     if (github) {
       const cachedPrs = (await this.deps.listPullRequests?.(repo.id)) ?? [];
       const existingPr = cachedPrs.find((p) => p.head === branch && p.state === "open");
       if (existingPr) {
+        pullRequestState = "existing";
         pullRequestUrl = existingPr.url;
         pullRequestNumber = existingPr.number;
       } else {
         const defBranch = (await defaultBranch(repo.path)) ?? "main";
-        const prRes = await createPullRequest(github, {
+        const prRes = await (this.deps.createPullRequest ?? createPullRequest)(github, {
           head: branch,
           base: defBranch,
           title,
           body: await shipDescription(session),
         });
         if (prRes.ok) {
+          pullRequestState = "created";
           pullRequestUrl = prRes.url;
           const match = pullRequestUrl?.match(/\/pull\/(\d+)$/);
           pullRequestNumber = match ? Number(match[1]) : undefined;
         } else {
+          if (prRes.failure?.outcomeUnknown) {
+            progress?.("pull-request", { state: "unknown", error: "gh timed out; the pull request may have been created. Retry Ship to check for it." });
+            throw new SessionError(504, "gh timed out; pull request outcome is unknown. Retry Ship to check for an existing pull request.");
+          }
           const existsMatch = prRes.failure?.reason.match(/https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/(\d+)/);
           if (existsMatch) {
+            pullRequestState = "existing";
             pullRequestUrl = existsMatch[0];
             pullRequestNumber = Number(existsMatch[1]);
           } else {
@@ -1105,11 +1182,20 @@ export class SessionManager {
           }
         }
       }
+      progress?.("refreshing", { pullRequestState, ...(pullRequestUrl ? { pullRequestUrl } : {}) });
       await this.deps.refreshPullRequests?.(repo.id);
+    }
+
+    // A push alone has no review destination. Only accept a URL for this repository's pull request.
+    if (!github || !pullRequestUrl?.startsWith(`https://github.com/${github}/pull/`) || !/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[1-9]\d*$/.test(pullRequestUrl)) {
+      pullRequestState = "unavailable";
+      pullRequestUrl = undefined;
+      pullRequestNumber = undefined;
     }
 
     // 6. Check docs-only auto-merge
     const autoMerge =
+      pullRequestState !== "unavailable" &&
       (!unresolved || proposalAutoShip) &&
       session.action !== "fastForward" &&
       repo.agent?.autoMergeDocs === true &&
@@ -1124,10 +1210,13 @@ export class SessionManager {
     this.report(session, { kind: "session-shipped", submitted: true });
     return {
       ...session,
-      shipped: true,
+      shipped: pullRequestState !== "unavailable",
       submitted: true,
       autoMerge,
       autoMergeInstructionIncluded: autoMerge,
+      pullRequestState,
+      taskSummary: summary,
+      ...(pullRequestState === "unavailable" ? { shipWarning: "The branch was committed and pushed where a remote is configured, but no valid pull request URL is available. Review the branch and open its pull request." } : {}),
       ...(pullRequestUrl ? { pullRequestUrl } : {}),
       ...(pullRequestNumber ? { pullRequestNumber } : {}),
     };
@@ -1600,7 +1689,12 @@ export class SessionManager {
     const resume = resumeLaunch(agent, resolveModel(this.deps.getConfig(), agent, isChangeless(session) ? undefined : session.action));
     if (!resume) throw new SessionError(400, "this agent has no resume command configured");
     if (!Bun.which(resume[0])) throw new SessionError(503, `${agent.name} was not found (${resume[0]})`);
-    if (!isChangeless(session)) {
+    if (isProjectConsole(session)) {
+      const config = this.deps.getConfig();
+      const policy = resolvePermissionPolicy(config, session.repoId);
+      const permissionArgs = permissionAdapters.resolve(agent.id).preview(agent, policy).args;
+      await this.restart(session, undefined, withPermissionArgs(agent, resume, permissionArgs), agentEnv(agent, process.env));
+    } else if (!isChangeless(session)) {
       const launch = await this.permissionLaunch(session, agent, "", resume, resolveModel(this.deps.getConfig(), agent, session.action));
       await this.restart(session, repoPath, launch.argv, agentEnv(agent, process.env), launch.typed);
     } else await this.restart(session, repoPath, resume, agentEnv(agent, process.env));

@@ -14,6 +14,14 @@ test("agent settings start from enabled, and Off and the default agent are the a
   expect(withRepoAgent(set, { agentId: null, autoMergeDocs: false }).agent).toEqual({ enabled: false });
 });
 
+test("project command lists replace atomically and clear to absence", () => {
+  const original = { ...repo(), agent: { enabled: true, agentId: "codex", allowedCommands: ["bun run old"] } };
+  expect(withRepoAgent(original, { allowedCommands: ["bun run lint"] }).agent).toEqual({ enabled: true, agentId: "codex", allowedCommands: ["bun run lint"] });
+  expect(withRepoAgent(original, { allowedCommands: [] }).agent).toEqual({ enabled: true, agentId: "codex" });
+  expect(withRepoAgent(original, { allowedCommands: null }).agent).toEqual({ enabled: true, agentId: "codex" });
+  expect(withRepoAgent(original, {}).agent).toEqual(original.agent);
+});
+
 test("no convention removes the key", () => {
   const set = withPrTitleConvention(repo(), "conventional-commits");
   expect(set.prTitleConvention).toBe("conventional-commits");

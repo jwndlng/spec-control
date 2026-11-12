@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-10-unify-change-permission-picker",
+  "date": "2026-11-10",
+  "title": "One permission picker per change",
+  "summary": "Choose a permission profile above a change’s artifact and Console tabs, or inherit from the project. Save feedback confirms your choice, and a notice explains when a running session keeps a different profile until the next start."
+}

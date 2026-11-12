@@ -24,6 +24,7 @@ import {
 } from "./githubState.ts";
 import { IconGitBranch, IconRefresh, IconX } from "./icons.tsx";
 import { Modal } from "./modal.tsx";
+import { Select } from "./select.tsx";
 
 /** The button itself. Inactive, with the reason as its tooltip and in its accessible name, when `off` gives one. */
 export function AddGithubTrigger({ off, small, onOpen }: { off: string | undefined; small: boolean; onOpen: () => void }) {
@@ -210,17 +211,10 @@ export function AddGithubBody({ view, actions }: { view: AddGithubView; actions:
           To clone {count > 0 && <span class="add-github-count">· {count}</span>}
         </h3>
         {view.roots.length > 1 ? (
-          <label class="add-github-root">
+          <div class="add-github-root">
             <span>Workspace root</span>
-            <select class="input" value={view.root} onChange={(e) => actions.setRoot((e.currentTarget as HTMLSelectElement).value)} disabled={view.submitting}>
-              <option value="">Choose a workspace root</option>
-              {view.roots.map((root) => (
-                <option key={root} value={root}>
-                  {root}
-                </option>
-              ))}
-            </select>
-          </label>
+            <Select class="input" aria-label="Workspace root" value={view.root} onChange={actions.setRoot} disabled={view.submitting} options={[{ value: "", label: "Choose a workspace root" }, ...view.roots.map((root) => ({ value: root, label: root }))]} />
+          </div>
         ) : (
           view.root && (
             <p class="hint add-github-root">

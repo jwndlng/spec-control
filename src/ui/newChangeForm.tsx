@@ -7,6 +7,7 @@ import { labelHueStyle } from "./labels.tsx";
 import { IconFilePlus, IconX } from "./icons.tsx";
 import { Modal } from "./modal.tsx";
 import { type DependencyChoice, type LabelConfig, labelChoices, labelTargets, type LabelTargetRepo, type NewChangeProject } from "./repoGroups.ts";
+import { Select } from "./select.tsx";
 
 /** What the combined board and the overview hand the form so it can target repositories by label. */
 export interface ByLabel {
@@ -211,42 +212,27 @@ export function NewChangeForm({ target, onClose, onCreated, onReload, onBusy }: 
       )}
       {projects && mode === "project" && (
         <div class="row">
-          <label class="new-change-project">
+          <div class="new-change-project">
             <span>Project</span>
-            <select class="input" value={repoId} ref={first === "project" ? focusFirst : undefined} onChange={(e) => setChosen((e.currentTarget as HTMLSelectElement).value)}>
-              <option value="">Choose a project</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+            <Select class="input" aria-label="Project" value={repoId} triggerRef={first === "project" ? focusFirst : undefined} onChange={setChosen} options={[{ value: "", label: "Choose a project" }, ...projects.map((project) => ({ value: project.id, label: project.name }))]} />
             {repoId === "" && <span class="hint">choose a project</span>}
-          </label>
+          </div>
         </div>
       )}
       {byLabel && mode === "label" && (
         <div class="new-change-labels">
-          <label class="new-change-label-picker">
+          <div class="new-change-label-picker">
             <span>Labels</span>
-            <select
+            <Select
               class="input"
+              aria-label="Add a label"
               value=""
-              ref={first === "label" ? focusFirst : undefined}
+              triggerRef={first === "label" ? focusFirst : undefined}
               disabled={busy || unpicked.length === 0}
-              onChange={(e) => {
-                const value = (e.currentTarget as HTMLSelectElement).value;
-                if (value) setLabels([...labels, value]);
-              }}
-            >
-              <option value="">{choices.length === 0 ? "No project displays a label" : unpicked.length === 0 ? "Every label is selected" : "Add a label…"}</option>
-              {unpicked.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </label>
+              onChange={(value) => { if (value) setLabels([...labels, value]); }}
+              options={[{ value: "", label: choices.length === 0 ? "No project displays a label" : unpicked.length === 0 ? "Every label is selected" : "Add a label…" }, ...unpicked.map((label) => ({ value: label, label }))]}
+            />
+          </div>
           {labels.length > 0 && (
             <div class="label-chips">
               {labels.map((l) => (

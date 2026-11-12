@@ -31,6 +31,7 @@ interface Mode {
 
 interface Scenario extends Mode {
   login?: string;
+  createOutput?: string;
   repos?: Record<string, { open?: unknown[]; closed?: unknown[] }>;
   issues?: Record<string, unknown[]>;
   owners?: Record<string, unknown[]>;
@@ -96,7 +97,7 @@ if (argv[0] === "api" && argv[1] === "user") {
   const repo = flag("repo") ?? "";
   const mode: Mode = { ...scenario, ...(scenario.perRepo?.[repo] ?? {}) };
   finish(mode, () => {
-    return `https://github.com/${repo}/pull/99\n`;
+    return scenario.createOutput ?? `https://github.com/${repo}/pull/99\n`;
   });
 } else if (argv[0] === "pr" && argv[1] === "merge") {
   const repo = flag("repo") ?? "";

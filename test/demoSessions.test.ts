@@ -196,7 +196,9 @@ test("Ship: refused when there is nothing to ship, otherwise it plays out and th
   const view = terminal(dirty.id);
   advance(0);
   const preview = await api.shipSession(dirty.id);
-  expect((await api.shipSession(dirty.id, { confirmation: preview.preflight?.token })).state).toBe("running");
+  const shipped = await api.shipSession(dirty.id, { confirmation: preview.preflight?.token });
+  expect(shipped.state).toBe("running");
+  expect(shipped.shipOperation).toMatchObject({ state: "succeeded", stage: "done", pullRequestState: "created", pullRequestUrl: "https://github.com/acme/demo-ops/pull/999" });
   advance(60_000);
   expect(view.text()).toContain("Commit the work for pin-terraform-providers");
   expect(view.text().match(/demo recording/g)).toHaveLength(1); // same terminal, not a new one

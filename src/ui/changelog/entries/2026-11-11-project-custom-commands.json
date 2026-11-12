@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-11-project-custom-commands",
+  "date": "2026-11-11",
+  "title": "Set custom commands per project",
+  "summary": "Add literal command prefixes in a project's settings for supported agent sessions. They apply on the next start, stay subject to protected-command rules, and show as inactive or unsupported when the selected profile or runtime cannot apply them."
+}

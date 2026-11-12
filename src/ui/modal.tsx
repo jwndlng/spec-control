@@ -3,6 +3,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 import { IconX } from "./icons.tsx";
+import { dismissActiveSelect } from "./select.tsx";
 
 export function Modal({
   label,
@@ -47,6 +48,11 @@ export function Modal({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      if (dismissActiveSelect()) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       // Only this dialog closes; whatever is behind it keeps its own Escape handling out of the way.
       e.stopPropagation();
       close();

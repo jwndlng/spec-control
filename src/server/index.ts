@@ -110,6 +110,7 @@ async function main(): Promise<void> {
   state.sessions = new SessionManager({
     getConfig: () => state.config,
     getSnapshot: () => state.scanner.snapshot,
+    triggerScan: () => { state.scanner.trigger(); },
     onActivity: (session, what) => void activity.append([sessionEvent(session, state.config.repos.find((r) => r.id === session.repoId)?.name ?? session.repoId, what)]),
     // The marker, not the agent's word: if `openspec/config.yaml` is there now, the repository becomes tracked.
     onIntegrationEnded: (session) => void confirmIntegrationSession(state, session).catch(() => undefined),

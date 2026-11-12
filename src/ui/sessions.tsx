@@ -1,6 +1,7 @@
 import { FinishChecks } from "./finishChecks.tsx";
+import { ShipResultDialog } from "./shipResultDialog.tsx";
 import { ShipPreflightDialog, type ShipChoice } from "./shipPreflightDialog.tsx";
-import type { ShipPreflight } from "../shared/types.ts";
+import type { ShipPreflight, ShipResult } from "../shared/types.ts";
 // Agent sessions in the UI: a provider that polls the session list while the feature is on, and the controls a
 // card shows (starter buttons, or a badge that opens the session panel).
 import { createContext, Fragment, type ComponentChildren } from "preact";
@@ -82,12 +83,13 @@ interface SessionUi {
    */
   start(repoId: string, change: string, action: SessionAction, show: boolean, options?: { carryOver?: boolean; removeDuplicate?: boolean; resolveConflicts?: boolean; endProposal?: boolean }): Promise<string | undefined>;
   ship(id: string): Promise<void>;
+  shippingIds: ReadonlySet<string>;
   saveConfig(config: Config): void;
   refresh(): Promise<void>;
 }
 
 const noop = async () => undefined;
-const Context = createContext<SessionUi>({ config: null, snapshot: null, sessions: [], consoles: [], consoleOpen: false, showConsole: () => {}, integrations: [], showIntegration: () => {}, projectConsoles: [], showProjectConsole: () => {}, agents: [], worktrees: [], focusTick: { tick: 0 }, reportUnsent: () => {}, reportAutoMerge: () => {}, requestEnd: () => {}, openPanel: () => {}, openChangeConsole: () => {}, start: noop, ship: noop, refresh: noop, saveConfig: () => {} });
+const Context = createContext<SessionUi>({ config: null, snapshot: null, sessions: [], consoles: [], consoleOpen: false, showConsole: () => {}, integrations: [], showIntegration: () => {}, projectConsoles: [], showProjectConsole: () => {}, agents: [], worktrees: [], focusTick: { tick: 0 }, reportUnsent: () => {}, reportAutoMerge: () => {}, requestEnd: () => {}, openPanel: () => {}, openChangeConsole: () => {}, start: noop, ship: noop, shippingIds: new Set(), refresh: noop, saveConfig: () => {} });
 
 export const useSessionUi = () => useContext(Context);
 
@@ -234,11 +236,14 @@ export function SessionProvider({
     [refresh, openConsole, sessions, worktrees, reportUnsent, config, askFastForward, onConfig],
   );
 
+  const [shipResult, setShipResult] = useState<ShipResult>();
   const [shipAsk, setShipAsk] = useState<{ preview: ShipPreflight; answer: (choice: ShipChoice) => void }>();
   const shipping = useRef(new Set<string>());
+  const [shippingIds, setShippingIds] = useState<ReadonlySet<string>>(new Set());
   const ship = useCallback(async (id: string) => {
     if (shipping.current.size > 0) return;
     shipping.current.add(id);
+    setShippingIds(new Set(shipping.current));
     try {
       let result = await api.shipSession(id);
       while (result.preflight) {
@@ -246,16 +251,24 @@ export function SessionProvider({
         const choice = await new Promise<ShipChoice>((answer) => setShipAsk({ preview, answer }));
         setShipAsk(undefined);
         if (choice === "cancel") return;
-        result = await api.shipSession(id, choice === "finish" ? { finishTasks: true } : { confirmation: preview.token });
+        result = await api.shipSession(id, choice === "finish" ? { finishTasks: true } : choice === "confirm" ? { confirmAllTasks: true, confirmation: preview.token } : { confirmation: preview.token });
       }
       reportShip({ reportUnsent, reportAutoMerge }, id, result);
-    } finally { shipping.current.delete(id); }
-  }, []);
+      setShipResult(result);
+      await refresh();
+    } catch (error) {
+      await refresh();
+      throw error;
+    } finally {
+      shipping.current.delete(id);
+      setShippingIds(new Set(shipping.current));
+    }
+  }, [refresh, reportUnsent, reportAutoMerge]);
 
   const shown = consoleOpen && enabled;
   const value = useMemo(
-    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, projectConsoleSetup, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, ship, refresh, saveConfig: onConfig }),
-    [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, projectConsoleSetup, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, autoMerge, error, openPanel, openConsole, start, ship, refresh],
+    () => ({ config, snapshot, sessions, consoles, consoleOpen: shown, showConsole, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, projectConsoleSetup, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, reportAutoMerge, requestEnd, error, openPanel, openChangeConsole: openConsole, start, ship, shippingIds, refresh, saveConfig: onConfig }),
+    [config, snapshot, sessions, consoles, shown, integrations, integrationId, showIntegration, projectConsoles, projectConsoleRepoId, projectConsoleSetup, showProjectConsole, agents, worktrees, editor, endingId, focusTick, unsentId, reportUnsent, autoMerge, error, openPanel, openConsole, start, ship, shippingIds, refresh],
   );
   const answerFastForward = useCallback(
     (choice: FastForwardChoice | undefined) => {
@@ -267,7 +280,14 @@ export function SessionProvider({
   return (
     <Context.Provider value={value}>
       {children}
-      {shipAsk && <ShipPreflightDialog preview={shipAsk.preview} answer={shipAsk.answer} />}
+      {shipResult && <ShipResultDialog result={shipResult} close={() => setShipResult(undefined)} review={() => {
+        if (!isConsole(shipResult) && !isIntegration(shipResult) && !isProjectConsole(shipResult)) openConsole(shipResult.repoId, shipResult.change, shipResult.id);
+        setShipResult(undefined);
+      }} />}
+      {shipAsk && <ShipPreflightDialog preview={shipAsk.preview} answer={(choice) => {
+        shipAsk.answer(choice);
+        setShipAsk(undefined);
+      }} />}
       {fastForwardAsk && (
         <FastForwardDialog
           change={fastForwardAsk.change}

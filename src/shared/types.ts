@@ -479,6 +479,8 @@ export interface RepoAgentConfig {
    *  it is ready (agent-merges-docs-prs). The name predates that and is kept for compatibility. Absent means off. */
   autoMergeDocs?: boolean;
   permissionProfile?: AgentPermissionProfileId;
+  /** Optional project-scoped literal command prefixes. Absence and an empty list both mean no extra allowances. */
+  allowedCommands?: string[];
 }
 
 export type AgentPermissionProfileId = "minimum" | "less-friction" | "full-automation";
@@ -492,6 +494,7 @@ export interface AgentPermissionPolicy {
   allowCleanup: boolean;
   optInMerge: boolean;
   optInCleanup: boolean;
+  allowedCommands: string[];
 }
 export interface AdapterResult { args: string[]; settings?: Record<string, unknown>; limitations: string[] }
 export interface AgentCapabilityMatrix { agentId: string; toolFiltering: string; workspaceIsolation: string; remoteGit: string; unattended: string }
@@ -676,7 +679,25 @@ export type ShipResult = Session & {
   autoMergeInstructionIncluded: boolean;
   pullRequestUrl?: string;
   pullRequestNumber?: number;
+  pullRequestState?: "created" | "existing" | "unavailable";
+  taskSummary?: ShipTaskSummary;
+  shipWarning?: string;
 };
+export type ShipOperationStage = "preparing" | "committing" | "pushing" | "pull-request" | "refreshing" | "done" | "failed";
+export interface ShipOperationStatus {
+  operationId: string;
+  state: "running" | "succeeded" | "failed" | "unknown";
+  stage: ShipOperationStage;
+  failedStage?: Exclude<ShipOperationStage, "done" | "failed">;
+  startedAt: string;
+  updatedAt: string;
+  committed: boolean;
+  pushed: boolean;
+  pushUnknown?: boolean;
+  pullRequestState?: "created" | "existing" | "unavailable";
+  pullRequestUrl?: string;
+  error?: string;
+}
 export type AutoMergePromptResult = PromptResult & { autoMerge: boolean };
 export interface ShipPreflight {
   token: string;
@@ -691,7 +712,7 @@ export interface ShipTaskSummary {
   awaiting: string[];
   truncated: boolean;
 }
-export interface ShipRequest { title?: string; confirmation?: string; finishTasks?: boolean }
+export interface ShipRequest { title?: string; confirmation?: string; finishTasks?: boolean; confirmAllTasks?: boolean }
 
 export const TASK_COMPLETION_INSTRUCTION = "Complete and verify every task you can, including automated checks, before shipping. Tick only tasks supported by evidence; report the precise blocker for anything unresolved. Reserve - [~] for work that truly requires the user, complete all automatable parts first, and state exactly what the user must check or do on that task's line.";
 export const SHIP_COMPLETION_INSTRUCTION = `${TASK_COMPLETION_INSTRUCTION} Identify checks that require a PR or its CI, preserve their unresolved markers, and revisit them when evidence is available.`;
@@ -907,6 +928,8 @@ interface SessionBase {
   /** True once the agent has a conversation that `resumeCommand` can continue. */
   resumable: boolean;
   permissionProfile?: AgentPermissionProfileId;
+  /** Server-owned Ship operation snapshot, retained for reload reconciliation. */
+  shipOperation?: ShipOperationStatus;
 }
 
 /** A session started for one change of one repository, from a card's starter. */
@@ -1179,7 +1202,9 @@ export function availableActions(change: Pick<ChangeSnapshot, "archived" | "arti
   if ((change.stage === "ready" || change.stage === "implementing") && !change.blocked) actions.push("implement");
   // In `Done` there is nothing left to implement; offering it is what sends an agent back into finished code.
   if (change.stage === "done" && change.subState === "validate") actions.push("validate");
-  if (change.stage === "done") actions.push("archive"); // every task settled, not archived yet
+  const required = change.artifacts.some((a) => a.required !== undefined) ? change.artifacts.filter((a) => a.required) : change.artifacts;
+  const artifacts = required.length ? required : change.artifacts;
+  if (artifacts.length > 0 && artifacts.every((a) => a.status === "done")) actions.push("archive");
   actions.push("custom");
   return actions;
 }
@@ -1557,9 +1582,16 @@ export interface CleanupBranch {
   lastCommitAt?: string;
   upstream?: string;
   /** How the branch's work was found in the base: its commits are in it, or its changed files' content is. */
-  mergedBy?: "ancestry" | "content";
+  mergedBy?: "ancestry" | "content" | "pull-request";
+  /** When cached PR evidence was fetched; no cleanup operation refreshes it. */
+  evidenceFetchedAt?: string;
+  /** Matching merged PR when its head and locally reachable merge commit prove the merge. */
+  pullRequest?: number;
+  nextAction?: string;
   /** The linked worktree the branch is checked out in; the branch can only go together with that worktree. */
   worktreePath?: string;
+  /** Prunable record holding this branch; pruning must be selected with it. */
+  prunePath?: string;
   removable: boolean;
   reason?: string;
 }
@@ -1603,22 +1635,46 @@ export interface DismissFile {
   state: "restorable" | "lost";
 }
 
-/** What dismissing a change would delete (openspec/specs/change-dismissal). */
+/** Reversible dismissal preview: no repository files are removed. */
 export interface DismissPreview {
   repoId: string;
   name: string;
-  isGit: boolean;
-  files: DismissFile[];
-  /** Linked worktrees holding their own copy of the change; they are kept, and the card stays while one does. */
+  /** Server-resolved project/change incarnation, rechecked on confirmation. */
+  identity: string;
+  created?: string;
+  /** Every checkout copy remains untouched and can continue to hold an agent session. */
   copies: { path: string; branch?: string }[];
-  /** "Same as shown" token over every file's path, size, mtime and state; the dismissal is refused when it changed. */
-  fingerprint: string;
+  message: string;
 }
 
 export interface DismissResult {
   name: string;
-  /** Whether the removal was staged; false for a repository without git, an untracked change, or a failed `git add`. */
+  identity: string;
+  dismissed: true;
+}
+
+/** What the separately confirmed Delete change files action would remove. */
+export interface DeleteFilesPreview {
+  repoId: string;
+  name: string;
+  isGit: boolean;
+  files: DismissFile[];
+  copies: { path: string; branch?: string }[];
+  fingerprint: string;
+}
+
+export interface DeleteFilesResult {
+  name: string;
+  /** Whether the removal was staged; false for a repository without git or a failed `git add`. */
   staged: boolean;
+}
+
+export interface DismissedChange {
+  repoId: string;
+  name: string;
+  identity: string;
+  created?: string;
+  dismissedAt: string;
 }
 
 /**
@@ -1704,6 +1760,8 @@ export interface PullRequest {
   mergeable?: "mergeable" | "conflicting" | "unknown";
   /** The commit the head branch points at, 40 hexadecimal characters; absent when GitHub reported none or a cache predates it. */
   headOid?: string;
+  /** The merged PR's merge commit; used only with an exact head and local base ancestry proof. */
+  mergeOid?: string;
   /**
    * Every file it changes is under `openspec/`, as GitHub reports it — asked only for open pull requests of a GitHub
    * repository that an enabled project with docs auto-merge maps to. The paths themselves are never kept. Absent

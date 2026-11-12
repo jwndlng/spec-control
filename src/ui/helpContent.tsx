@@ -118,7 +118,16 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
         <ColumnGlossary />
         <p>
           The filter bar narrows the board to some projects or to a search over change and project names, and keeps your
-          choice in the URL, so a filtered board can be bookmarked or shared.
+          choice in the URL, so a filtered board can be bookmarked or shared. <strong>Show running</strong> in the
+          filter bar on All changes and project boards keeps only changes with a running agent session, including archive
+          sessions and agents waiting for input or quiet. It combines with search, project selection and archive visibility;
+          running sessions still count with the Activity threshold and Hide merged. Clear filters turns it off.
+        </p>
+        <p>
+          Open a dropdown with a click or Enter, Space or Arrow Down. Arrow keys move through choices; Home and End jump
+          to the first and last enabled choice, and Enter commits it. Short lists also let you type to jump by name. Lists
+          of eight or more choices open a local search field. Escape closes without changing the value; Tab closes and
+          continues through the form. Browsing or searching never saves a setting.
         </p>
         <p>
           A card is tinted as <strong>working</strong> while an agent works on its change, and also while the change's pull
@@ -180,6 +189,13 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             instead of the starters, and the console offers the next step — sent into that session, as a prompt.
           </li>
           <li>
+            <strong>Permission profile for this change</strong> is one control above the artifact and Console tabs.
+            Choose <strong>Inherit from project</strong> to use the project profile, then the global default, then Minimum;
+            choosing a profile overrides only this change. Saving… and Saved announce progress; a refused save shows its
+            reason and keeps the previous selection so you can retry. Changes apply on the next session start. When a running
+            session uses a different profile, the control names both profiles; it leaves that session running unchanged.
+          </li>
+          <li>
             Choose a <strong>Default model</strong> in Settings → Agent sessions, a profile's <strong>Model</strong>, or its expandable{" "}
             <strong>Phase models</strong>. A phase inherits the profile model, then the global default; leaving all three empty uses the CLI default. Models
             apply on session start; running sessions keep theirs. Fast-forward uses the profile or global model throughout. Custom command arguments can contain{" "}
@@ -196,15 +212,16 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             PATH</strong> from VS Code's command palette. The editor is yours: the dashboard only starts it.
           </li>
           <li>
-            Ship first reads tasks from the session checkout. Unfinished or unreadable tasks offer <strong>Finish tasks</strong>, <strong>Ship anyway</strong> and Cancel.
+            Ship first reads tasks from the session checkout. Unfinished or unreadable tasks offer <strong>Finish tasks</strong>, <strong>Ship anyway</strong> and Cancel. For a verified, complete task list, <strong>Mark all complete and Ship</strong> records every remaining task as done and ships the branch.
             Finish tasks does not ship. Ship anyway keeps unresolved markers for PR-dependent checks and withholds docs auto-merge. Automatic merging of implementation and archive PRs waits until every task is marked complete; proposal PRs can still merge before implementation.
             After a linked implementation PR merges, <strong>Finish checks</strong> on the card and Console tab asks the agent to verify actual evidence and prepare a follow-up PR; cached merge status never completes a task.
             Fast-forward includes the same completion instructions and automatically ships only when every task is marked complete.
             <strong>Ship</strong> commits, pushes and opens the pull request on the server, after the task review. <strong>Finish tasks</strong> and <strong>Finish checks</strong> send requests to the agent; they do not ship.
             Draft artifacts prepares `openspec/changes/&lt;change&gt;/pull-request.md`, Implement updates it with delivered behavior and checks run, and Ship uses it as the body of a new pull request. Older changes without the file get a short fallback; an existing pull request is left alone.
+            While Ship runs, its status reports the server-observed step. A failed Ship keeps verified commit or push progress and can be retried; after a reload, the status and pull request link are recovered from the session. A timed-out remote operation is marked unknown until retry reconciles its outcome.
             <strong>Resolve conflicts</strong> asks the agent to bring the branch up to date.
             An archived card whose work is still pending offers <strong>Continue archive</strong> to open its console:
-            resume its session to review unfinished tasks, or use <strong>Ship</strong> to ask the agent to open a pull request.
+            resume its session to review unfinished tasks, or use <strong>Ship</strong> to open its pull request.
           </li>
           <li>
             <strong>Resolve conflicts</strong> is offered when the session's worktree no longer merges as of your last fetch,
@@ -262,6 +279,13 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             undo. The session that set a new project up shows here until you start a new console.
           </li>
           <li>
+            A project's settings dialog can save literal <strong>Custom commands</strong> for that project's agent sessions.
+            Prefixes match the command and trailing arguments, apply on the next explicit start or resume, and do not
+            change a running agent. The list never grants protected commands or bypasses merge and cleanup gates. Commands
+            execute repository code; the validator does not sandbox scripts. The minimum profile leaves them inactive,
+            and runtimes without session command filtering show an unsupported notice.
+          </li>
+          <li>
             With more than one agent profile, a change's Console tab lets you choose an agent for its next session.
             Choose Project agent to return to the project's choice. A running session keeps its original agent.
           </li>
@@ -302,8 +326,14 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           interval.
         </li>
         <li>
-          <strong>Clean up</strong> on a repository's board removes leftover worktrees and local branches whose work is
-          merged. Only what provably holds no work of its own is offered, and nothing goes before you confirm.
+          <strong>Clean up</strong> on a repository's board removes leftover worktrees and local branches after confirmation.
+          Active changes, dirty worktrees, running sessions and external locks are kept. Recent work needs sufficient merge
+          evidence; old unrelated work remains eligible. Alongside local ancestry and file-content comparisons, a fresh
+          cached merged PR can prove the exact branch head merged when its merge commit is in the local base. Cleanup
+          fetches nothing: use <strong>Pull</strong> to update the base and refresh <strong>Pull requests</strong> for current
+          evidence. Kept branches explain the blocker and next step, and show the evidence age when available.
+          A branch held by a stale worktree record can go in the same confirmation as pruning that record;
+          selecting the branch selects pruning, and the branch is checked again after pruning.
         </li>
         <li>
           In a board's <strong>Details</strong>, every worktree whose branch belongs to no active change is marked{" "}
@@ -357,10 +387,18 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           changes a repository only when you click something:
         </p>
         <ul>
-          <li>Pull, New change, Import from issues, Dismiss, Clean up, deleting a branch and applying shared config, each on the repository you chose;</li>
+          <li>Pull, New change, Import from issues, Dismiss, Delete change files, Clean up, deleting a branch and applying shared config, each on the repository you chose;</li>
           <li>creating and removing an agent session's worktree;</li>
           <li>fetching a project's remote every minute, or on the interval you set, unless you switched its Auto fetch off — refs only, never its files.</li>
         </ul>
+        <p>
+          <strong>Dismiss</strong> hides an active change from the board and keeps its files and agent running; use{" "}
+          <strong>Show dismissed</strong> and <strong>Restore</strong> to bring it back. Removing an ended session's{" "}
+          record with <strong>×</strong> in its Console tab removes that session record and stored output, but keeps its
+          worktree and branch. <strong>Delete change files</strong> separately removes only the confirmed main-checkout
+          change directory and stages that removal; linked copies remain. <strong>Clean up</strong> removes session
+          worktrees or archived leftovers only through its own confirmation.
+        </p>
         <p>
           Its own state — configuration, activity history, session records — lives in <code>~/.spec-control/</code>. It
           listens on <code>127.0.0.1</code> only. Theme, auto-refresh and whether you saw the tour are kept in this browser.

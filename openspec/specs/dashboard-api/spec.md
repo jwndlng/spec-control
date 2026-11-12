@@ -5,6 +5,49 @@ Defines the single-binary loopback server and its JSON API (state, config, disco
 
 ## Requirements
 
+### Requirement: Project command allowances are saved through existing configuration routes
+`GET /api/config` and `PUT /api/config` SHALL support optional `repo.agent.allowedCommands` as an array of command-prefix strings. `POST /api/repos/:id/agent` SHALL accept `allowedCommands` as a replacement array or `null` to clear it. An omitted patch key SHALL retain the list; an empty array or `null` SHALL remove it. Saving SHALL preserve unrelated settings, write only home configuration, and trigger neither a scan nor an agent restart.
+
+#### Scenario: Replace and clear a project's list
+- **WHEN** the project agent endpoint receives `{ "allowedCommands": ["bun run lint"] }`
+- **THEN** the response is `200`, the returned configuration contains that project's normalized list and unrelated project settings are unchanged
+- **WHEN** it subsequently receives `{ "allowedCommands": null }` or `{ "allowedCommands": [] }`
+- **THEN** the key is absent from the saved project agent settings
+
+#### Scenario: Unrelated patch preserves commands
+- **WHEN** a project's agent endpoint receives `{ "agentId": "codex" }` and that project has saved commands
+- **THEN** the agent selection changes and the command list remains unchanged
+
+#### Scenario: Existing configurations remain valid
+- **WHEN** configuration without any `allowedCommands` key is loaded and saved
+- **THEN** it remains valid and no custom allowance is introduced
+
+### Requirement: Command allowance updates share validation and request guards
+Both configuration update routes SHALL enforce the command-prefix syntax, bounds and restrictions of `agent-sessions`. Invalid updates SHALL return `400` naming the field or entry, leaving stored configuration unchanged. The project endpoint SHALL retain its unknown-repository `404` behavior. Mutations SHALL retain loopback-host and same-origin guards; saving commands SHALL start no external process and write no tracked repository file.
+
+#### Scenario: Reject invalid list atomically
+- **WHEN** either update route receives a non-array value, a non-string entry, a protected prefix or shell syntax in `allowedCommands`
+- **THEN** it returns `400` identifying `allowedCommands` and the stored configuration remains unchanged, including other fields in the same update
+
+#### Scenario: Refuse a cross-origin update
+- **WHEN** an external origin posts a valid command list to the project endpoint
+- **THEN** the response is `403` and the configuration is unchanged
+
+#### Scenario: Unknown project
+- **WHEN** a valid command list is posted for an unknown repository
+- **THEN** the response is `404` and no configuration is written
+
+### Requirement: Effective permission preview explains project command application
+`GET /api/repos/:id/agent-permissions` SHALL include normalized project commands in `effectivePolicy.allowedCommands`. Its existing `agentPreview` and `limitations` SHALL distinguish applied allowances from configured entries that are inactive under `minimum` or unsupported by the runtime. Change and agent filters SHALL use the same project list and effective profile as launch. Existing response fields and refusal behavior SHALL be preserved.
+
+#### Scenario: Preview matches launch
+- **WHEN** a project allows `bun run lint` and effective permissions are queried for a `less-friction` Claude change
+- **THEN** the policy contains that command, and the preview shows the additional permission arguments that the next launch will receive
+
+#### Scenario: Configured commands are visible even when not applied
+- **WHEN** custom commands are queried under `minimum` or for a runtime without session allowlist support
+- **THEN** the policy lists the saved entries and the runtime limitations explain why they will not be applied
+
 ### Requirement: Single binary serves UI and API on loopback
 
 The dashboard SHALL be built with `bun build --compile` into one executable named `spec-control` that serves the embedded SPA and the JSON API bound to `127.0.0.1` on the configured port (default 4711). Starting the binary SHALL print the URL and open the default browser unless `--no-open` is passed.
@@ -236,6 +279,8 @@ The dashboard SHALL be built with `bun build --compile` into one executable name
 
 ### Requirement: The dashboard never writes to tracked repositories
 The dashboard MUST NOT write to a tracked repository except in response to an explicit user action — or, for the automatic fetch of (9), the repository's auto-fetch setting, which is on unless the user switched it off for that one repository, and, for the automatic removal of a session worktree in (2) after that session's own pull request merged, the `agentSessions.endMergedSessions` setting, which is on unless the user switched it off — and then only as enumerated here: (1) `openspec/config.yaml`, where only the managed sections of the `context` and `rules` keys are modified (applying shared OpenSpec config profiles), as specified in the `shared-config` capability — only when neither `openspec/` nor `openspec/config.yaml` is a symbolic link, and written by renaming over it a temporary file in `openspec/` that the apply created exclusively under a name of its own and that it removes whenever that rename does not happen; (2) for agent sessions, creating a git worktree and its branch for a session (`git worktree add`, preceded by `git worktree prune`), with the worktree's directory placed under `~/.spec-control/worktrees/` and never inside the repository's working tree, and removing such a worktree with a non-forcing `git worktree remove` (preceded by `git worktree unlock`) after the user confirmed — or, without a dialog, after a pull-request query result that already existed showed that session's own pull request merged, either for a session whose agent the dashboard asked to enable auto-merge while the project has docs auto-merge on, or for any change session that is not in place and did not adopt its worktree while `agentSessions.endMergedSessions` is not `false`, as specified in the `agent-sessions` capability — and read-only checks proved that it holds no uncommitted change and no work that exists nowhere else; (3) the pull action: `git fetch` from the repository's own remote followed by a fast-forward-only `git merge` of the main checkout's upstream, with repository hooks disabled, as specified in the `repository-pull` capability, and — only after the user confirmed Resolve and pull and the re-checks of that capability proved every blocking file to be an unchanged change leftover — removing exactly those leftover files from the main checkout's index (`git rm --cached`) and working tree immediately before the retried fast-forward, having first saved a copy of each leftover that differs under `~/.spec-control/`, and, when that fast-forward is still refused, writing those same files back with their previous content and re-staging the ones that had been staged (`git add -- <those paths>`); (4) creating a new change directory at `openspec/changes/<name>/`, only when neither `openspec/` nor `openspec/changes/` is a symbolic link, with its `.openspec.yaml` marker, an optional `prompt.md`, an optional `depends-on.yaml` and, for a change imported from a GitHub issue, an `issue.yaml`, as specified in the `change-creation` capability — the dashboard writes those files itself and MUST NOT invoke the `openspec` CLI or any other external command for it; (5) staging that new change directory, and only it, with a single `git add -- openspec/changes/<name>/` once those files are written, as specified in the `change-creation` capability — best-effort, never failing the creation, and never run for a refused create; (6) repository cleanup, as specified in the `repository-cleanup` capability, on the user's confirmation of items the user selected: removing any linked worktree of the repository with a non-forcing `git worktree remove` (preceded by `git worktree unlock` only for a worktree the dashboard created) after read-only checks proved that it holds no uncommitted change and no work that exists nowhere else, removing stale worktree records with `git worktree prune`, and deleting a local branch other than the default branch and the main checkout's branch with `git branch -D` after read-only checks proved that its work is in the default branch and that it still points at the commit the user saw — whether the user selected it in repository cleanup or confirmed it as a stale leftover in a stale change's cleanup; and, for each linked worktree the user confirmed either in the deletion dialog of that capability ("One branch and its worktree can be deleted whatever they hold") or in a stale change's cleanup of the `stale-changes` capability ("A stale change's leftovers are cleaned up on one confirmation"), after re-checking that the worktree, its branch, its commit and its uncommitted files are what the dialog showed and that no session runs in it, removing that worktree with `git worktree remove --force` (preceded by `git worktree unlock` only for a worktree the dashboard created, never forcing a lock) even though it has uncommitted changes, having first copied its uncommitted, non-ignored files under `~/.spec-control/`, and deleting its branch with `git branch -D` whatever its merge state, other than the default branch and the main checkout's branch, if it still points at the commit the user saw; (7) dismissing a change, as specified in the `change-dismissal` capability, on the user's confirmation — or, for the main checkout's change directory of a change that is archived on the default branch and that the user confirmed as a stale leftover in a stale change's cleanup of the `stale-changes` capability, with every file that differs from the archive's copy saved under `~/.spec-control/` first: deleting an active change's directory `openspec/changes/<name>/` from the main checkout — never a directory under `openspec/changes/archive/`, never a symbolic link's target, never when `openspec/`, `openspec/changes/` or the change directory itself is a symbolic link, never anything in a linked worktree — after re-checking that its content is what the confirmation showed and that no agent session for the change is running, then staging that removal, and only it, with a single `git add --all -- openspec/changes/<name>/` — best-effort, never failing the dismissal, and never run for a refused dismissal; (8) the home migration, as specified in the requirement on moving the home from its old name: once the user has started a binary that finds only the old home, running `git worktree repair` for the worktrees the dashboard itself created, with their new paths under `~/.spec-control/worktrees/`, which rewrites only the repository's administrative record of where those linked worktrees are (`.git/worktrees/<name>/gitdir`) and those worktrees' own `.git` files — it MUST NOT touch any other worktree, the main checkout's working tree, index, `HEAD` or any ref, and MUST NOT contact a remote; (9) the automatic fetch, as specified in the `repository-pull` capability, for every enabled git repository with a remote whose auto-fetch setting the user has not switched off: exactly the pull action's `git fetch` from the repository's own remote, on that setting's interval, which writes only remote-tracking refs, `FETCH_HEAD` and objects — it MUST NOT fast-forward, merge, prune, or change the main checkout's branch, index or working tree or any linked worktree. Outside tracked repositories, the dashboard writes beyond `~/.spec-control/` in exactly three places. The first is creating a new project, as specified in the `project-creation` capability, on the user's confirmation: creating one new, empty directory directly inside a configured workspace root with an exclusive create — never in or below a tracked repository, an ignore path or the dashboard's home directory, and never reusing anything that exists — and running `git init` in that directory and nowhere else; it MUST NOT write any other file there, stage, commit, add a remote or delete anything it created. The second is cloning a GitHub repository, as specified in the `github-repositories` capability, on the user's confirmation: creating one new directory directly inside a configured workspace root with an exclusive create, under the same placement rules as a new project, and running `git clone` of `https://github.com/<owner>/<name>.git` — a URL the dashboard builds from a validated `owner/name` — into it, with no prompt and no hooks; when the clone fails or the user cancels it it MAY remove that directory only if it is empty, with a non-recursive remove, and it MUST NOT delete anything else, write into the clone, add or change a remote, or delete, move or empty the clone afterwards. The third is creating a workspace folder in the setup wizard, as specified in the `setup-wizard` capability, on the user's confirmation: one new, empty directory with a non-recursive, exclusive create inside an existing directory, never in or below a tracked repository, an ignore path or the dashboard's home directory, with nothing written into it and no command run. Apart from those worktree commands, that branch deletion, the pull action's removal of confirmed change leftovers and that change-directory deletion the dashboard MUST NOT delete or move anything in a tracked repository. Apart from the pull action it MUST NOT change the main checkout's working tree beyond the created and the dismissed change directories above, and MUST NOT change the main checkout's index beyond adding the created directory's files to it and staging the dismissed directory's removal, and MUST NOT contact a remote, and it MUST NOT change the main checkout's branch at all. It MUST NOT commit, push, stash or reset in a tracked repository under any circumstances, and MUST NOT create or delete a ref except the session branch created with a session's worktree and the local branches deleted by repository cleanup (including the branch of a confirmed deletion and the branches of a confirmed stale change's cleanup); it MUST NOT delete a remote-tracking ref or a remote branch. The pull action MUST NOT run except on the user's explicit request for that repository (or for all repositories): never on a timer, during a scan, on page load or as a side effect of another operation. The automatic fetch is not the pull action: it runs the pull action's fetch and nothing more, only for a repository whose auto-fetch setting is not off, only on that setting's interval (every minute when the repository has no saved setting), and never during a scan, on page load, for another repository or in the demo. Apart from the pull action and the automatic fetch, the only network access the dashboard makes is the pull-request query of the `pull-requests` capability, the issue query of the `issue-import` capability, the repository listing and the clone of the `github-repositories` capability and the update check of the `update-notice` capability. The update check is one unauthenticated `HEAD` request to this project's own GitHub releases page, made by the server itself rather than by git or `gh`, never inside or about a tracked repository, carrying nothing about the user, and never made while the user has turned it off or for a `dev` build. The pull-request, issue and repository-list queries run only the GitHub CLI's read-only `gh pr list`, `gh api user`, `gh issue list` and `gh repo list`, never any other `gh` subcommand, with their working directory outside every tracked repository, and only when the user asks for them as specified in those capabilities; they MUST NOT write to a tracked repository, run git, or change anything on GitHub. Scanning, polling, discovery and serving the UI MUST NOT start a `gh` process or a clone; a clone runs only on the user's confirmation of Add from GitHub, a setup wizard Continue or a retry, and is stopped early only on the user's Cancel or its timeout. All other filesystem writes MUST be confined to `~/.spec-control/`, apart from the new project directory and its `git init`, the cloned directory and its `git clone`, and the new workspace folder. Scanning, polling, discovery, previews, reading work statuses and saving any dashboard setting MUST NOT write to a tracked repository. Apart from the worktree commands (including the home migration's `worktree repair`), the pull action's and the automatic fetch's `fetch`, the pull action's `merge --ff-only`, leftover `rm --cached` and restoring `add`, the create-change and dismissal `add`, the cleanup's `branch -D`, the new project's `git init` and the GitHub clone's `git clone` above, git MUST only be invoked with read-only subcommands (`rev-parse`, `log`, `worktree list`, `status`, `show-ref`, `symbolic-ref`, `for-each-ref`, `rev-list`, `diff`, `config --get`, `ls-files`, `ls-tree`, `cat-file`, `merge-tree`, and `hash-object` without `-w`). `merge-tree`, which computes the conflict signal of a work status, writes the merged tree it produces into an object database; it MUST therefore be invoked with its object directory pointed at a scratch store under `~/.spec-control/` and the repository's own object database offered only as an alternate, so that it reads everything it needs and writes nothing into the repository. It MUST NOT be given a working tree, an index or a ref to update. Every git invocation MUST run with optional locks disabled (`GIT_OPTIONAL_LOCKS=0`), so that no invocation rewrites `.git/index` as a side effect — `git status` refreshes the index by default — and only the pull action's `merge --ff-only`, its leftover `rm --cached` and restoring `add`, and the create-change and dismissal `add` may write the index at all, which they do by design. When agent sessions are enabled, the dashboard MAY start the user's configured agent in a session's worktree on the user's explicit request. The same holds, in place in the folder itself, for an integration session in a repository that is not tracked yet (`repo-integration` capability) for a project console in a tracked repository's folder, which for a git repository is its main checkout (`project-console` capability), and for a change session in a git repository with no commit yet, which runs in its main checkout (`agent-sessions` capability). For none of them does the dashboard create a worktree or branch, write a file or run a git command. What that agent changes, commits or pushes is the agent's doing under its own permission prompts and is never done by the dashboard's own code. With agent sessions disabled the dashboard MUST NOT start any process that can modify a repository.
+
+The explicit task-confirmation exception covers two user actions: confirming one `[~]` task in change detail, limited to the active change's framework-provided task file and selected line; and **Mark all complete and Ship**, limited to the session checkout's framework-provided task file when its preflight summary is verified and untruncated. Both operations SHALL compare the full task-file version shown, reject stale content without writing, check every path segment against symbolic links, preserve unrelated content, and atomically replace task markers. The Ship operation SHALL mark only remaining task markers `[x]`, re-check the preflight version, and continue shipping only after a successful write. Neither operation may invoke git or the OpenSpec CLI; the detail operation triggers a scan only after a successful write.
 
 #### Scenario: No side effects
 - **WHEN** a full scan runs across all tracked repos
@@ -872,35 +917,64 @@ have been started.
 - **THEN** the response is `403`, no folder is created and no process is started
 
 ### Requirement: Dismiss endpoints
-`GET /api/repos/<id>/changes/<name>/dismiss` SHALL return what dismissing the change would delete, as specified in the `change-dismissal` capability: whether the repository is a git repository, every file in the change's directory in the main checkout with its relative path and whether it is restorable from git or lost for good, the linked worktrees holding a copy of the change with path and branch, and a `fingerprint` of that content. It MUST NOT write anything. `POST /api/repos/<id>/changes/<name>/dismiss` with `{ "fingerprint": <string> }` SHALL re-check and delete the change directory, stage its removal, trigger a rescan of the repository and return `{ "name", "staged" }`. Both routes SHALL accept only a repository that is configured, enabled and whose last scan succeeded — otherwise `404` (unknown) or `409` (not eligible) — and a name matching the change-name pattern other than `archive` — otherwise `400`; the repository's path MUST come from the config, never from the request. A change without an active directory in the main checkout SHALL be answered with `404`, with a reason naming the linked worktree when one holds it. A missing or malformed `fingerprint` SHALL be refused with `400`; a fingerprint that no longer matches, a running agent session for the change and a dismissal of the same change already running SHALL be refused with `409`; every refusal deletes nothing and runs no writing git command. The `POST` route is subject to the same-origin protection. Neither route depends on agent sessions being enabled.
+`GET /api/repos/<id>/changes/<name>/dismiss` SHALL preview reversible dismissal of the server-resolved active change identity and its checkout copies without writing. `POST` to the same route with the preview's identity token SHALL persist dismissal in the dashboard home and return its identity and `dismissed: true`. It SHALL NOT delete or stage files. Both routes SHALL support worktree-only changes and validate configured/enabled/successfully scanned projects and valid nonreserved names. The server SHALL return 400 for malformed input, 404 for unknown changes, and 409 for ineligible projects or changed identities. Mutations SHALL use same-origin protection and SHALL NOT require agent sessions to be enabled.
+
+#### Scenario: Worktree-only dismissal
+- **WHEN** POST confirms the current identity of a change found only in a linked worktree
+- **THEN** it returns 200 with `dismissed: true`, hides the card by default, and changes no repository file
+
+#### Scenario: Old client deletion request
+- **WHEN** a client sends only the legacy deletion fingerprint to the dismissal route
+- **THEN** it receives 400 with an explanation that dismissal is now reversible and no directory is deleted
+
+#### Scenario: Changed identity
+- **WHEN** the preview identity now belongs to an older incarnation of the named change
+- **THEN** POST returns 409 without dismissing the new incarnation
+
+#### Scenario: Foreign origin
+- **WHEN** a foreign origin posts a dismissal
+- **THEN** it receives 403 and no dismissal state changes
 
 #### Scenario: Preview
-- **WHEN** `GET /api/repos/demo-ops/changes/lint-rules/dismiss` is called for a change with one committed and one untracked file
-- **THEN** the response lists both files, the first as restorable and the second as lost for good, with a fingerprint
+- **WHEN** GET dismissal is requested for an active change with committed and untracked files
+- **THEN** it returns the change identity and checkout copies and explains that files are preserved
 
 #### Scenario: Dismiss
-- **WHEN** `POST /api/repos/demo-ops/changes/lint-rules/dismiss` is sent with the fingerprint from the preview
-- **THEN** the response is `200` with `{ "name": "lint-rules", "staged": true }`, the directory is gone and a rescan is triggered
+- **WHEN** POST dismissal confirms the current identity token
+- **THEN** it returns 200 with `dismissed: true`, preserves the directory and index, and updates visibility
 
 #### Scenario: Stale fingerprint
-- **WHEN** a file of the change was modified between the preview and the `POST`
-- **THEN** the response is `409` and the directory is unchanged
+- **WHEN** a caller supplies only the previous destructive API's file fingerprint
+- **THEN** it receives 400 with the revised contract and nothing is deleted or dismissed
 
 #### Scenario: Traversal in the name
 - **WHEN** the name is `..` or `archive`
-- **THEN** the response is `400` and nothing is read or deleted
+- **THEN** the server returns 400 and changes no state
 
 #### Scenario: Worktree-only change
-- **WHEN** either route is called for a change that exists only in a linked worktree on `feat/cloud-deployment`
-- **THEN** the response is `404` with a reason naming `feat/cloud-deployment`, and nothing is deleted
+- **WHEN** either dismissal route names a change found only in a linked worktree
+- **THEN** it supports preview and confirmed dismissal without requiring a main-checkout directory
 
 #### Scenario: Disabled repository
-- **WHEN** either route is called for a disabled repository
-- **THEN** the response is `409` and nothing is read or deleted
+- **WHEN** either route names a disabled repository
+- **THEN** it returns 409 and changes no state
 
-#### Scenario: Foreign origin
-- **WHEN** a page on another origin posts to `/api/repos/<id>/changes/<name>/dismiss`
-- **THEN** the response is `403` and nothing is deleted
+
+### Requirement: Dismissed identities can be listed and restored
+GET `/api/repos/<id>/dismissed-changes` SHALL list project-scoped dismissal records. POST `/api/repos/<id>/changes/<name>/restore` with its recorded identity SHALL remove that dismissal and refresh visibility. Restore SHALL be idempotent, same-origin protected, and scoped to configured projects. It SHALL NOT modify files, git, agent sessions, or remote state.
+
+#### Scenario: Restore twice
+- **WHEN** the same dismissed identity is restored twice
+- **THEN** both operations succeed and the active change appears at most once
+
+
+### Requirement: Deleting change files has a distinct API
+The former destructive dismissal operation SHALL be exposed only through GET/POST `/api/repos/<id>/changes/<name>/delete-files`. Preview, fingerprints, loss warnings, path checks, running-session refusal, deletion scope, and best-effort staging SHALL preserve the previous deletion contract. No caller SHALL infer successful logical dismissal from successful file deletion.
+
+#### Scenario: Deletion confirmation
+- **WHEN** POST delete-files carries a current fingerprint for a safe main-checkout directory
+- **THEN** only its confirmed files are deleted, only their removal is staged, and the result reports staging separately from dismissal
+
 
 ### Requirement: Cleanup endpoints
 `GET /api/repos/<id>/cleanup` SHALL return the repository's cleanup preview as specified in the `repository-cleanup`
@@ -1696,8 +1770,6 @@ repository.
 #### Scenario: Invalid value
 - **WHEN** `PUT /api/config` is sent with `agentSessions.endMergedSessions: "yes"`
 - **THEN** the response is `400` naming `agentSessions.endMergedSessions` and the saved configuration is unchanged
-
-## ADDED Requirements
 
 ### Requirement: Permission profiles configuration and effective permissions endpoint
 The API SHALL support querying and validating agent permission configurations:
