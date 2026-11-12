@@ -1,0 +1,3 @@
+- [x] 1.1 Raise the checkout-status and change-discovery limits to 50.
+- [x] 1.2 Update the change-scanner capability requirement to describe the new cap.
+- [x] 1.3 Update and run the worktree scanner tests and full repository check.

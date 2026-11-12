@@ -385,16 +385,17 @@ test("checkouts: without remote-tracking refs nothing reports an unpushed count"
 
 test("checkouts: above the cap the rest are listed without a status", async () => {
   const { base, repo } = await newGitRepo("osd-cap-");
-  for (let i = 0; i < 15; i++) await gitIn(repo, "worktree", "add", "-q", join(base, "wt", `w${i}`), "-b", `feat/w${i}`);
+  const total = MAX_INSPECTED_WORKTREES + 3;
+  for (let i = 0; i < total; i++) await gitIn(repo, "worktree", "add", "-q", join(base, "wt", `w${i}`), "-b", `feat/w${i}`);
   const snap = await scanRepo(newRepoConfig(repo, true));
   const linked = snap.worktrees.filter((w) => !w.isMain);
-  expect(linked.length).toBe(15);
+  expect(linked.length).toBe(total);
   expect(linked.filter((w) => typeof w.status === "object").length).toBe(MAX_INSPECTED_WORKTREES);
   const skipped = linked.filter((w) => w.inspected === false);
   expect(skipped.length).toBe(3);
   expect(skipped.every((w) => w.status === undefined)).toBe(true);
   expect(snap.worktrees[0].status).toEqual(CLEAN);
-  expect(snap.workInProgress).toEqual({ worktrees: 15, uncommitted: 0, unpushed: 0, stale: 0, unknown: 0 });
+  expect(snap.workInProgress).toEqual({ worktrees: total, uncommitted: 0, unpushed: 0, stale: 0, unknown: 0 });
   await rm(base, { recursive: true, force: true });
 });
 
