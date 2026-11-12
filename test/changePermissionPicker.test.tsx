@@ -13,7 +13,7 @@ import { consoleSession } from "../src/ui/sessionState.ts";
 import { SessionProvider } from "../src/ui/sessions.tsx";
 
 const originalApi = { openSession: api.openSession, resumeSession: api.resumeSession, openTerminal: api.openTerminal, sessions: api.sessions, changeArtifacts: api.changeArtifacts, artifactFile: api.artifactFile, setChangePermissionProfile: api.setChangePermissionProfile };
-const originalDom = { window: globalThis.window, document: globalThis.document, HTMLElement: globalThis.HTMLElement, requestAnimationFrame: globalThis.requestAnimationFrame, location: globalThis.location, history: globalThis.history };
+const originalDom = { window: globalThis.window, document: globalThis.document, HTMLElement: globalThis.HTMLElement, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, location: globalThis.location, history: globalThis.history };
 let browser: Window;
 let root: HTMLElement;
 afterEach(async () => {
@@ -27,7 +27,7 @@ const configForTest = (): Config => ({ ...defaultConfig(), agentSessions: { ...d
 const record = (profile?: ChangeSession["permissionProfile"]): ChangeSession => ({ id: "running", state: "running", agentId: "fake", agentName: "Fake", repoId: "demo", change: "one", action: "implement", worktreePath: "/w/acme/demo", createdAt: "2026-11-10", updatedAt: "2026-11-10", resumable: false, permissionProfile: profile });
 async function setup(config = configForTest(), records: ChangeSession[] = [], detail = false, worktrees: SessionWorktree[] = []) {
   browser = new Window({ url: "http://localhost/" });
-  Object.assign(globalThis, { window: browser, document: browser.document, HTMLElement: browser.HTMLElement, location: browser.location, history: browser.history, requestAnimationFrame: () => 0 });
+  Object.assign(globalThis, { window: browser, document: browser.document, HTMLElement: browser.HTMLElement, location: browser.location, history: browser.history, requestAnimationFrame: () => 0, cancelAnimationFrame: () => {} });
   root = document.createElement("div");
   document.body.append(root);
   api.sessions = async () => ({ sessions: records, agents: [], worktrees, presets: [] });
@@ -47,20 +47,23 @@ async function setup(config = configForTest(), records: ChangeSession[] = [], de
     </SessionProvider>;
   }
   await act(async () => { render(<Harness />, root); });
-  const choose = async (value: string) => act(async () => {
-    const select = root.querySelector("select")!;
-    select.value = value;
-    select.dispatchEvent(new browser.Event("change", { bubbles: true }) as unknown as Event);
-  });
+  const choose = async (value: string) => {
+    const trigger = root.querySelector<HTMLButtonElement>(".shared-select")!;
+    await act(() => trigger.click());
+    const values = ["", "minimum", "less-friction", "full-automation"];
+    const option = document.querySelectorAll<HTMLElement>("[role=option]")[values.indexOf(value)];
+    await act(() => option?.click());
+  };
   return { choose, config: async (next: Config) => act(() => setConfig(next)), navigate: async (name: string) => act(() => setName(name)), snapshot: async (next: Snapshot) => act(() => setSnapshot(next)), initialSnapshot: snapshot };
 }
-const selection = () => root.querySelector("select")!;
+const selection = () => root.querySelector<HTMLButtonElement>(".shared-select")!;
+const selectedLabel = () => root.querySelector(".shared-select-label")?.textContent;
 const text = () => root.textContent!;
 
 test("inheritance resolves project, global and Minimum and preserves explicit equal choice", async () => {
   const config = configForTest();
   const view = await setup(config);
-  expect(selection().value).toBe("");
+  expect(selectedLabel()).toBe("Inherit from project (Minimum)");
   expect(text()).toContain("Inherit from project (Minimum)");
   config.agentSessions.defaultPermissionProfile = "less-friction";
   await view.config(structuredClone(config));
@@ -68,8 +71,8 @@ test("inheritance resolves project, global and Minimum and preserves explicit eq
   config.repos[0].agent = { enabled: true, permissionProfile: "full-automation" };
   config.repos[0].agentOverrides!.one.permissionProfile = "full-automation";
   await view.config(structuredClone(config));
-  expect(text()).toContain("Inherit from project (Full automation)");
-  expect(selection().value).toBe("full-automation");
+  expect(selectedLabel()).toBe("Full automation");
+  expect(selectedLabel()).toBe("Full automation");
 });
 
 test("deferred saves disable duplicates, retain acknowledged value on refusal, and support retry and clearing", async () => {
@@ -88,20 +91,20 @@ test("deferred saves disable duplicates, retain acknowledged value on refusal, a
   await view.choose("full-automation");
   expect(calls).toEqual([["demo", "one", "minimum"]]);
   await act(async () => { reject(new Error("Refused by server")); await Bun.sleep(0); });
-  expect(selection().value).toBe("");
+  expect(selectedLabel()).toBe("Inherit from project (Minimum)");
   expect(selection().disabled).toBe(false);
   expect(root.querySelector('[role="alert"]')!.textContent).toBe("Refused by server");
   await view.choose("minimum");
   const saved = structuredClone(config);
   saved.repos[0].agentOverrides!.one.permissionProfile = "minimum";
   await act(async () => { resolve(saved); await Bun.sleep(0); });
-  expect(selection().value).toBe("minimum");
+  expect(selectedLabel()).toBe("Minimum");
   expect(root.querySelector('[role="status"]')!.textContent).toBe("Saved");
   expect(root.querySelector('[role="alert"]')).toBeNull();
   await view.choose("");
   await act(async () => { resolve(config); await Bun.sleep(0); });
   expect(calls.at(-1)).toEqual(["demo", "one", null]);
-  expect(selection().value).toBe("");
+  expect(selectedLabel()).toBe("Inherit from project (Minimum)");
 });
 
 for (const failure of [false, true]) test(`navigation hides late ${failure ? "error" : "success"} feedback`, async () => {
@@ -146,10 +149,10 @@ test("detail retains one accessible picker and pending feedback across tabs; ine
   expect(text()).toContain("Saving…");
   const saved = configForTest(); saved.repos[0].agentOverrides!.one.permissionProfile = "less-friction";
   await act(async () => { finish(saved); await Bun.sleep(0); });
-  expect(selection().value).toBe("less-friction");
+  expect(selectedLabel()).toBe("Less friction");
   const proposal = [...root.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim().startsWith("Proposal"))!;
   await act(() => proposal.click());
-  expect(selection().value).toBe("less-friction");
+  expect(selectedLabel()).toBe("Less friction");
   const archived = structuredClone(view.initialSnapshot);
   archived.repos[0].changes[0].archived = "2026-11-10";
   await view.snapshot(archived);

@@ -35,7 +35,8 @@ import {
   wipIndicator,
 } from "./overviewState.ts";
 import { Stat } from "./band.tsx";
-import { IconCheck, IconChevronDown, IconFolderGit, IconGitBranch, IconPlus, IconSearch, IconX } from "./icons.tsx";
+import { IconCheck, IconFolderGit, IconGitBranch, IconPlus, IconSearch, IconX } from "./icons.tsx";
+import { Select } from "./select.tsx";
 import { LabelChips, labelHueStyle } from "./labels.tsx";
 import { NewChangeDialog } from "./newChangeForm.tsx";
 import { assignRepoHues, labelTargets, newChangeTargets } from "./repoGroups.ts";
@@ -508,17 +509,10 @@ export function Overview({ snapshot, config, onConfig, onReload }: { snapshot: S
           {/* The table sorts through its column headers; tiles have none. */}
           {state.view === "tiles" && (
             <>
-              <label class="control select-control" for="overview-sort">
+              <div class="control select-control">
                 <span>Sort</span>
-                <select id="overview-sort" value={state.sort} onChange={(e) => setState({ ...state, sort: e.currentTarget.value as SortKey, dir: naturalDir(e.currentTarget.value as SortKey) })}>
-                  {SORT_KEYS.map((key) => (
-                    <option key={key} value={key}>
-                      {SORT_LABEL[key]}
-                    </option>
-                  ))}
-                </select>
-                <IconChevronDown size={12} />
-              </label>
+                <Select id="overview-sort" aria-label="Sort" value={state.sort} onChange={(value) => setState({ ...state, sort: value as SortKey, dir: naturalDir(value as SortKey) })} options={SORT_KEYS.map((key) => ({ value: key, label: SORT_LABEL[key] }))} />
+              </div>
               <button type="button" class="control" title="Reverse the sort direction" onClick={() => setState(toggleSort(state, state.sort))}>
                 {state.dir === "asc" ? "▲ ascending" : "▼ descending"}
               </button>

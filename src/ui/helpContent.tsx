@@ -124,6 +124,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           running sessions still count with the Activity threshold and Hide merged. Clear filters turns it off.
         </p>
         <p>
+          Open a dropdown with a click or Enter, Space or Arrow Down. Arrow keys move through choices; Home and End jump
+          to the first and last enabled choice, and Enter commits it. Short lists also let you type to jump by name. Lists
+          of eight or more choices open a local search field. Escape closes without changing the value; Tab closes and
+          continues through the form. Browsing or searching never saves a setting.
+        </p>
+        <p>
           A card is tinted as <strong>working</strong> while an agent works on its change, and also while the change's pull
           request is open but not ready yet — a draft, a conflict, failing or running checks — whether or not an agent still
           runs. Its badge says why, for example <code>PR #125 · checks running</code>; once every check is green and the
@@ -381,10 +387,18 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           changes a repository only when you click something:
         </p>
         <ul>
-          <li>Pull, New change, Import from issues, Dismiss, Clean up, deleting a branch and applying shared config, each on the repository you chose;</li>
+          <li>Pull, New change, Import from issues, Dismiss, Delete change files, Clean up, deleting a branch and applying shared config, each on the repository you chose;</li>
           <li>creating and removing an agent session's worktree;</li>
           <li>fetching a project's remote every minute, or on the interval you set, unless you switched its Auto fetch off — refs only, never its files.</li>
         </ul>
+        <p>
+          <strong>Dismiss</strong> hides an active change from the board and keeps its files and agent running; use{" "}
+          <strong>Show dismissed</strong> and <strong>Restore</strong> to bring it back. Removing an ended session's{" "}
+          record with <strong>×</strong> in its Console tab removes that session record and stored output, but keeps its
+          worktree and branch. <strong>Delete change files</strong> separately removes only the confirmed main-checkout
+          change directory and stages that removal; linked copies remain. <strong>Clean up</strong> removes session
+          worktrees or archived leftovers only through its own confirmation.
+        </p>
         <p>
           Its own state — configuration, activity history, session records — lives in <code>~/.spec-control/</code>. It
           listens on <code>127.0.0.1</code> only. Theme, auto-refresh and whether you saw the tour are kept in this browser.

@@ -96,6 +96,13 @@ test("Getting started introduces setup and how to run it again", () => {
   expect(start?.text).toContain("setup");
 });
 
+test("the board Help documents shared dropdown keyboard, search and dismiss behavior", () => {
+  const board = walked.find((section) => section.id === "board");
+  for (const text of ["Arrow keys", "Home and End", "eight or more", "Escape closes without changing", "Tab closes", "never saves a setting"]) {
+    expect(board?.text).toContain(text);
+  }
+});
+
 test("Help explains running session filtering and composition", () => {
   const board = walked.find((s) => s.id === "board")!.text;
   for (const term of ["Show running", "waiting for input or quiet", "archive", "Clear filters", "Activity threshold and Hide merged"])

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { RepoSnapshot } from "../shared/types.ts";
 import { activeTags, EMPTY_FILTERS, type Filters, hasActiveFilters, activityOptions } from "./filters.ts";
 import { IconChevronDown, IconClock, IconColumns, IconFolderGit, IconRotateCcw, IconRows, IconSearch, IconX } from "./icons.tsx";
+import { Select } from "./select.tsx";
 
 /** Sets --repo-hue for the `repo-tint` class. */
 function repoHue(hue: number | undefined) {
@@ -94,6 +95,8 @@ export function FilterBar({
   single,
   showing,
   layout,
+  showDismissed = false,
+  onShowDismissed = () => {},
 }: {
   filters: Filters;
   setFilters: (patch: Partial<Filters>) => void;
@@ -104,6 +107,8 @@ export function FilterBar({
   showing: number;
   /** The layout on screen, which the Lanes/Stack switch marks; `filters.layout` may be `auto`. */
   layout: "lanes" | "stack";
+  showDismissed?: boolean;
+  onShowDismissed?: (show: boolean) => void;
 }) {
   const tags = single ? activeTags({ ...filters, repos: [] }, repos) : activeTags(filters, repos);
   return (
@@ -119,18 +124,11 @@ export function FilterBar({
           )}
         </label>
         {!single && <RepoMenu repos={repos} hues={hues} selected={filters.repos} onChange={(ids) => setFilters({ repos: ids })} />}
-        <label class={`control select-control ${filters.activeDays ? "on" : ""}`}>
+        <div class={`control select-control ${filters.activeDays ? "on" : ""}`}>
           <IconClock />
           <span>Activity</span>
-          <select value={filters.activeDays} onChange={(e) => setFilters({ activeDays: Number(e.currentTarget.value) || 0 })}>
-            {activityOptions(filters.activeDays).map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <IconChevronDown size={12} />
-        </label>
+          <Select aria-label="Activity" value={String(filters.activeDays)} onChange={(value) => setFilters({ activeDays: Number(value) || 0 })} options={activityOptions(filters.activeDays).map((o) => ({ value: String(o.value), label: o.label }))} />
+        </div>
         <button
           type="button"
           role="switch"
@@ -158,8 +156,12 @@ export function FilterBar({
           <span class="switch" aria-hidden="true" />
           Hide merged
         </button>
+        <button type="button" role="switch" aria-checked={showDismissed} class={`control switch-control ${showDismissed ? "on" : ""}`} title="Show dismissed changes with a Restore action" onClick={() => onShowDismissed(!showDismissed)}>
+          <span class="switch" aria-hidden="true" />
+          Show dismissed
+        </button>
         {hasActiveFilters(filters) && (
-          <button type="button" class="btn sm ghost clear-filters" onClick={() => setFilters({ ...EMPTY_FILTERS, layout: filters.layout })}>
+          <button type="button" class="btn sm ghost clear-filters" onClick={() => { setFilters({ ...EMPTY_FILTERS, layout: filters.layout }); onShowDismissed(false); }}>
             <IconRotateCcw size={12} />
             Clear filters
           </button>
