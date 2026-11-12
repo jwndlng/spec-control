@@ -64,7 +64,7 @@ const dialog = (config: Config, t: Tracking, r = row) => modalOf(config, t, r).p
 const switchOf = (node: unknown) => byTag(node as never, "button").find((b) => b.props.role === "switch");
 const click = (el: { props: Record<string, unknown> }) => {
   let stopped = false;
-  (el.props.onClick as (e: unknown) => void)({ stopPropagation: () => (stopped = true), preventDefault: () => {} });
+  ((el.props.onClick ?? el.props.onTriggerClick) as (e: unknown) => void)({ stopPropagation: () => (stopped = true), preventDefault: () => {} });
   return stopped;
 };
 
@@ -110,7 +110,7 @@ test("the agent picker appears only with two agents and sessions on for the proj
   const [select] = agentSelects(dialog(configWith({ agents: 2, agent: { enabled: true, agentId: "my-agent" } }), t));
   expect(select.props.value).toBe("my-agent");
   expect(byTag(select, "option").map(textOf)).toEqual(["default agent", "Claude Code", "My agent"]);
-  (select.props.onChange as (e: unknown) => void)({ currentTarget: { value: "" } });
+  (select.props.onChange as (value: string) => void)("");
   expect(calls).toEqual(['agent a {"agentId":null}']);
 });
 
@@ -123,7 +123,7 @@ test("every git project offers a PR titles picker in its dialog, with agent sess
     expect(String(select.props.title)).toContain(CONVENTIONAL_COMMITS_SHIP_SENTENCE);
     expect(byTag(select, "option").map(textOf)).toEqual(["No convention", "Conventional Commits"]);
     expect(click(select)).toBe(true);
-    (select.props.onChange as (e: unknown) => void)({ currentTarget: { value: "conventional-commits" } });
+    (select.props.onChange as (value: string) => void)("conventional-commits");
   }
   expect(calls).toEqual(Array(3).fill("prTitles a conventional-commits"));
 
@@ -131,7 +131,7 @@ test("every git project offers a PR titles picker in its dialog, with agent sess
   const withConvention: Config = { ...configWith(), repos: [{ ...configWith().repos[0], prTitleConvention: "conventional-commits" }] };
   const [select] = prTitleSelects(dialog(withConvention, set.t));
   expect(select.props.value).toBe("conventional-commits");
-  (select.props.onChange as (e: unknown) => void)({ currentTarget: { value: "" } });
+  (select.props.onChange as (value: string) => void)("");
   expect(set.calls).toEqual(["prTitles a null"]);
 });
 
@@ -154,7 +154,7 @@ test("every git project offers an Auto fetch drop-down in its dialog, every minu
     expect(String(select.props.title)).toContain("Pull");
     expect(byTag(select, "option").map(textOf)).toEqual(["Off", "Every 15 seconds", "Every 30 seconds", "Every minute", "Every 5 minutes", "Every 10 minutes", "Every 15 minutes", "Every 30 minutes", "Every hour"]);
     expect(click(select)).toBe(true);
-    (select.props.onChange as (e: unknown) => void)({ currentTarget: { value: "15" } });
+    (select.props.onChange as (value: string) => void)("15");
   }
   expect(calls).toEqual(Array(3).fill("autoFetch a 15"));
 
@@ -162,8 +162,8 @@ test("every git project offers an Auto fetch drop-down in its dialog, every minu
   const withAutoFetch: Config = { ...configWith(), repos: [{ ...configWith().repos[0], autoFetchSeconds: 15 }] };
   const [select] = autoFetchSelects(dialog(withAutoFetch, set.t));
   expect(select.props.value).toBe("15");
-  (select.props.onChange as (e: unknown) => void)({ currentTarget: { value: "0" } });
-  (select.props.onChange as (e: unknown) => void)({ currentTarget: { value: "60" } });
+  (select.props.onChange as (value: string) => void)("0");
+  (select.props.onChange as (value: string) => void)("60");
   expect(set.calls).toEqual(["autoFetch a 0", "autoFetch a 60"]);
 
   const off: Config = { ...configWith(), repos: [{ ...configWith().repos[0], autoFetchSeconds: 0 }] };

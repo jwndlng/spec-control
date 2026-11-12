@@ -23,13 +23,14 @@ import { Settings } from "./settings.tsx";
 import { currentPath, currentQuery, followInApp, href, hrefWithQuery, navigate, onRouteChange } from "./url.ts";
 import { applyTheme, loadPreference, nextPreference, resolveTheme, savePreference, type ThemePreference } from "./theme.ts";
 import { Help } from "./help.tsx";
-import { IconActivity, IconChevronDown, IconClock, IconGitPullRequest, IconHelp, IconKanban, IconLayoutGrid, IconMonitor, IconMoon, IconRefresh, IconSettings, IconSun } from "./icons.tsx";
+import { IconActivity, IconClock, IconGitPullRequest, IconHelp, IconKanban, IconLayoutGrid, IconMonitor, IconMoon, IconRefresh, IconSettings, IconSun } from "./icons.tsx";
 import { HeroHomeMark, HeroHomeTitle } from "./heroHome.tsx";
 import { loadDismissed, saveDismissed, UPDATE_REREAD_MS, UpdateBanner, VersionLabel } from "./updateBanner.tsx";
 import { WhatsNew } from "./whatsNew.tsx";
 import { SetupWizard } from "./setupWizard.tsx";
 import { setupAutoOpens, shouldOpenSetup } from "./setupState.ts";
 import { Tour } from "./tour.tsx";
+import { Select } from "./select.tsx";
 import { loadTourSeen, saveTourSeen, shouldAutoStart, TOUR_ANCHOR, type TourAnchor, tourAutoStarts } from "./tourState.ts";
 
 const THEME_LABEL: Record<ThemePreference, string> = { system: "System", light: "Light", dark: "Dark" };
@@ -410,17 +411,10 @@ export function App() {
               </button>
               {/* How often the dashboard refreshes itself. Marked `on` for anything but Off, so whether the board
                   keeps itself current reads at a glance and not only from the value. */}
-              <label class={`control select-control status-control ${autoRefresh === "off" ? "" : "on"}`}>
+              <div class={`control select-control status-control ${autoRefresh === "off" ? "" : "on"}`}>
                 <IconClock size={12} />
-                <select aria-label="Auto-refresh interval" value={autoRefresh} onChange={(e) => chooseAutoRefresh(parseInterval(e.currentTarget.value))}>
-                  {AUTO_REFRESH_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.value === "off" ? "Auto: off" : `Auto: ${o.label}`}
-                    </option>
-                  ))}
-                </select>
-                <IconChevronDown size={11} />
-              </label>
+                <Select compact aria-label="Auto-refresh interval" value={autoRefresh} onChange={(value) => chooseAutoRefresh(parseInterval(value))} options={AUTO_REFRESH_OPTIONS.map((o) => ({ value: o.value, label: o.value === "off" ? "Auto: off" : `Auto: ${o.label}` }))} />
+              </div>
             </span>
           </div>
         </div>
