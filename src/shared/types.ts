@@ -1611,22 +1611,46 @@ export interface DismissFile {
   state: "restorable" | "lost";
 }
 
-/** What dismissing a change would delete (openspec/specs/change-dismissal). */
+/** Reversible dismissal preview: no repository files are removed. */
 export interface DismissPreview {
   repoId: string;
   name: string;
-  isGit: boolean;
-  files: DismissFile[];
-  /** Linked worktrees holding their own copy of the change; they are kept, and the card stays while one does. */
+  /** Server-resolved project/change incarnation, rechecked on confirmation. */
+  identity: string;
+  created?: string;
+  /** Every checkout copy remains untouched and can continue to hold an agent session. */
   copies: { path: string; branch?: string }[];
-  /** "Same as shown" token over every file's path, size, mtime and state; the dismissal is refused when it changed. */
-  fingerprint: string;
+  message: string;
 }
 
 export interface DismissResult {
   name: string;
-  /** Whether the removal was staged; false for a repository without git, an untracked change, or a failed `git add`. */
+  identity: string;
+  dismissed: true;
+}
+
+/** What the separately confirmed Delete change files action would remove. */
+export interface DeleteFilesPreview {
+  repoId: string;
+  name: string;
+  isGit: boolean;
+  files: DismissFile[];
+  copies: { path: string; branch?: string }[];
+  fingerprint: string;
+}
+
+export interface DeleteFilesResult {
+  name: string;
+  /** Whether the removal was staged; false for a repository without git or a failed `git add`. */
   staged: boolean;
+}
+
+export interface DismissedChange {
+  repoId: string;
+  name: string;
+  identity: string;
+  created?: string;
+  dismissedAt: string;
 }
 
 /**

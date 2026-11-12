@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { type AppState, createFetchHandler } from "../src/server/api.ts";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import { Scanner } from "../src/server/scanner.ts";
-import type { DismissPreview, RepoConfig } from "../src/shared/types.ts";
+import type { DeleteFilesPreview, RepoConfig } from "../src/shared/types.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
+import { treeFingerprint } from "./helpers.ts";
 import { git, tempGitRepo, tempPlainRepo } from "./sessionHelpers.ts";
 
 setDefaultTimeout(30_000);
@@ -27,7 +28,8 @@ const send = async (method: string, path: string, body?: unknown, headers: Recor
   });
   return { status: res.status, body: await res.json() };
 };
-const route = (repo: RepoConfig | string, name: string) => `/api/repos/${encodeURIComponent(typeof repo === "string" ? repo : repo.id)}/changes/${encodeURIComponent(name)}/dismiss`;
+const route = (repo: RepoConfig | string, name: string) => `/api/repos/${encodeURIComponent(typeof repo === "string" ? repo : repo.id)}/changes/${encodeURIComponent(name)}/delete-files`;
+const dismissRoute = (repo: RepoConfig | string, name: string) => `/api/repos/${encodeURIComponent(typeof repo === "string" ? repo : repo.id)}/changes/${encodeURIComponent(name)}/dismiss`;
 const dir = (repo: RepoConfig, name: string) => join(repo.path, "openspec", "changes", name);
 
 beforeAll(async () => {
@@ -81,7 +83,7 @@ test("a missing or malformed fingerprint is 400; a stale one is 409 and deletes 
   expect((await send("POST", path, "{not json")).status).toBe(400);
   expect((await send("POST", path, {})).status).toBe(400);
   expect((await send("POST", path, { fingerprint: 7 })).status).toBe(400);
-  const preview = (await send("GET", path)).body as DismissPreview;
+  const preview = (await send("GET", path)).body as DeleteFilesPreview;
   await writeFile(join(dir(active, "rotate-credentials"), "tasks.md"), "- [ ] 1.1 new\n");
   const stale = await send("POST", path, { fingerprint: preview.fingerprint });
   expect(stale.status).toBe(409);
@@ -92,7 +94,7 @@ test("preview then dismiss removes the change, stages its removal and rescans", 
   const path = route(active, "structured-logs");
   const preview = await send("GET", path);
   expect(preview.status).toBe(200);
-  const p = preview.body as DismissPreview;
+  const p = preview.body as DeleteFilesPreview;
   expect(p.isGit).toBe(true);
   expect(p.files.every((f) => f.state === "restorable")).toBe(true);
   // The linked worktree was cut before `cloud-deployment` left main, so it holds a copy of every change.
@@ -109,7 +111,7 @@ test("preview then dismiss removes the change, stages its removal and rescans", 
 
 test("a folder without git is supported and nothing is staged", async () => {
   const path = route(plain, "add-health-endpoint");
-  const p = (await send("GET", path)).body as DismissPreview;
+  const p = (await send("GET", path)).body as DeleteFilesPreview;
   expect(p.isGit).toBe(false);
   const res = await send("POST", path, { fingerprint: p.fingerprint });
   expect(res.body).toEqual({ name: "add-health-endpoint", staged: false });
@@ -118,8 +120,41 @@ test("a folder without git is supported and nothing is staged", async () => {
 
 test("a page on another origin cannot dismiss", async () => {
   const path = route(active, "bump-toolchain");
-  const p = (await send("GET", path)).body as DismissPreview;
+  const p = (await send("GET", path)).body as DeleteFilesPreview;
   const res = await send("POST", path, { fingerprint: p.fingerprint }, { origin: "https://evil.example" });
   expect(res.status).toBe(403);
   expect(existsSync(dir(active, "bump-toolchain"))).toBe(true);
+});
+
+test("dismiss is reversible, works for a worktree-only change, and never changes repository files or the index", async () => {
+  const path = dismissRoute(active, "cloud-deployment");
+  const before = await treeFingerprint(active.path);
+  const index = await Bun.file(join(active.path, ".git", "index")).arrayBuffer();
+  const preview = await send("GET", path);
+  expect(preview.status).toBe(200);
+  expect(preview.body).toMatchObject({ name: "cloud-deployment", copies: expect.arrayContaining([expect.objectContaining({ branch: "feat/cloud-deployment" })]) });
+  expect(typeof preview.body.identity).toBe("string");
+  const legacy = await send("POST", path, { fingerprint: "old-delete-fingerprint" });
+  expect(legacy.status).toBe(400);
+  expect(legacy.body.error).toContain("reversible");
+  const dismissed = await send("POST", path, { identity: preview.body.identity });
+  expect(dismissed).toMatchObject({ status: 200, body: { name: "cloud-deployment", identity: preview.body.identity, dismissed: true } });
+  expect(await treeFingerprint(active.path)).toBe(before);
+  expect(await Bun.file(join(active.path, ".git", "index")).arrayBuffer()).toEqual(index);
+  expect((await send("GET", `/api/repos/${encodeURIComponent(active.id)}/dismissed-changes`)).body.changes).toContainEqual(expect.objectContaining({ name: "cloud-deployment", identity: preview.body.identity }));
+  for (let i = 0; i < 2; i++) expect(await send("POST", dismissRoute(active, "cloud-deployment").replace(/\/dismiss$/, "/restore"), { identity: preview.body.identity })).toMatchObject({ status: 200, body: { dismissed: false } });
+  expect((await send("GET", `/api/repos/${encodeURIComponent(active.id)}/dismissed-changes`)).body.changes.some((c: { name: string }) => c.name === "cloud-deployment")).toBe(false);
+});
+
+test("dismiss identity races, foreign origins, and same-name repositories are scoped safely", async () => {
+  const path = dismissRoute(active, "structured-logs");
+  const preview = (await send("GET", path)).body;
+  const race = await send("POST", path, { identity: "stale-identity" });
+  expect(race.status).toBe(409);
+  const foreign = await send("POST", path, { identity: preview.identity }, { origin: "https://evil.example" });
+  expect(foreign.status).toBe(403);
+  const ok = await send("POST", path, { identity: preview.identity });
+  expect(ok.status).toBe(200);
+  expect((await send("GET", `/api/repos/${encodeURIComponent(active.id)}/dismissed-changes`)).body.changes.some((c: { name: string }) => c.name === "structured-logs")).toBe(true);
+  expect((await send("GET", `/api/repos/${encodeURIComponent(plain.id)}/dismissed-changes`)).body.changes.some((c: { name: string }) => c.name === "structured-logs")).toBe(false);
 });

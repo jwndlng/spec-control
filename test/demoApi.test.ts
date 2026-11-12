@@ -273,18 +273,19 @@ test("the main checkout's branch is never offered in the demo either", async () 
   expect(preview.branches.find((b) => b.name === "fix/focus-ring-contrast")).toMatchObject({ removable: true });
 });
 
-test("dismissing is simulated: a draft shows a file lost for good, leaves the board, and a reload brings it back", async () => {
+test("dismissal is reversible in the demo and leaves active card evidence intact", async () => {
   const { api } = demo();
   const repos = (await api.state()).repos;
   const repo = repos.find((r) => r.changes.some((c) => c.stage === "drafts" && !c.archived && (!c.checkout || c.checkout.isMain)))!;
   const draft = repo.changes.find((c) => c.stage === "drafts" && !c.archived && (!c.checkout || c.checkout.isMain))!;
   const preview = await api.dismissPreview(repo.id, draft.name);
-  expect(preview.files.some((f) => f.state === "lost")).toBe(true);
-  expect(preview.files.some((f) => f.path === ".openspec.yaml" && f.state === "restorable")).toBe(true);
   await expect(api.dismissChange(repo.id, draft.name, "stale")).rejects.toMatchObject({ status: 409 });
-  expect(await api.dismissChange(repo.id, draft.name, preview.fingerprint)).toEqual({ name: draft.name, staged: true });
-  expect((await api.state()).repos.find((r) => r.id === repo.id)!.changes.some((c) => c.name === draft.name && !c.archived)).toBe(false);
-  await expect(api.dismissPreview(repo.id, draft.name)).rejects.toMatchObject({ status: 404 });
+  expect(await api.dismissChange(repo.id, draft.name, preview.identity)).toEqual({ name: draft.name, identity: preview.identity, dismissed: true });
+  expect((await api.dismissedChanges(repo.id)).changes.some((c) => c.name === draft.name && c.identity === preview.identity)).toBe(true);
+  expect((await api.state()).repos.find((r) => r.id === repo.id)!.changes.some((c) => c.name === draft.name && !c.archived)).toBe(true);
+  await api.restoreChange(repo.id, draft.name, preview.identity);
+  await api.restoreChange(repo.id, draft.name, preview.identity);
+  expect((await api.dismissedChanges(repo.id)).changes.some((c) => c.name === draft.name)).toBe(false);
 
   const fresh = demo().api;
   expect((await fresh.state()).repos.find((r) => r.id === repo.id)!.changes.some((c) => c.name === draft.name)).toBe(true);
