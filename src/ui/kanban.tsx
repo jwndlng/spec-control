@@ -377,20 +377,24 @@ function RepoGroups({ column, cards, now, showRepo, from, groups: controls, onRe
         const bodyId = `group-${column.replace(/[^A-Za-z0-9]+/g, "-")}-${g.repoId}`;
         return (
           <section key={g.repoId} class={`repo-group repo-tint ${expanded ? "" : "minimized"}`} style={repoHue(g.cards[0].hue)} aria-label={g.repoName}>
-            <button
-              type="button"
-              class="repo-group-head"
-              aria-expanded={expanded}
-              aria-controls={bodyId}
-              aria-disabled={controls.forceExpanded}
-              title={controls.forceExpanded ? "expanded while searching" : expanded ? "minimize this group" : "expand this group"}
-              onClick={() => !controls.forceExpanded && controls.onToggle(g.repoId, column)}
-            >
-              <span class="chevron" aria-hidden="true" />
-              <span class="swatch" />
-              <span class="name">{g.repoName}</span>
+            <div class="repo-group-head">
+              <button
+                type="button"
+                class="repo-group-toggle"
+                aria-expanded={expanded}
+                aria-controls={bodyId}
+                aria-disabled={controls.forceExpanded}
+                title={controls.forceExpanded ? "expanded while searching" : expanded ? "minimize this group" : "expand this group"}
+                aria-label={`${expanded ? "Minimize" : "Expand"} ${g.repoName} group`}
+                onClick={() => !controls.forceExpanded && controls.onToggle(g.repoId, column)}
+              >
+                <span class="chevron" aria-hidden="true" />
+                <span class="swatch" />
+                <span class="name">{g.repoName}</span>
+              </button>
+              <a class="repo-group-project-link" href={href(repoPath(g.repoId))} onClick={(e) => followInApp(e, repoPath(g.repoId))} title={`Open ${g.repoName} project overview`} aria-label={`Open ${g.repoName} project overview`}>Open project</a>
               <span class="count">{g.cards.length}</span>
-            </button>
+            </div>
             {expanded && (
               <div class="repo-group-body" id={bodyId}>
                 {g.cards.map((c) => (

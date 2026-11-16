@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-16-open-project-from-board",
+  "date": "2026-11-16",
+  "title": "Open a project from its board group",
+  "summary": "On the combined board, select **Open project** beside a repository group name to go straight to that project's board. The group can still be expanded or collapsed independently."
+}
