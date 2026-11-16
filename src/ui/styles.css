@@ -573,24 +573,29 @@ button.badge.worktree-path.done { color: var(--success); }
 /* On top of the card gap, so panels sit clearly further apart than the cards inside them. */
 .repo-group + .repo-group { margin-top: 6px; }
 .repo-group-body { display: flex; flex-direction: column; gap: 10px; }
-/* The header is the minimize/expand button; a minimized group is just this line inside its panel. */
+/* The heading keeps its project link separate from the minimize/expand button. */
 .repo-group-head {
   display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 4px;
   font: inherit; font-size: 11px; line-height: 16px; text-align: left; color: inherit;
-  background: none; border: 0; border-radius: var(--radius-sm); cursor: pointer;
 }
-.repo-group-head:hover .name, .repo-group-head:hover .chevron { filter: brightness(1.15); }
-.repo-group-head:focus-visible { outline: 1px solid var(--repo-color); outline-offset: 2px; }
-.repo-group-head[aria-disabled="true"] { cursor: default; }
-.repo-group-head[aria-disabled="true"] .chevron { color: var(--fg-disabled); }
+.repo-group-toggle {
+  display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0;
+  font: inherit; text-align: left; color: inherit; background: none; border: 0; border-radius: var(--radius-sm); cursor: pointer;
+}
+.repo-group-toggle:hover .name, .repo-group-toggle:hover .chevron { filter: brightness(1.15); }
+.repo-group-toggle:focus-visible, .repo-group-project-link:focus-visible { outline: 1px solid var(--repo-color); outline-offset: 2px; }
+.repo-group-toggle[aria-disabled="true"] { cursor: default; }
+.repo-group-toggle[aria-disabled="true"] .chevron { color: var(--fg-disabled); }
 /* Drawn, not a glyph: text triangles render as a dot at this size. Points right when minimized, down when expanded. */
-.repo-group-head .chevron {
+.repo-group-toggle .chevron {
   flex: none; width: 0; height: 0; margin: 0 2px 0 1px; color: var(--repo-color);
   border-left: 5px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent;
   transition: transform 120ms;
 }
-.repo-group-head[aria-expanded="true"] .chevron { transform: rotate(90deg); }
-.repo-group-head .name { color: var(--repo-color); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo-group-toggle[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+.repo-group-toggle .name { color: var(--repo-color); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo-group-project-link { flex: none; color: var(--fg-subtle); text-decoration: none; }
+.repo-group-project-link:hover { color: var(--repo-color); text-decoration: underline; }
 .repo-group-head .count { margin-left: auto; font-family: var(--font-mono); color: var(--fg-subtle); }
 
 /* A card: the name and its age, under them its session state, then task progress and a footer with the next step and

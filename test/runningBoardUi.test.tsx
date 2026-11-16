@@ -121,7 +121,15 @@ for (const mode of ["path", "hash"] as const) {
       sessions = [live("rotate-keys"), ...changes.filter((c) => c.archived).map((c) => live(c.name))];
       await act(() => refresh());
       if (!single) {
-        const collapsed = root.querySelector<HTMLButtonElement>('.repo-group button[aria-expanded="false"]');
+        const projectLink = root.querySelector<HTMLAnchorElement>('.repo-group-project-link');
+        expect(projectLink?.getAttribute("href")).toBe(href(`/repo/${repoConfig.id}`, mode));
+        expect(projectLink?.getAttribute("aria-label")).toBe("Open demo-ops project overview");
+        const toggle = root.querySelector<HTMLButtonElement>('.repo-group-toggle[aria-expanded="true"]');
+        expect(toggle).not.toBeNull();
+        await act(() => projectLink!.click());
+        expect(toggle!.getAttribute("aria-expanded")).toBe("true");
+        browser.history.replaceState(null, "", navigateUrl({ pathname: "/demo/index.html" }, "/board", mode, browser.location.search));
+        const collapsed = root.querySelector<HTMLButtonElement>('.repo-group-toggle[aria-expanded="false"]');
         expect(collapsed).not.toBeNull();
         await act(() => collapsed!.click());
       }
