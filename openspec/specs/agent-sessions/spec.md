@@ -2119,11 +2119,15 @@ When Ship finds or creates a pull request, its result SHALL include the pull req
 - **THEN** it does not report a complete successful Ship result without a review destination
 
 ### Requirement: Explicit Archive is not blocked by unfinished tasks
-For a change whose required artifacts are ready for Archive, unresolved or unknown task state SHALL NOT prevent an explicit Archive action. Archive SHALL preserve task state and SHALL NOT imply that outstanding work was completed. Automatic Archive SHALL continue to follow its separate eligibility requirements, including its task completion gate.
+Spec Control SHALL offer **Archive** only when the change is in `Done` and its required artifacts are ready. Unresolved or unknown task state SHALL NOT make Archive available before `Done`. A dependency that is not met SHALL NOT withhold Archive from a change in `Done`. Archive SHALL preserve task state and SHALL NOT imply that outstanding work was completed. Automatic Archive SHALL continue to follow its separate eligibility requirements, including its task completion gate.
 
 #### Scenario: Ready change has unresolved tasks
-- **WHEN** Archive is explicitly activated for a change with required artifacts ready and one or more unresolved tasks
-- **THEN** Archive proceeds while preserving those task states
+- **WHEN** a change's required artifacts are ready but its stage is `Ready` or `Implementing`
+- **THEN** Archive is not offered, whether or not the change has an unmet dependency
+
+#### Scenario: Done change has an unmet dependency
+- **WHEN** a change is in `Done`, its required artifacts are ready, and one or more dependencies are unresolved
+- **THEN** Archive is offered and preserves the dependency and task state
 
 ### Requirement: Finish tasks after a merged implementation
 For a change with unresolved tasks and a linked merged implementation PR, the dashboard SHALL offer **Finish checks** to ask an agent to verify and finish remaining tasks. It SHALL use the relevant session or a safe session worktree, and SHALL ask the agent to prepare a reviewable task update after verification.
@@ -2362,3 +2366,18 @@ Before launching a managed OpenSpec action, the dashboard SHALL verify its workf
 #### Scenario: Runtime parity
 - **WHEN** Codex or Antigravity starts the same managed action in equivalent fresh worktrees
 - **THEN** both receive the same workflow contract and action boundaries without requiring identical native skill-discovery behavior
+
+### Requirement: Session branch recording supports changes without metadata markers
+When the dashboard records a session branch and the matching active or archived change directory exists without `.openspec.yaml`, it SHALL create the marker in the session worktree and record the branch there. It SHALL NOT create or modify the marker in the main checkout. Existing markers SHALL keep their other content, and missing change directories or unsafe paths SHALL still be refused.
+
+#### Scenario: Deterministic Archive of a markerless change
+- **WHEN** the user starts deterministic Archive for a complete change whose active directory has no `.openspec.yaml`
+- **THEN** the archived change in the session worktree has an `.openspec.yaml` recording `archive-branch`, the archive ships successfully, and the main checkout remains unchanged
+
+#### Scenario: Ship of a markerless active change
+- **WHEN** a session ships a change whose active directory has no `.openspec.yaml`
+- **THEN** the session worktree gains an `.openspec.yaml` recording the session branch and Ship continues
+
+#### Scenario: Missing or unsafe change directory
+- **WHEN** the matching change directory does not exist or a path segment is a symbolic link
+- **THEN** branch recording is refused and no marker is created outside the session worktree

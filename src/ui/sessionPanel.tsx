@@ -15,7 +15,7 @@ import {
   type Shortcut,
 } from "../shared/types.ts";
 import type { PullRequestStep } from "../shared/nextStep.ts";
-import { linkedPullRequest } from "../shared/pullRequestLink.ts";
+import { linkedPullRequest, mergedImplementation } from "../shared/pullRequestLink.ts";
 import { api, type TerminalMessage } from "./api.ts";
 import { cdCommand } from "./format.ts";
 import { inPlaceReason } from "./inPlaceText.ts";
@@ -429,6 +429,10 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   const split = steps && card ? starterSplit(card, [...steps.into, ...steps.endFirst], linked) : undefined;
   // A pull-request step the split button offers is not offered a second time beside it.
   const inSplit = (step: PullRequestStep) => split !== undefined && [split.main, ...split.menu].some((n) => n?.kind === "pullRequest" && n.step === step);
+  const showFinishChecks = !!card && !!mergedImplementation(card, prs.data?.repos) && sessionsEnabledFor(ui.config, card.repoId);
+  const showPullRequestActions = showFinishChecks || (!!canResolve && !!session && !inSplit("resolveConflicts")) || (!!merge && !!session && !inSplit("merge"));
+  const showChangeActions = !!(session && card && receiving && sessionsEnabledFor(ui.config, card.repoId) && (split?.main || split?.menu.length));
+  const showSessionActions = !!session;
   // Nothing has ever run for this change: the tab says so and offers the openings, which is why it exists at all.
   const untouched = !session && !tree;
 
@@ -595,13 +599,12 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
             </div>
           )}
         </div>
-        <details class="console-more-actions">
-          <summary>More actions</summary>
-          <div class="console-action-groups">
+        <div class="console-action-groups">
+            {showPullRequestActions && (
             <section class="console-action-group" aria-label="Pull request actions">
               <span class="console-action-heading">Pull request</span>
               <div class="row console-secondary-actions">
-                {card && <FinishChecks card={card} />}
+                {showFinishChecks && card && <FinishChecks card={card} />}
                 {canResolve && session && !inSplit("resolveConflicts") && (
                   <button
                     type="button"
@@ -640,6 +643,8 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
                 )}
               </div>
             </section>
+            )}
+            {showChangeActions && (
             <section class="console-action-group" aria-label="Change actions">
               <span class="console-action-heading">Change</span>
               <div class="row console-secondary-actions">
@@ -686,6 +691,8 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
                 )}
               </div>
             </section>
+            )}
+            {showSessionActions && (
             <section class="console-action-group" aria-label="Session actions">
               <span class="console-action-heading">Session</span>
               <div class="row console-secondary-actions">
@@ -720,8 +727,8 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
                 {path && openInEditor && <OpenInEditor folder={path} open={openInEditor} run={act} />}
               </div>
             </section>
-          </div>
-        </details>
+            )}
+        </div>
         {(error ?? session?.error) && <div class="notice danger">{error ?? session?.error}</div>}
         {session?.workflowMode === "cli" && <div class="notice" role="status">OpenSpec CLI fallback supplied this action's workflow instructions from the session checkout.</div>}
         {session?.autoEnded && <div class={`notice ${session.autoEnded.removed ? "ok" : "warn"}`}>{autoEndedText(session.autoEnded)}</div>}

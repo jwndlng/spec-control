@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-16-console-actions-visible",
+  "date": "2026-11-16",
+  "title": "Find change actions in the Console tab",
+  "summary": "The change's Console tab now shows available pull request, change, and session actions without expanding **More actions**. **Ship** stays prominent, and empty groups are hidden."
+}

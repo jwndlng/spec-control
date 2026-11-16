@@ -1986,10 +1986,7 @@ a.badge.needs-you:focus-visible { outline: 2px solid var(--brand); outline-offse
 .console-ship-action { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 .console-ship-action > span { color: var(--fg-subtle); font-size: 12px; }
 .console-ship-primary .ship-operation-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; }
-.console-more-actions { align-self: flex-start; }
-.console-more-actions > summary { width: max-content; color: var(--fg-subtle); font-size: 12px; cursor: pointer; }
-.console-more-actions > summary:hover, .console-more-actions > summary:focus-visible { color: var(--fg-heading); }
-.console-action-groups { display: grid; gap: 14px; margin-top: 8px; }
+.console-action-groups { display: grid; gap: 10px; }
 .console-action-group { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
 .console-action-heading { color: var(--fg-subtle); font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
 .console-action-group .row { gap: 6px; }
