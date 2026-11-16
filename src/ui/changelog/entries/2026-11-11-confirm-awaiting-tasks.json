@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-11-confirm-awaiting-tasks",
+  "date": "2026-11-11",
+  "title": "Confirm tasks from change detail",
+  "summary": "After checking a task marked `[~]`, select **Mark confirmed** in change detail to record it as done. The dashboard updates only that task and asks you to refresh if the file has changed."
+}

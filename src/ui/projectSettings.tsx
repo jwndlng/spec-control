@@ -5,6 +5,7 @@
 // tile. Hook-free, so tests can walk them; the state lives in `useTracking`. Every control stops the click, so a row or
 // tile that holds one never opens the repository's board because of it.
 import type { ComponentChildren } from "preact";
+import { useState } from "preact/hooks";
 import { AUTO_FETCH_SECONDS, type AgentPermissionProfileId, type AutoFetchSeconds, autoFetchInterval, CONVENTIONAL_COMMITS_SHIP_SENTENCE, repoAgentEnabled, type Config, type DetectedLabel, type PrTitleConvention, type RepoConfig } from "../shared/types.ts";
 import { settingApplies } from "../shared/repoSettings.ts";
 import { IconPencil, IconSettings, IconTag } from "./icons.tsx";
@@ -12,8 +13,10 @@ import { labelSuggestions, RepoLabelsEditor } from "./labels.tsx";
 import { OpenSpecSetupAction } from "./openSpecSetup.tsx";
 import { Modal } from "./modal.tsx";
 import { autoFetchEvery } from "./pullState.ts";
+import { customCommandCapability, normalizeCustomCommands } from "../shared/customCommands.ts";
 import { DisableButton, type Tracking } from "./untracked.tsx";
 import { followInApp, hrefWithQuery } from "./url.ts";
+import { Select } from "./select.tsx";
 
 const stop = (e: Event) => e.stopPropagation();
 
@@ -65,7 +68,7 @@ export function AgentToggle({ repo, config, tracking }: { repo: RepoConfig; conf
 }
 
 export const AUTO_MERGE_HINT =
-  "Auto-merge docs-only pull requests: Ship and Archive open their pull request deterministically, and Draft artifacts opens the proposal as a pull request of its own on docs/<change>. Once a pull request whose changes GitHub reports as all under openspec/ is open, mergeable and its checks pass, Spec Control merges it automatically via the GitHub CLI; one without any checks is not merged this way, and any other pull request is left for review. Once such a pull request has merged, the dashboard ends its session and removes its worktree when that is safe.";
+  "Controls automatic merging for documentation-only Ship and Archive pull requests. Draft proposals use their own docs/<change> branch and follow the standard proposal merge policy regardless of this setting. Implementation pull requests containing code remain for review.";
 
 /**
  * On / Off for auto-merging docs-only pull requests (auto-merge-docs). Only where Ship exists: a git project whose agent
@@ -120,10 +123,6 @@ export function AutoMergeToggle({ repo, config, isGit, tracking, short = false }
 export const KEEP_EACH = "keep";
 export const KEEP_EACH_LABEL = "Keep each project's setting";
 
-function KeepOption({ keep }: { keep?: boolean }) {
-  return keep ? <option value={KEEP_EACH}>{KEEP_EACH_LABEL}</option> : null;
-}
-
 /** The control a setting is shown with: its value, its accessible name and what a change does. Saving is the caller's. */
 interface SelectProps {
   value: string;
@@ -137,43 +136,17 @@ interface SelectProps {
 
 /** "default agent" or a configured profile; the value `""` is the default agent. */
 export function AgentSelect({ agents, value, label, title, disabled, keep, onChange }: SelectProps & { agents: Config["agentSessions"]["agents"] }) {
-  return (
-    <select class="input agent-picker" aria-label={label} title={title} value={value} disabled={disabled} onClick={stop} onChange={(e) => onChange(e.currentTarget.value)}>
-      <KeepOption keep={keep} />
-      <option value="">default agent</option>
-      {agents.map((a) => (
-        <option key={a.id} value={a.id}>
-          {a.name}
-        </option>
-      ))}
-    </select>
-  );
+  return <Select class="input agent-picker" aria-label={label} title={title} value={value} disabled={disabled} onTriggerClick={stop} onChange={onChange} options={[...(keep ? [{ value: KEEP_EACH, label: KEEP_EACH_LABEL }] : []), { value: "", label: "default agent" }, ...agents.map((agent) => ({ value: agent.id, label: agent.name }))]} />;
 }
 
 /** No convention (`""`) or Conventional Commits. */
 export function PrTitlesSelect({ value, label, title = PR_TITLES_TITLE, disabled, keep, onChange }: SelectProps) {
-  return (
-    <select class="input pr-titles-picker" aria-label={label} title={title} value={value} disabled={disabled} onClick={stop} onChange={(e) => onChange(e.currentTarget.value)}>
-      <KeepOption keep={keep} />
-      <option value="">No convention</option>
-      <option value="conventional-commits">Conventional Commits</option>
-    </select>
-  );
+  return <Select class="input pr-titles-picker" aria-label={label} title={title} value={value} disabled={disabled} onTriggerClick={stop} onChange={onChange} options={[...(keep ? [{ value: KEEP_EACH, label: KEEP_EACH_LABEL }] : []), { value: "", label: "No convention" }, { value: "conventional-commits", label: "Conventional Commits" }]} />;
 }
 
 /** Off (`"0"`) or one of the offered intervals, in seconds. */
 export function AutoFetchSelect({ value, label, title = AUTO_FETCH_TITLE, disabled, keep, onChange }: SelectProps) {
-  return (
-    <select class="input auto-fetch-picker" aria-label={label} title={title} value={value} disabled={disabled} onClick={stop} onChange={(e) => onChange(e.currentTarget.value)}>
-      <KeepOption keep={keep} />
-      <option value="0">Off</option>
-      {AUTO_FETCH_SECONDS.map((s) => (
-        <option key={s} value={String(s)}>
-          {autoFetchLabel(s)}
-        </option>
-      ))}
-    </select>
-  );
+  return <Select class="input auto-fetch-picker" aria-label={label} title={title} value={value} disabled={disabled} onTriggerClick={stop} onChange={onChange} options={[...(keep ? [{ value: KEEP_EACH, label: KEEP_EACH_LABEL }] : []), { value: "0", label: "Off" }, ...AUTO_FETCH_SECONDS.map((seconds) => ({ value: String(seconds), label: autoFetchLabel(seconds) }))]} />;
 }
 
 /** Which agent the project's sessions start: only offered with a choice to make and sessions on for the project. */
@@ -193,10 +166,37 @@ export function AgentPicker({ repo, config, tracking }: { repo: RepoConfig; conf
 
 export function PermissionProfilePicker({ repo, config, tracking }: { repo: RepoConfig; config: Config; tracking: Tracking }) {
   if (!config.agentSessions.enabled || !repoAgentEnabled(repo)) return null;
-  return <select class="input" aria-label={`Permission profile for ${repo.name}`} value={repo.agent?.permissionProfile ?? ""} disabled={tracking.busy[repo.id] !== undefined} onClick={stop} onChange={(event) => tracking.setAgent(repo.id, { permissionProfile: (event.currentTarget.value || null) as AgentPermissionProfileId | null })}>
-    <option value="">Default ({config.agentSessions.defaultPermissionProfile ?? "minimum"})</option>
-    <option value="minimum">Minimum</option><option value="less-friction">Less friction</option><option value="full-automation">Full automation</option>
-  </select>;
+  return <Select class="input" aria-label={`Permission profile for ${repo.name}`} value={repo.agent?.permissionProfile ?? ""} disabled={tracking.busy[repo.id] !== undefined} onTriggerClick={stop} onChange={(value) => tracking.setAgent(repo.id, { permissionProfile: (value || null) as AgentPermissionProfileId | null })} options={[
+    { value: "", label: `Default (${config.agentSessions.defaultPermissionProfile ?? "minimum"})` },
+    { value: "minimum", label: "Minimum" }, { value: "less-friction", label: "Less friction" }, { value: "full-automation", label: "Full automation" },
+  ]} />;
+}
+
+export function CustomCommandsEditor({ repo, config, tracking }: { repo: RepoConfig; config: Config; tracking: Tracking }) {
+  const [draft, setDraft] = useState("");
+  const [validationError, setValidationError] = useState("");
+  const saved = repo.agent?.allowedCommands ?? [];
+  const busy = tracking.busy[repo.id] !== undefined;
+  const selectedAgent = config.agentSessions.agents.find((agent) => agent.id === (repo.agent?.agentId ?? config.agentSessions.defaultAgent));
+  const profile = repo.agent?.permissionProfile ?? config.agentSessions.defaultPermissionProfile;
+  const capability = customCommandCapability(selectedAgent?.id, profile ?? "minimum");
+  const status = capability === "inactive" ? "Saved prefixes are inactive under the minimum permission profile." : capability === "supported" ? "Claude applies these prefixes on the next start or resume." : "This agent runtime does not apply project command prefixes.";
+  const add = () => {
+    const result = normalizeCustomCommands([...saved, draft]);
+    if (result.error) { setValidationError(result.error); return; }
+    setValidationError("");
+    setDraft("");
+    tracking.setAgent(repo.id, { allowedCommands: result.commands });
+  };
+  return <div class="custom-commands-editor">
+    <p class="hint">Literal prefixes match the command and trailing arguments. They take effect on the next agent start; commands execute repository code and retain protected-command confirmation. {status}</p>
+    <label class="custom-command-entry">Command prefix
+      <input class="input" aria-label={`Custom command prefix for ${repo.name}`} value={draft} disabled={busy} onClick={stop} onInput={(event) => { setDraft(event.currentTarget.value); setValidationError(""); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); add(); } }} />
+    </label>
+    <button type="button" class="btn sm" aria-label={`Add custom command for ${repo.name}`} disabled={busy || !draft.trim()} onClick={(event) => { event.stopPropagation(); add(); }}>Add</button>
+    {validationError && <p class="notice danger" role="alert">{validationError}</p>}
+    {saved.length > 0 && <ul class="custom-command-list">{saved.map((command) => <li key={command}><code>{command}</code><button type="button" class="btn sm ghost" aria-label={`Remove ${command} from ${repo.name}`} disabled={busy} onClick={(event) => { event.stopPropagation(); tracking.setAgent(repo.id, { allowedCommands: saved.filter((item) => item !== command) }); }}>Remove</button></li>)}</ul>}
+  </div>;
 }
 
 export const PR_TITLES_TITLE = `PR titles: how Ship asks the agent to title this project's pull requests, saved at once. Conventional Commits adds: "${CONVENTIONAL_COMMITS_SHIP_SENTENCE}"`;
@@ -366,6 +366,7 @@ export function ProjectSettingsDialog({ repo, config, isGit, tracking }: { repo:
         <SettingLine label="Agent sessions">{AgentToggle({ repo, config, tracking })}</SettingLine>
         <SettingLine label="Agent">{AgentPicker({ repo, config, tracking })}</SettingLine>
         <SettingLine label="Permission profile">{PermissionProfilePicker({ repo, config, tracking })}</SettingLine>
+        {config.agentSessions.enabled && repoAgentEnabled(repo) && <SettingLine label="Custom commands"><CustomCommandsEditor repo={repo} config={config} tracking={tracking} /></SettingLine>}
         <SettingLine label="PR titles">{PrTitlesPicker({ repo, isGit, tracking })}</SettingLine>
         <SettingLine label="Docs auto-merge">{AutoMergeToggle({ repo, config, isGit, tracking, short: true })}</SettingLine>
         <SettingLine label="Auto fetch">{AutoFetchPicker({ repo, isGit, tracking })}</SettingLine>

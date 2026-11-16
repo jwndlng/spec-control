@@ -13,7 +13,8 @@ import type { ChangeSnapshot, PullRequest, PullRequestsResponse, Snapshot } from
 import { api } from "./api.ts";
 import { Stat } from "./band.tsx";
 import { relTime } from "./format.ts";
-import { IconChevronDown, IconGitPullRequest, IconRefresh, IconRotateCcw } from "./icons.tsx";
+import { IconGitPullRequest, IconRefresh, IconRotateCcw } from "./icons.tsx";
+import { Select } from "./select.tsx";
 import { Modal } from "./modal.tsx";
 import {
   createPrRefresher,
@@ -508,29 +509,14 @@ export function PullRequestsView({ snapshot }: { snapshot: Snapshot | null }) {
       </div>
       <div class="filterbar">
         <div class="filterbar-row">
-          <label class="control select-control" for="pr-repo">
+          <div class="control select-control">
             <span>Repository</span>
-            <select id="pr-repo" value={filters.repo ?? ""} onChange={(e) => setFilters({ repo: e.currentTarget.value || undefined })}>
-              <option value="">All repositories</option>
-              {repos.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
-            <IconChevronDown size={12} />
-          </label>
-          <label class="control select-control" for="pr-state">
+            <Select id="pr-repo" aria-label="Repository" value={filters.repo ?? ""} onChange={(value) => setFilters({ repo: value || undefined })} options={[{ value: "", label: "All repositories" }, ...repos.map((r) => ({ value: r.id, label: r.name }))]} />
+          </div>
+          <div class="control select-control">
             <span>Show</span>
-            <select id="pr-state" value={filters.state} onChange={(e) => setFilters({ state: e.currentTarget.value as PrFilters["state"] })}>
-              {(["all", "open", "closed"] as PrFilters["state"][]).map((s) => (
-                <option key={s} value={s}>
-                  {STATE_LABEL[s]}
-                </option>
-              ))}
-            </select>
-            <IconChevronDown size={12} />
-          </label>
+            <Select id="pr-state" aria-label="Show pull requests" value={filters.state} onChange={(value) => setFilters({ state: value as PrFilters["state"] })} options={(["all", "open", "closed"] as PrFilters["state"][]).map((s) => ({ value: s, label: STATE_LABEL[s] }))} />
+          </div>
           <button
             type="button"
             class={`control switch-control ${filters.mine ? "on" : ""}`}

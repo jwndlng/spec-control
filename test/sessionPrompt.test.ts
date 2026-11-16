@@ -94,7 +94,7 @@ test("prompt refusals: stage, unknown action, not running, feature off", async (
     return 0;
   };
   expect(await refused("draft")).toBe(400); // every artifact of the fixture's change is done
-  expect(await refused("archive")).toBe(400); // not because it is Archive: the change is not `Done` yet
+  expect(await refused("archive")).toBe(400); // required artifacts do not make an unfinished change archivable
   expect(await refused("ship")).toBe(400);
   expect(await refused("implement", "nope")).toBe(404);
 
@@ -129,7 +129,7 @@ test("additional instructions for an action with no prompt leave it unavailable,
   expect(startersFor(h.config, changeOf(h, "upgrade-runtime"))).toEqual(["custom"]);
 });
 
-test("a draft session takes the implement prompt once the change is ready, and records it", async () => {
+test("a proposal session requires the explicit handoff before implementation starts", async () => {
   const h = await harness();
   managers.push(h.manager);
   const change = changeOf(h, "upgrade-runtime");
@@ -138,7 +138,11 @@ test("a draft session takes the implement prompt once the change is ready, and r
   const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "draft" });
   expect(s.action).toBe("draft");
   Object.assign(change, { stage: "ready", artifacts }); // the agent finished drafting; the scanner noticed
-  expect((await h.manager.prompt(s.id, { action: "implement" })).action).toBe("implement");
+  await expect(h.manager.prompt(s.id, { action: "implement" })).rejects.toThrow(/drafts the proposal/);
+  expect(h.manager.get(s.id).action).toBe("draft");
+  const implementation = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement", endProposal: true });
+  expect(implementation.action).toBe("implement");
+  expect(implementation.id).not.toBe(s.id);
 });
 
 test("one open session per change: opening any action returns the running session, and Archive gets no worktree of its own", async () => {

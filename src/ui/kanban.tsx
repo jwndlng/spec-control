@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { api } from "./api.ts";
 import { boardColumns, isComplete } from "../shared/columns.ts";
 import { waitingNote } from "../shared/dependencies.ts";
 import { isProposalPullRequest, linkedPullRequest } from "../shared/pullRequestLink.ts";
@@ -45,6 +46,8 @@ export interface Card extends ChangeSnapshot {
   pullRequestFetchedAt?: string;
   /** Whether that pull request is the change's proposal pull request (from `docs/<name>`), which the badge says. */
   proposalPullRequest?: boolean;
+  dismissed?: boolean;
+  dismissalIdentity?: string;
 }
 
 /**
@@ -199,7 +202,7 @@ function NeedsYouBadge({ card, tasks, from }: { card: Card; tasks: NonNullable<C
  * working on the change, or its pull request is not ready yet — shows on the whole card, tinted and, while something is
  * still in progress, with its name swept; the caller decides it (`cardWorkingState`), so the card stays hook-free.
  */
-export function ChangeCard({ card, now, from, working, running = false, merging, stale }: { card: Card; now: number; from: string; working?: CardWorkingState; running?: boolean; merging?: string; stale?: StaleReason }) {
+export function ChangeCard({ card, now, from, working, running = false, merging, stale, onRestored }: { card: Card; now: number; from: string; working?: CardWorkingState; running?: boolean; merging?: string; stale?: StaleReason; onRestored?: () => void }) {
   const noTasks = card.warnings?.includes("tasks file has no tasks");
   // An archive still on a worktree can have tasks that need attention too.
   const needsYou = (!card.archived || card.checkout?.isMain === false) && card.tasks && (card.tasks.awaiting ?? 0) > 0 ? card.tasks : undefined;
@@ -234,6 +237,7 @@ export function ChangeCard({ card, now, from, working, running = false, merging,
             Stale
           </span>
         )}
+        {card.dismissed && <><span class="badge">Dismissed</span><RestoreButton card={card} onRestored={onRestored} /></>}
         {card.warnings?.filter((w) => w !== "tasks file has no tasks").map((w) => (
           <span class="badge danger" title={w}>
             ⚠ error
@@ -257,6 +261,19 @@ export function ChangeCard({ card, now, from, working, running = false, merging,
     </article>
   );
 }
+
+function RestoreButton({ card, onRestored }: { card: Card; onRestored?: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  return <span class="restore-control"><button type="button" class="btn sm" disabled={busy} title="Restore this change to the active board" onClick={async () => {
+    setBusy(true); setError(undefined);
+    if (!card.dismissalIdentity) { setError("The dismissal identity is unavailable; reload the board and try again."); setBusy(false); return; }
+    try { await api.restoreChange(card.repoId, card.name, card.dismissalIdentity); onRestored?.(); }
+    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    finally { setBusy(false); }
+  }}>{busy ? "Restoring…" : "Restore"}</button>{error && <span class="badge danger" role="alert" title={error}>Restore failed</span>}</span>;
+}
+
 
 /** Keep unmerged archive work reachable even when there is no pull request or the session has exited. */
 export function PendingArchiveLink({ card, from, running }: { card: Card; from: string; running: boolean }) {
@@ -303,6 +320,7 @@ export function visibleCards(cards: Card[], filters: Filters, single: boolean, n
   return cards.filter((c) => {
     if (!single && filters.repos.length && !filters.repos.includes(c.repoId)) return false;
     if (q && !c.name.toLowerCase().includes(q) && !c.repoName.toLowerCase().includes(q)) return false;
+    if (filters.runningOnly && !hasRunningSession(c, sessions)) return false;
     if (filters.activeDays > 0) {
       const at = c.lastActivityAt ? Date.parse(c.lastActivityAt) : Number.NaN;
       if (!Number.isNaN(at) && now - at >= filters.activeDays * DAY_MS && !hasRunningSession(c, sessions)) return false;
@@ -336,7 +354,7 @@ interface GroupControls {
 
 // Cards of one column, grouped by repository in the same order in every column. On a single-repository
 // board (`showRepo` false) the group header would only repeat the page header, so the cards render flat.
-function RepoGroups({ column, cards, now, showRepo, from, groups: controls }: { column: string; cards: Card[]; now: number; showRepo: boolean; from: string; groups: GroupControls }) {
+function RepoGroups({ column, cards, now, showRepo, from, groups: controls, onRestored }: { column: string; cards: Card[]; now: number; showRepo: boolean; from: string; groups: GroupControls; onRestored?: () => void }) {
   const groups = useMemo(() => groupByRepo(cards), [cards]);
   const ui = useSessionUi();
   const working = (c: Card) => cardWorkingState(ui.config, ui.sessions, c);
@@ -347,7 +365,7 @@ function RepoGroups({ column, cards, now, showRepo, from, groups: controls }: { 
     return (
       <div class="cards">
         {cards.map((c) => (
-          <ChangeCard key={`${c.repoId}/${c.name}`} card={c} now={now} from={from} working={working(c)} running={running(c)} merging={merging(c)} stale={stale(c)} />
+          <ChangeCard key={`${c.repoId}/${c.name}`} card={c} now={now} from={from} working={working(c)} running={running(c)} merging={merging(c)} stale={stale(c)} onRestored={onRestored} />
         ))}
       </div>
     );
@@ -359,24 +377,28 @@ function RepoGroups({ column, cards, now, showRepo, from, groups: controls }: { 
         const bodyId = `group-${column.replace(/[^A-Za-z0-9]+/g, "-")}-${g.repoId}`;
         return (
           <section key={g.repoId} class={`repo-group repo-tint ${expanded ? "" : "minimized"}`} style={repoHue(g.cards[0].hue)} aria-label={g.repoName}>
-            <button
-              type="button"
-              class="repo-group-head"
-              aria-expanded={expanded}
-              aria-controls={bodyId}
-              aria-disabled={controls.forceExpanded}
-              title={controls.forceExpanded ? "expanded while searching" : expanded ? "minimize this group" : "expand this group"}
-              onClick={() => !controls.forceExpanded && controls.onToggle(g.repoId, column)}
-            >
-              <span class="chevron" aria-hidden="true" />
-              <span class="swatch" />
-              <span class="name">{g.repoName}</span>
+            <div class="repo-group-head">
+              <button
+                type="button"
+                class="repo-group-toggle"
+                aria-expanded={expanded}
+                aria-controls={bodyId}
+                aria-disabled={controls.forceExpanded}
+                title={controls.forceExpanded ? "expanded while searching" : expanded ? "minimize this group" : "expand this group"}
+                aria-label={`${expanded ? "Minimize" : "Expand"} ${g.repoName} group`}
+                onClick={() => !controls.forceExpanded && controls.onToggle(g.repoId, column)}
+              >
+                <span class="chevron" aria-hidden="true" />
+                <span class="swatch" />
+                <span class="name">{g.repoName}</span>
+              </button>
+              <a class="repo-group-project-link" href={href(repoPath(g.repoId))} onClick={(e) => followInApp(e, repoPath(g.repoId))} title={`Open ${g.repoName} project overview`} aria-label={`Open ${g.repoName} project overview`}>Open project</a>
               <span class="count">{g.cards.length}</span>
-            </button>
+            </div>
             {expanded && (
               <div class="repo-group-body" id={bodyId}>
                 {g.cards.map((c) => (
-                  <ChangeCard key={`${c.repoId}/${c.name}`} card={c} now={now} from={from} working={working(c)} running={running(c)} merging={merging(c)} stale={stale(c)} />
+                  <ChangeCard key={`${c.repoId}/${c.name}`} card={c} now={now} from={from} working={working(c)} running={running(c)} merging={merging(c)} stale={stale(c)} onRestored={onRestored} />
                 ))}
               </div>
             )}
@@ -413,7 +435,7 @@ function useNarrowWindow(): boolean {
 }
 
 // `countLabel` replaces the card count in the header when the column shows only part of its cards (Archived).
-function Column({ label, cards, now, hot, showRepo, from, countLabel, groups }: { label: string; cards: Card[]; now: number; hot?: boolean; showRepo: boolean; from: string; countLabel?: string; groups: GroupControls }) {
+function Column({ label, cards, now, hot, showRepo, from, countLabel, groups, onRestored }: { label: string; cards: Card[]; now: number; hot?: boolean; showRepo: boolean; from: string; countLabel?: string; groups: GroupControls; onRestored?: () => void }) {
   return (
     <section class={`column ${cards.length === 0 ? "empty" : ""}`}>
       <div class="column-head">
@@ -421,7 +443,7 @@ function Column({ label, cards, now, hot, showRepo, from, countLabel, groups }: 
         <h2 title={COLUMN_HINT[label]}>{label}</h2>
         <span class={`count ${hot && cards.length ? "hot" : ""}`}>{countLabel ?? cards.length}</span>
       </div>
-      <RepoGroups column={label} cards={cards} now={now} showRepo={showRepo} from={from} groups={groups} />
+      <RepoGroups column={label} cards={cards} now={now} showRepo={showRepo} from={from} groups={groups} onRestored={onRestored} />
     </section>
   );
 }
@@ -621,6 +643,8 @@ export function initialFilters(query: string, repoId: string | undefined): Filte
  */
 export function Kanban({ snapshot, config, repoId, query, onReload, onConfig = () => {} }: { snapshot: Snapshot | null; config: Config | null; repoId?: string; query?: string; onReload?: () => void; onConfig?: (config: Config) => void }) {
   const [filters, setFiltersState] = useState<Filters>(() => initialFilters(query ?? currentQuery(), repoId));
+  const [showDismissed, setShowDismissed] = useState(false);
+  const [dismissals, setDismissals] = useState<Map<string, string>>(() => new Map());
   const { worktrees, sessions } = useSessionUi();
   const layout = resolveLayout(filters.layout, useNarrowWindow());
   const now = Date.now();
@@ -645,11 +669,25 @@ export function Kanban({ snapshot, config, repoId, query, onReload, onConfig = (
   // Cards carry this board and its filters, so the detail view can lead back here.
   const from = boardFrom(repoId === undefined ? "/board" : repoPath(repoId), serializeFilters(filters));
   const repos: RepoSnapshot[] = useMemo(() => (snapshot?.repos ?? []).filter((r) => !single || r.id === repoId), [snapshot, single, repoId]);
+  useEffect(() => {
+    let stale = false;
+    Promise.all(repos.filter((r) => r.ok).map(async (r) => {
+      try { return (await api.dismissedChanges(r.id)).changes; } catch { return []; }
+    })).then((lists) => {
+      if (stale) return;
+      setDismissals(new Map(lists.flat().map((d) => [`${d.repoId}\0${d.name}`, d.identity])));
+    });
+    return () => { stale = true; };
+  }, [repos]);
   // Hues come from every repository in the snapshot — not the filtered ones, nor just this board's — so a colour never depends on the view.
   const hues = useMemo(() => assignRepoHues((snapshot?.repos ?? []).map((r) => r.id)), [snapshot]);
   // The cached pull requests at once; a refresh, when opening this board started one, adds links in place.
   const prs = usePullRequests();
-  const cards: Card[] = useMemo(() => boardCards(repos, hues, prs.data), [repos, hues, prs.data]);
+  const allCards: Card[] = useMemo(() => boardCards(repos, hues, prs.data).map((card) => {
+    const identity = dismissals.get(`${card.repoId}\0${card.name}`);
+    return identity ? { ...card, dismissed: true, dismissalIdentity: identity } : card;
+  }), [repos, hues, prs.data, dismissals]);
+  const cards = useMemo(() => showDismissed ? allCards : allCards.filter((card) => !card.dismissed), [allCards, showDismissed]);
   // Opening a board is the third way a view showing pull requests may refresh a stale cache — once, here, and never on
   // a timer or after a scan: the board's instance outlives scans and an open detail view (openspec/specs/pull-requests).
   const { loading: prsLoading, openBoard } = prs;
@@ -717,7 +755,7 @@ export function Kanban({ snapshot, config, repoId, query, onReload, onConfig = (
           )}
         </div>
       )}
-      <FilterBar filters={filters} setFilters={setFilters} repos={repos} hues={hues} single={single} showing={showing} layout={layout} />
+      <FilterBar filters={filters} setFilters={setFilters} repos={repos} hues={hues} single={single} showing={showing} layout={layout} showDismissed={showDismissed} onShowDismissed={setShowDismissed} />
       {!single && creating && (
         <NewChangeDialog
           target={{ projects: targets.projects, preselected: creating.preselected, byLabel: { repos, config } }}
@@ -733,13 +771,13 @@ export function Kanban({ snapshot, config, repoId, query, onReload, onConfig = (
         {columns.map((label) => {
           const inColumn = visible.filter((c) => c.column === label);
           if (label !== "Archived") {
-            return <Column key={label} label={label} cards={inColumn} now={now} hot={label === "Done"} showRepo={!single} from={from} groups={groupControls} />;
+            return <Column key={label} label={label} cards={inColumn} now={now} hot={label === "Done"} showRepo={!single} from={from} groups={groupControls} onRestored={onReload} />;
           }
           if (filters.hideArchived) return null;
           // A regular column, but bounded to the most recent archives; the header still reports the total.
           const recent = recentArchived(archivedCards, ARCHIVED_LIMIT);
           const countLabel = recent.length < archivedCards.length ? `${recent.length} of ${archivedCards.length}` : undefined;
-          return <Column key={label} label={label} cards={recent} now={now} showRepo={!single} from={from} countLabel={countLabel} groups={groupControls} />;
+          return <Column key={label} label={label} cards={recent} now={now} showRepo={!single} from={from} countLabel={countLabel} groups={groupControls} onRestored={onReload} />;
         })}
       </div>
     </>

@@ -2,14 +2,16 @@
 import { launchCommand, launchWithoutPrompt, resolveModel, resumeLaunch, withPermissionArgs } from "../src/server/sessions/agents.ts";
 import { defaultConfig } from "../src/server/config.ts";
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionActivity } from "../src/server/activity/events.ts";
 import type { SessionManager } from "../src/server/sessions/manager.ts";
 import { defaultShipTitle } from "../src/server/sessions/manager.ts";
 import { scanRepo } from "../src/server/scanner.ts";
 import { recordBranchInWorktree } from "../src/server/frameworks/worktreeMetadata.ts";
-import type { ChangeSession, PullRequest } from "../src/shared/types.ts";
+import type { ChangeSession, ChangeSnapshot, LifecycleDeliveryRecord, PullRequest } from "../src/shared/types.ts";
+import { lifecycleContentHash } from "../src/server/lifecycleDelivery.ts";
+import { readShipTaskDocument } from "../src/server/sessions/taskSummary.ts";
 import { installFakeGh, type GhHarness } from "./ghHelpers.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
 import { fakeProfile, git, harness, waitFor, watch, type Harness } from "./sessionHelpers.ts";
@@ -38,6 +40,28 @@ test("Antigravity receives supported mode and sandbox flags without an undocumen
   terminal.detach();
 });
 
+test("change-session permissions use the current project commands on start and resume only", async () => {
+  const h = await harness({ agent: { id: "claude" } });
+  managers.push(h.manager);
+  h.config.agentSessions.defaultAgent = "claude";
+  h.config.repos[0]!.agent = { enabled: true, permissionProfile: "less-friction", allowedCommands: ["bun run lint"] };
+  const session = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const first = await watch(h.manager, session.id);
+  await waitFor(() => first.text().includes("fake-agent ready"), "change agent start");
+  expect(first.text()).toContain("Bash(bun run lint)");
+  h.config.repos[0]!.agent.allowedCommands = ["bun run test"];
+  expect(first.text()).not.toContain("Bash(bun run test)");
+  await h.manager.close(session.id);
+  await h.manager.resume(session.id);
+  const resumed = await watch(h.manager, session.id);
+  await waitFor(() => resumed.text().includes("--resumed"), "change agent resume");
+  const resumedOutput = resumed.text().slice(resumed.text().lastIndexOf("fake-agent ready"));
+  expect(resumedOutput).toContain("Bash(bun run test)");
+  expect(resumedOutput).not.toContain("Bash(bun run lint)");
+  first.detach();
+  resumed.detach();
+});
+
 let cleanup: () => Promise<void>;
 let gh: GhHarness;
 const managers: SessionManager[] = [];
@@ -49,6 +73,7 @@ beforeAll(async () => {
 
 afterEach(async () => {
   for (const m of managers.splice(0)) await m.shutdown();
+  await gh.scenario({});
   await gh.forget();
 });
 
@@ -76,6 +101,7 @@ function pr(patch: Partial<PullRequest> & { head: string }): PullRequest {
     checks: "passing",
     mergeable: "mergeable",
     docsOnly: true,
+    ...(patch.headOid ? { requiredChecks: { headOid: patch.headOid, state: "none" as const, fetchedAt: new Date().toISOString() } } : {}),
     ...patch,
   };
 }
@@ -93,6 +119,191 @@ async function setupFakeRemote(repoPath: string): Promise<string> {
   git(repoPath, "config", "remote.origin.pushurl", bare);
   return bare;
 }
+
+test("automatic proposal Ship rejects already committed and uncommitted files outside its change", async () => {
+  const h = await harness();
+  managers.push(h.manager);
+  await setupFakeRemote(h.repoPath);
+  const session = await h.manager.open({ repoId: h.repoId, change: DRAFT, action: "draft" }) as ChangeSession;
+  await putFile(session.worktreePath, `openspec/changes/${DRAFT}/proposal.md`, "# Proposal\n");
+  await putFile(session.worktreePath, "src/unrelated.ts", "export const unrelated = true;\n");
+  git(session.worktreePath, "add", "src/unrelated.ts");
+  git(session.worktreePath, "commit", "-m", "unrelated code");
+  await putFile(session.worktreePath, "src/untracked.ts", "export const untracked = true;\n");
+  await h.manager.confirmPhaseComplete(session.id, session.managedActionId as string);
+  const contentHash = await lifecycleContentHash(session.worktreePath);
+  if (!contentHash) throw new Error("could not hash proposal worktree");
+  const head = git(session.worktreePath, "rev-parse", "HEAD");
+  const record: LifecycleDeliveryRecord = {
+    version: 1, id: "a".repeat(64), projectId: h.repoId, projectPath: h.repoPath, projectIncarnation: "project",
+    change: DRAFT, changeIncarnation: "change", phase: "proposal", revision: 1, actionId: session.managedActionId as string,
+    completionRevision: 1, sessionId: session.id, worktreePath: session.worktreePath, branch: session.branch as string,
+    contentHash, snapshotHash: "snapshot", head,
+    state: "pending", recovery: ["retry"], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), attempts: 0,
+  };
+  await expect(h.manager.deliverLifecycle(record)).rejects.toThrow("src/unrelated.ts");
+  expect(git(session.worktreePath, "status", "--porcelain")).toContain("?? src/");
+  expect(git(session.worktreePath, "rev-parse", "HEAD")).toBe(head);
+});
+
+test("automatic proposal Ship keeps the generated PR body, title convention, and proposal merge policy", async () => {
+  const h = await harness();
+  managers.push(h.manager);
+  await setupFakeRemote(h.repoPath);
+  h.config.repos[0]!.prTitleConvention = "conventional-commits";
+  let created: { head: string; base: string; title: string; body?: string } | undefined;
+  const manager = h.newManager({
+    listPullRequests: async () => [],
+    createPullRequest: async (_github, input) => { created = input; return { ok: true, url: "https://github.com/acme/demo-ops/pull/97" }; },
+  });
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: DRAFT, action: "draft" }) as ChangeSession;
+  await putFile(session.worktreePath, `openspec/changes/${DRAFT}/pull-request.md`, "Delivered proposal behavior and checks actually run.\n");
+  await manager.confirmPhaseComplete(session.id, session.managedActionId as string);
+  const contentHash = await lifecycleContentHash(session.worktreePath);
+  if (!contentHash) throw new Error("could not hash proposal worktree");
+  const head = git(session.worktreePath, "rev-parse", "HEAD");
+  const record: LifecycleDeliveryRecord = {
+    version: 1, id: "b".repeat(64), projectId: h.repoId, projectPath: h.repoPath, projectIncarnation: "project",
+    change: DRAFT, changeIncarnation: "change", phase: "proposal", revision: 1, actionId: session.managedActionId as string,
+    completionRevision: 1, sessionId: session.id, worktreePath: session.worktreePath, branch: session.branch as string,
+    contentHash, snapshotHash: "snapshot", head, state: "pending", recovery: ["retry"], createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(), attempts: 0,
+  };
+  const result = await manager.deliverLifecycle(record);
+  expect(result).toMatchObject({ shipped: true, pullRequestState: "created", pullRequestUrl: "https://github.com/acme/demo-ops/pull/97", autoMerge: true });
+  expect(created).toMatchObject({ head: `docs/${DRAFT}`, base: "main", title: `docs(openspec): add ${DRAFT}`, body: "Delivered proposal behavior and checks actually run." });
+});
+
+test("lifecycle Ship resumes an interrupted commit without creating a second commit", async () => {
+  const h = await harness();
+  managers.push(h.manager);
+  await setupFakeRemote(h.repoPath);
+  let created = 0;
+  const manager = h.newManager({
+    listPullRequests: async () => [],
+    createPullRequest: async () => { created++; return { ok: true, url: "https://github.com/acme/demo-ops/pull/98" }; },
+  });
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: DRAFT, action: "draft" }) as ChangeSession;
+  await putFile(session.worktreePath, `openspec/changes/${DRAFT}/pull-request.md`, "proposal checkpoint\n");
+  await recordBranchInWorktree(session.worktreePath, session.change, "branch", session.branch as string);
+  const contentHash = await lifecycleContentHash(session.worktreePath);
+  if (!contentHash) throw new Error("could not hash pre-Ship checkpoint");
+  const head = git(session.worktreePath, "rev-parse", "HEAD");
+  git(session.worktreePath, "add", "-A");
+  git(session.worktreePath, "commit", "-m", "docs: commit proposal checkpoint");
+  const committedHead = git(session.worktreePath, "rev-parse", "HEAD");
+  const record: LifecycleDeliveryRecord = {
+    version: 1, id: "c".repeat(64), projectId: h.repoId, projectPath: h.repoPath, projectIncarnation: "project",
+    change: DRAFT, changeIncarnation: "change", phase: "proposal", revision: 1, actionId: session.managedActionId as string,
+    completionRevision: 1, sessionId: session.id, worktreePath: session.worktreePath, branch: session.branch as string,
+    contentHash, snapshotHash: "snapshot", head, state: "pending", recovery: ["retry"], createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(), attempts: 1,
+  };
+  const interrupted = manager.get(session.id) as ChangeSession;
+  interrupted.state = "exited";
+  interrupted.exitCode = null;
+  interrupted.shipOperation = { operationId: "ship-op", checkpointId: record.id, state: "unknown", stage: "committing", startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), committed: false, pushed: false };
+  const [result, duplicate] = await Promise.all([manager.deliverLifecycle(record), manager.deliverLifecycle(record)]);
+  expect(result).toMatchObject({ shipped: true, pullRequestState: "created", pullRequestUrl: "https://github.com/acme/demo-ops/pull/98" });
+  expect(duplicate).toMatchObject({ shipped: true, pullRequestUrl: "https://github.com/acme/demo-ops/pull/98" });
+  expect(git(session.worktreePath, "rev-parse", "HEAD")).toBe(committedHead);
+  expect(created).toBe(1);
+  expect((manager.get(session.id) as ChangeSession).shipOperation).toMatchObject({ checkpointId: record.id, state: "succeeded", committed: true, pushed: true });
+});
+
+test("fake-agent lifecycle delivers proposal, implementation and archive across restart", async () => {
+  const h = await harness();
+  managers.push(h.manager);
+  await setupFakeRemote(h.repoPath);
+  const draft = await h.manager.open({ repoId: h.repoId, change: DRAFT, action: "draft" }) as ChangeSession;
+  const draftTerminal = await watch(h.manager, draft.id);
+  await waitFor(() => draftTerminal.text().includes("fake-agent ready"), "Draft fake agent");
+  await putFile(draft.worktreePath, `openspec/changes/${DRAFT}/pull-request.md`, "Delivered proposal behavior and checks.\n");
+  await putFile(draft.worktreePath, `openspec/changes/${DRAFT}/design.md`, "# Design\n");
+  await putFile(draft.worktreePath, `openspec/changes/${DRAFT}/specs/agent-sessions/spec.md`, "# Spec\n");
+  await putFile(draft.worktreePath, `openspec/changes/${DRAFT}/tasks.md`, "## 1. Work\n\n- [x] 1.1 Draft complete\n");
+  expect(await readShipTaskDocument(draft.worktreePath, DRAFT, h.snapshot.repos[0]?.framework)).toMatchObject({ artifactsReady: true });
+  await h.manager.confirmPhaseComplete(draft.id, draft.managedActionId as string);
+  const proposalHash = await lifecycleContentHash(draft.worktreePath);
+  if (!proposalHash) throw new Error("could not hash proposal checkpoint");
+  const proposalRecord: LifecycleDeliveryRecord = {
+    version: 1, id: "d".repeat(64), projectId: h.repoId, projectPath: h.repoPath, projectIncarnation: "project-v1",
+    change: DRAFT, changeIncarnation: "change-v1", phase: "proposal", revision: 1, actionId: draft.managedActionId as string,
+    completionRevision: 1, sessionId: draft.id, worktreePath: draft.worktreePath, branch: draft.branch as string,
+    contentHash: proposalHash, snapshotHash: proposalHash, head: git(draft.worktreePath, "rev-parse", "HEAD"), state: "pending",
+    recovery: ["retry"], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), attempts: 0,
+  };
+  const proposalShip = await h.manager.deliverLifecycle(proposalRecord);
+  expect(proposalShip).toMatchObject({ shipped: true, autoMerge: true });
+  const proposalHead = git(draft.worktreePath, "rev-parse", "HEAD");
+  await gh.scenario({ commandModes: { merge: { mode: "fail", stderr: "temporary merge service error" } } });
+  const proposalPr = pr({ number: 91, head: draft.branch as string, headOid: proposalHead, checks: "passing", mergeable: "mergeable", docsOnly: true });
+  await h.manager.requestReadyMerges(h.repoId, [proposalPr]);
+  expect((h.manager.get(draft.id) as ChangeSession).mergeAsked).toMatchObject({ attempts: 1, failure: "temporary merge service error" });
+  await gh.scenario({});
+  await h.manager.requestReadyMerges(h.repoId, [proposalPr]);
+  expect((h.manager.get(draft.id) as ChangeSession).mergeAsked).toMatchObject({ attempts: 2, head: proposalHead });
+  await h.manager.submit(draft.id, "exit");
+  await waitFor(() => h.manager.get(draft.id).state === "exited", "Draft agent exit");
+  draftTerminal.detach();
+
+  await h.manager.shutdown();
+  const manager = h.newManager();
+  managers.push(manager);
+  await manager.init();
+  expect(manager.get(draft.id)).toMatchObject({ state: "exited", shipOperation: { state: "succeeded", checkpointId: proposalRecord.id } });
+  const implementation = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" }) as ChangeSession;
+  const implementationTerminal = await watch(manager, implementation.id);
+  await waitFor(() => implementationTerminal.text().includes("fake-agent ready"), "Implement fake agent");
+  await putFile(implementation.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "## 1. Work\n\n- [x] 1.1 Implemented\n");
+  await putFile(implementation.worktreePath, "src/lifecycle-feature.ts", "export const delivered = true;\n");
+  expect(await readShipTaskDocument(implementation.worktreePath, IMPLEMENT, h.snapshot.repos[0]?.framework)).toMatchObject({ artifactsReady: true });
+  await manager.confirmPhaseComplete(implementation.id, implementation.managedActionId as string);
+  const implementationHash = await lifecycleContentHash(implementation.worktreePath);
+  if (!implementationHash) throw new Error("could not hash implementation checkpoint");
+  const implementationRecord: LifecycleDeliveryRecord = {
+    ...proposalRecord, id: "e".repeat(64), change: IMPLEMENT, phase: "implementation", actionId: implementation.managedActionId as string,
+    sessionId: implementation.id, worktreePath: implementation.worktreePath, branch: implementation.branch as string,
+    contentHash: implementationHash, snapshotHash: implementationHash, head: git(implementation.worktreePath, "rev-parse", "HEAD"),
+  };
+  const implementationShip = await manager.deliverLifecycle(implementationRecord);
+  expect(implementationShip).toMatchObject({ shipped: true, autoMerge: false });
+  const implementationHead = git(implementation.worktreePath, "rev-parse", "HEAD");
+  const implementationPr = pr({ number: 92, head: implementation.branch as string, headOid: implementationHead, checks: "passing", mergeable: "mergeable", docsOnly: false });
+  await expect(manager.mergeSessionPullRequest(implementation.id, [implementationPr])).resolves.toMatchObject({ merged: true, number: 92 });
+  expect((await gh.calls()).filter((call) => call.argv.includes("merge")).length).toBeGreaterThanOrEqual(3);
+  await manager.submit(implementation.id, "exit");
+  await waitFor(() => manager.get(implementation.id).state === "exited", "Implement agent exit");
+  implementationTerminal.detach();
+
+  const archive = await manager.open({ repoId: h.repoId, change: ARCHIVE, action: "archive" }) as ChangeSession;
+  const archiveTerminal = await watch(manager, archive.id);
+  await waitFor(() => archiveTerminal.text().includes("fake-agent ready"), "Archive fake agent");
+  const archiveDate = "2026-11-16";
+  const archiveDir = `openspec/changes/archive/${archiveDate}-${ARCHIVE}`;
+  await putFile(archive.worktreePath, `${archiveDir}/proposal.md`, "# Archived\n");
+  await putFile(archive.worktreePath, `${archiveDir}/.openspec.yaml`, "schema: spec-driven\n");
+  await putFile(archive.worktreePath, `${archiveDir}/tasks.md`, "## 1. Work\n\n- [x] 1.1 Complete\n");
+  await rm(join(archive.worktreePath, "openspec/changes", ARCHIVE), { recursive: true, force: true });
+  h.snapshot.repos[0]!.changes = h.snapshot.repos[0]!.changes.map((change) => change.name === ARCHIVE
+    ? { ...change, archived: archiveDate, stage: "archived", column: "Archived" }
+    : change);
+  await manager.confirmPhaseComplete(archive.id, archive.managedActionId as string);
+  expect(await readShipTaskDocument(archive.worktreePath, ARCHIVE, h.snapshot.repos[0]?.framework)).toMatchObject({ artifactsReady: true });
+  const archiveHash = await lifecycleContentHash(archive.worktreePath);
+  if (!archiveHash) throw new Error("could not hash archive checkpoint");
+  const archiveRecord: LifecycleDeliveryRecord = {
+    ...proposalRecord, id: "f".repeat(64), change: ARCHIVE, phase: "archive", actionId: archive.managedActionId as string,
+    sessionId: archive.id, worktreePath: archive.worktreePath, branch: archive.branch as string,
+    contentHash: archiveHash, snapshotHash: archiveHash, head: git(archive.worktreePath, "rev-parse", "HEAD"),
+  };
+  expect(await manager.deliverLifecycle(archiveRecord)).toMatchObject({ shipped: true });
+  expect((await gh.calls()).filter((call) => call.argv.includes("create"))).toHaveLength(3);
+  expect((manager.get(archive.id) as ChangeSession).shipOperation).toMatchObject({ checkpointId: archiveRecord.id, state: "succeeded" });
+  archiveTerminal.detach();
+});
 
 // ---------------------------------------------------------------------------
 // 3.2 Deterministic Ship
@@ -142,7 +353,10 @@ test("Ship commits uncommitted changes, pushes branch to origin, and opens PR vi
   await setupFakeRemote(h.repoPath);
 
   const events: SessionActivity[] = [];
-  const manager = h.newManager({ onActivity: (_s, a) => events.push(a) });
+  let releaseList!: () => void;
+  let listStarted!: () => void;
+  const listing = new Promise<void>((resolve) => { listStarted = resolve; });
+  const manager = h.newManager({ onActivity: (_s, a) => events.push(a), listPullRequests: () => new Promise((resolve) => { releaseList = () => resolve([]); listStarted(); }) });
   managers.push(manager);
 
   const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
@@ -154,10 +368,17 @@ test("Ship commits uncommitted changes, pushes branch to origin, and opens PR vi
   await putFile(session.worktreePath, "src/keys.ts", "export const key = '123';\n");
 
   // Run Ship
-  const result = await manager.ship(session.id);
+  const firstShip = manager.ship(session.id);
+  await listing;
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "running", stage: "pull-request", committed: true, pushed: true });
+  expect(manager.ship(session.id)).toBe(firstShip);
+  releaseList();
+  const result = await firstShip;
   expect(result.shipped).toBe(true);
   expect(result.pullRequestUrl).toBe("https://github.com/acme/demo-ops/pull/99");
   expect(result.pullRequestNumber).toBe(99);
+  expect(result.pullRequestState).toBe("created");
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "succeeded", stage: "done", pullRequestState: "created", pullRequestUrl: result.pullRequestUrl, committed: true, pushed: true });
 
   // Verify .openspec.yaml has recorded branch
   const marker = await Bun.file(join(session.worktreePath, `openspec/changes/${IMPLEMENT}/.openspec.yaml`)).text();
@@ -179,6 +400,13 @@ test("Ship commits uncommitted changes, pushes branch to origin, and opens PR vi
 
   // Verify activity event was reported
   expect(events.some((e) => e.kind === "session-shipped")).toBe(true);
+
+  // The session list after a dashboard restart carries the terminal operation and PR identity back to the UI.
+  await manager.shutdown();
+  const recovered = h.newManager();
+  managers.push(recovered);
+  await recovered.init();
+  expect(recovered.get(session.id).shipOperation).toMatchObject({ state: "succeeded", stage: "done", pullRequestUrl: "https://github.com/acme/demo-ops/pull/99" });
 });
 
 test("Ship uses a non-empty fallback for blank and unsafe description artifacts", async () => {
@@ -201,6 +429,143 @@ test("Ship uses a non-empty fallback for blank and unsafe description artifacts"
     expect(bodyIndex).toBeGreaterThanOrEqual(0);
     expect(create?.argv[bodyIndex + 1]).toBe(`Review the OpenSpec artifacts for ${IMPLEMENT}.`);
   }
+});
+
+test("Ship failure after push preserves the verified outcome and retry safely opens one PR", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  let lookups = 0;
+  const manager = h.newManager({ listPullRequests: async () => {
+    lookups++;
+    if (lookups === 1) throw new Error("pull request lookup unavailable");
+    return [];
+  } });
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified\n");
+  await putFile(session.worktreePath, "src/ship-retry.ts", "export {};\n");
+  await expect(manager.ship(session.id)).rejects.toThrow("pull request lookup unavailable");
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "failed", failedStage: "pull-request", committed: true, pushed: true });
+  const shippedOid = git(session.worktreePath, "rev-parse", "HEAD");
+  const retry = await manager.ship(session.id);
+  expect(retry).toMatchObject({ shipped: true, pullRequestState: "created", pullRequestUrl: "https://github.com/acme/demo-ops/pull/99" });
+  expect(git(session.worktreePath, "rev-parse", "HEAD")).toBe(shippedOid);
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "succeeded", stage: "done", pushed: true });
+});
+
+test("Ship commit failure is reported before push and can be retried", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  const manager = h.newManager();
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified\n");
+  await putFile(session.worktreePath, "src/ship-commit.ts", "export {};\n");
+  const lock = git(session.worktreePath, "rev-parse", "--path-format=absolute", "--git-path", "index.lock");
+  await writeFile(lock, "locked for test\n");
+  await expect(manager.ship(session.id)).rejects.toThrow(/index\.lock|could not commit/i);
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "failed", failedStage: "committing", committed: false, pushed: false });
+  await rm(lock, { force: true });
+  expect(await manager.ship(session.id)).toMatchObject({ shipped: true, pullRequestState: "created" });
+});
+
+test("Ship push rejection preserves the local commit and can be retried after remote permission is restored", async () => {
+  const h = await harness();
+  const bare = await setupFakeRemote(h.repoPath);
+  const manager = h.newManager();
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified\n");
+  await putFile(session.worktreePath, "src/ship-push.ts", "export {};\n");
+  const hook = join(bare, "hooks", "pre-receive");
+  await writeFile(hook, "#!/bin/sh\nprintf 'permission denied by remote\\n' >&2\nexit 1\n");
+  await chmod(hook, 0o755);
+  await expect(manager.ship(session.id)).rejects.toThrow(/permission denied/i);
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "failed", failedStage: "pushing", committed: true, pushed: false });
+  await rm(hook, { force: true });
+  expect(await manager.ship(session.id)).toMatchObject({ shipped: true, pullRequestState: "created" });
+});
+
+test("PR creation failure after push is reported and safe retry creates the PR", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  const manager = h.newManager({ listPullRequests: async () => [] });
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified\n");
+  await putFile(session.worktreePath, "src/ship-pr.ts", "export {};\n");
+  await gh.scenario({ mode: "fail", stderr: "gh: authentication denied" });
+  await expect(manager.ship(session.id)).rejects.toThrow(/not signed in/i);
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "failed", failedStage: "pull-request", committed: true, pushed: true });
+  const head = git(session.worktreePath, "rev-parse", "HEAD");
+  await gh.scenario({});
+  expect(await manager.ship(session.id)).toMatchObject({ shipped: true, pullRequestState: "created" });
+  expect(git(session.worktreePath, "rev-parse", "HEAD")).toBe(head);
+});
+
+test("a refresh failure after PR creation keeps its verified link and retry reuses that PR", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  let refreshes = 0;
+  const manager = h.newManager({
+    listPullRequests: async () => [],
+    refreshPullRequests: async () => {
+      refreshes++;
+      if (refreshes === 1) {
+        await gh.scenario({ mode: "fail", stderr: "a pull request already exists: https://github.com/acme/demo-ops/pull/99" });
+        throw new Error("pull request refresh failed");
+      }
+      await gh.scenario({});
+    },
+  });
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified\n");
+  await putFile(session.worktreePath, "src/ship-refresh.ts", "export {};\n");
+  await expect(manager.ship(session.id)).rejects.toThrow("pull request refresh failed");
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "failed", failedStage: "refreshing", pullRequestState: "created", pullRequestUrl: "https://github.com/acme/demo-ops/pull/99", pushed: true });
+  const retry = await manager.ship(session.id);
+  expect(retry).toMatchObject({ shipped: true, pullRequestState: "existing", pullRequestUrl: "https://github.com/acme/demo-ops/pull/99" });
+  expect((await gh.calls()).filter((call) => call.argv.includes("create"))).toHaveLength(2);
+});
+
+test("a timed-out PR create stays outcome-unknown until retry finds the existing PR", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  let lookups = 0;
+  let creates = 0;
+  const existing = pr({ number: 99, url: "https://github.com/acme/demo-ops/pull/99", head: `feat/${IMPLEMENT}` });
+  const manager = h.newManager({
+    listPullRequests: async () => ++lookups === 1 ? [] : [existing],
+    createPullRequest: async () => {
+      creates++;
+      return { ok: false, failure: { kind: "failed", reason: "gh timed out", outcomeUnknown: true } };
+    },
+  });
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/tasks.md`, "- [x] Verified\n");
+  await putFile(session.worktreePath, "src/ship-timeout.ts", "export {};\n");
+  await expect(manager.ship(session.id)).rejects.toThrow("pull request outcome is unknown");
+  expect(manager.get(session.id).shipOperation).toMatchObject({ state: "unknown", stage: "pull-request", committed: true, pushed: true });
+  expect(manager.get(session.id).shipOperation?.pullRequestUrl).toBeUndefined();
+  const retry = await manager.ship(session.id);
+  expect(retry).toMatchObject({ shipped: true, pullRequestState: "existing", pullRequestUrl: existing.url });
+  expect(creates).toBe(1);
+});
+
+test("a dashboard restart converts an in-flight Ship record to an unknown outcome", async () => {
+  const h = await harness();
+  const manager = h.newManager();
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const now = new Date().toISOString();
+  manager.get(session.id).shipOperation = { operationId: "123e4567-e89b-12d3-a456-426614174000", state: "running", stage: "pushing", startedAt: now, updatedAt: now, committed: true, pushed: false };
+  await manager.close(session.id);
+  const recovered = h.newManager();
+  managers.push(recovered);
+  await recovered.init();
+  expect(recovered.get(session.id).shipOperation).toMatchObject({ state: "unknown", stage: "pushing", committed: true, error: expect.stringContaining("remote outcome is unknown") });
 });
 
 test("Ship uses the fallback when the description artifact is absent", async () => {
@@ -262,11 +627,27 @@ test("Ship reuses existing open pull request from cache if present", async () =>
   const result = await manager.ship(session.id);
   expect(result.shipped).toBe(true);
   expect(result.pullRequestNumber).toBe(42);
+  expect(result.pullRequestState).toBe("existing");
   expect(result.pullRequestUrl).toBe("https://github.com/acme/demo-ops/pull/42");
 
   // gh pr create was NOT called
   const calls = await gh.calls();
   expect(calls.filter((c) => c.argv.includes("create"))).toHaveLength(0);
+});
+
+test("Ship reports partial completion when gh returns no valid PR URL", async () => {
+  const h = await harness();
+  await setupFakeRemote(h.repoPath);
+  managers.push(h.manager);
+  const session = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/notes.md`, "ready to ship\n");
+  await gh.scenario({ createOutput: "not a pull request URL" });
+  const preflight = await h.manager.ship(session.id);
+  expect(preflight.preflight?.summary.open.length).toBeGreaterThan(0);
+  const result = await h.manager.ship(session.id, { confirmation: preflight.preflight!.token });
+  expect(result).toMatchObject({ shipped: false, submitted: true, pullRequestState: "unavailable" });
+  expect(result.pullRequestUrl).toBeUndefined();
+  expect(result.shipWarning).toContain("no valid pull request URL");
 });
 
 test("Ship records autoMergeAskedAt when only OpenSpec documents changed and autoMergeDocs is on", async () => {
@@ -283,7 +664,7 @@ test("Ship records autoMergeAskedAt when only OpenSpec documents changed and aut
   await putFile(session.worktreePath, `openspec/changes/${IMPLEMENT}/notes.md`, "some notes\n");
 
   const result = await manager.ship(session.id);
-  expect(result.autoMerge).toBe(true);
+  expect(result).toMatchObject({ shipped: true, pullRequestState: "created", autoMerge: true });
   expect(result.autoMergeInstructionIncluded).toBe(true);
 
   const updated = manager.get(session.id) as ChangeSession;
@@ -371,6 +752,51 @@ test("Archive session automatically ships on exit 0 once archive directory exist
     const calls = await gh.calls();
     return calls.some((c) => c.argv.includes("create"));
   }, "archive auto-ship");
+});
+
+test("explicitly accepted unresolved archive publishes for review without changing task markers or auto-merging", async () => {
+  const h = await harness();
+  h.config.repos[0]!.agent = { enabled: true, autoMergeDocs: true };
+  await setupFakeRemote(h.repoPath);
+  let created = 0;
+  const manager = h.newManager({
+    listPullRequests: async () => [],
+    createPullRequest: async () => { created++; return { ok: true, url: "https://github.com/acme/demo-ops/pull/96" }; },
+  });
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: ARCHIVE, action: "archive" }) as ChangeSession;
+  const archivedAt = "2026-11-16";
+  const archivePath = join(session.worktreePath, "openspec/changes/archive", `${archivedAt}-${ARCHIVE}`);
+  await putFile(archivePath, "proposal.md", "# Archived proposal\n");
+  await putFile(archivePath, ".openspec.yaml", "schema: spec-driven\n");
+  await putFile(archivePath, "design.md", "# Design\n");
+  await putFile(archivePath, "tasks.md", "- [x] Verified\n- [ ] unresolved\n");
+  await rm(join(session.worktreePath, "openspec/changes", ARCHIVE), { recursive: true, force: true });
+  const archivedChange: ChangeSnapshot = {
+    repoId: h.repoId, name: ARCHIVE, schema: "spec-driven", artifacts: [{ id: "proposal", status: "done", required: true }],
+    tasks: { done: 1, total: 2 }, created: "2026-11-01", archived: archivedAt, stage: "archived", column: "Archived",
+  };
+  h.snapshot.repos[0]!.changes = [archivedChange];
+  const terminal = await watch(manager, session.id);
+  await waitFor(() => terminal.text().includes("fake-agent ready"), "archive agent ready");
+  await manager.confirmPhaseComplete(session.id, session.managedActionId as string);
+  await manager.acceptUnresolvedArchive(session.id, session.managedActionId as string);
+  const internal = manager.get(session.id) as ChangeSession;
+  expect(internal.unresolvedArchiveAcceptedActionId).toBe(session.managedActionId);
+  const contentHash = await lifecycleContentHash(session.worktreePath);
+  if (!contentHash) throw new Error("could not hash accepted archive");
+  const record: LifecycleDeliveryRecord = {
+    version: 1, id: "d".repeat(64), projectId: h.repoId, projectPath: h.repoPath, projectIncarnation: "project",
+    change: ARCHIVE, changeIncarnation: "change", phase: "archive", revision: 1, actionId: session.managedActionId as string,
+    completionRevision: 1, sessionId: session.id, worktreePath: session.worktreePath, branch: session.branch as string,
+    contentHash, snapshotHash: "snapshot", head: git(session.worktreePath, "rev-parse", "HEAD"), state: "pending", recovery: ["retry"],
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), attempts: 0, acceptedUnresolvedTasks: true,
+  };
+  const result = await manager.deliverLifecycle(record);
+  expect(result).toMatchObject({ shipped: true, pullRequestState: "created", pullRequestUrl: "https://github.com/acme/demo-ops/pull/96", autoMerge: false, taskSummary: { done: 1, total: 2 } });
+  expect(created).toBe(1);
+  expect(await Bun.file(join(archivePath, "tasks.md")).text()).toContain("- [ ] unresolved");
+  terminal.detach();
 });
 
 test("Fast-forward session automatically ships on exit 0 when every task is checked", async () => {
@@ -516,11 +942,63 @@ test("requestReadyMerges automatically merges ready docs-only PR directly on ser
   expect(secondCalls.filter((c) => c.argv.includes("merge"))).toHaveLength(0);
 });
 
+test("requestReadyMerges retries a transient same-head failure and records the blocker", async () => {
+  const h = await harness();
+  h.config.repos[0].agent = { enabled: true, autoMergeDocs: true };
+  await setupFakeRemote(h.repoPath);
+  const manager = h.newManager();
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: ARCHIVE, action: "archive" });
+  await putFile(session.worktreePath, `openspec/changes/${ARCHIVE}/tasks.md`, "- [x] Verified\n");
+  git(session.worktreePath, "add", "-A");
+  git(session.worktreePath, "commit", "-m", "chore: archive checkpoint");
+  const head = git(session.worktreePath, "rev-parse", "HEAD");
+  (session as ChangeSession).autoMergeAskedAt = new Date().toISOString();
+  const openPr = pr({ number: 89, head: session.branch as string, headOid: head, checks: "passing", mergeable: "mergeable", docsOnly: true });
+  await gh.scenario({ commandModes: { merge: { mode: "fail", stderr: "temporary merge service error" } } });
+  await manager.requestReadyMerges(h.repoId, [openPr]);
+  expect((manager.get(session.id) as ChangeSession).mergeAsked).toMatchObject({ attempts: 1, failure: "temporary merge service error" });
+  await gh.scenario({});
+  await manager.requestReadyMerges(h.repoId, [openPr]);
+  expect((manager.get(session.id) as ChangeSession).mergeAsked).toMatchObject({ attempts: 2, head });
+  expect((await gh.calls()).filter((call) => call.argv.includes("merge"))).toHaveLength(2);
+});
+
+test("requestReadyMerges serializes concurrent same-head attempts", async () => {
+  const h = await harness();
+  h.config.repos[0].agent = { enabled: true, autoMergeDocs: true };
+  await setupFakeRemote(h.repoPath);
+  const manager = h.newManager();
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: ARCHIVE, action: "archive" });
+  await putFile(session.worktreePath, `openspec/changes/${ARCHIVE}/tasks.md`, "- [x] Verified\n");
+  git(session.worktreePath, "add", "-A");
+  git(session.worktreePath, "commit", "-m", "chore: archive checkpoint");
+  const head = git(session.worktreePath, "rev-parse", "HEAD");
+  (session as ChangeSession).autoMergeAskedAt = new Date().toISOString();
+  const openPr = pr({ number: 90, head: session.branch as string, headOid: head, checks: "passing", mergeable: "mergeable", docsOnly: true });
+  await Promise.all([manager.requestReadyMerges(h.repoId, [openPr]), manager.requestReadyMerges(h.repoId, [openPr])]);
+  expect((await gh.calls()).filter((call) => call.argv.includes("merge"))).toHaveLength(1);
+});
+
+test("implementation PRs containing code are never auto-merged", async () => {
+  const h = await harness();
+  h.config.repos[0].agent = { enabled: true, autoMergeDocs: true };
+  await setupFakeRemote(h.repoPath);
+  const manager = h.newManager();
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
+  const head = git(session.worktreePath, "rev-parse", "HEAD");
+  (session as ChangeSession).autoMergeAskedAt = new Date().toISOString();
+  await manager.requestReadyMerges(h.repoId, [pr({ head: session.branch!, headOid: head, docsOnly: false })]);
+  expect((await gh.calls()).some((call) => call.argv.includes("merge"))).toBe(false);
+});
+
 // ---------------------------------------------------------------------------
 // 4.1 Zero-token Archive
 // ---------------------------------------------------------------------------
 
-test("Zero-token Archive: Done change with complete subState and specsSynced moves change, records archive-branch and ships without agent", async () => {
+test("Zero-token Archive: markerless legacy change moves, records archive-branch and ships without agent", async () => {
   const h = await harness();
   await setupFakeRemote(h.repoPath);
 
@@ -528,6 +1006,8 @@ test("Zero-token Archive: Done change with complete subState and specsSynced mov
   managers.push(manager);
 
   const ZERO_ARCHIVE = "bump-toolchain";
+  const mainMarker = join(h.repoPath, `openspec/changes/${ZERO_ARCHIVE}/.openspec.yaml`);
+  await rm(mainMarker, { force: true });
   const target = h.snapshot.repos[0].changes.find((x) => x.name === ZERO_ARCHIVE);
   if (target) target.specsSynced = true;
   const session = await manager.open({ repoId: h.repoId, change: ZERO_ARCHIVE, action: "archive" });
@@ -545,6 +1025,7 @@ test("Zero-token Archive: Done change with complete subState and specsSynced mov
   const today = new Date().toISOString().slice(0, 10);
   const archivedMarker = await Bun.file(join(session.worktreePath, `openspec/changes/archive/${today}-${ZERO_ARCHIVE}/.openspec.yaml`)).text();
   expect(archivedMarker).toContain(`archive-branch: chore/archive-${ZERO_ARCHIVE}`);
+  expect(await Bun.file(mainMarker).exists()).toBe(false);
 
   // PR was created via gh pr create
   const calls = await gh.calls();
@@ -641,6 +1122,7 @@ test("Fast-forward exits with awaiting tasks without automatically committing, p
   const change = "add-health-endpoint";
   const session = await manager.open({ repoId: h.repoId, change, action: "fastForward" });
   await putFile(session.worktreePath, `openspec/changes/${change}/tasks.md`, "- [x] Built\n- [~] Verify on a real device\n");
+  await putFile(session.worktreePath, `openspec/changes/${change}/notes.md`, "ready for review\n");
   const before = git(session.worktreePath, "rev-parse", "HEAD");
   const seen = await watch(manager, session.id);
   await waitFor(() => seen.text().includes("fake-agent ready"), "agent ready");
@@ -649,8 +1131,11 @@ test("Fast-forward exits with awaiting tasks without automatically committing, p
   await manager.shutdown();
   expect(git(session.worktreePath, "rev-parse", "HEAD")).toBe(before);
   expect((await gh.calls()).some((call) => call.argv.includes("create"))).toBe(false);
-  const result = await manager.ship(session.id);
-  expect(result).toMatchObject({ shipped: false, preflight: { summary: { awaiting: ["Verify on a real device"] } } });
+  const preflight = await manager.ship(session.id);
+  expect(preflight.preflight?.summary.awaiting).toEqual(["Verify on a real device"]);
+  const result = await manager.ship(session.id, { confirmation: preflight.preflight!.token });
+  expect(result).toMatchObject({ shipped: true, submitted: true, taskSummary: { awaiting: ["Verify on a real device"] } });
+  expect(await Bun.file(join(session.worktreePath, `openspec/changes/${change}/tasks.md`)).text()).toContain("[~] Verify on a real device");
 });
 
 test("a previous docs auto-merge record does not bypass unresolved implementation or archive tasks", async () => {

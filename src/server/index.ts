@@ -16,6 +16,7 @@ import { pruneMergeScratch } from "./sessions/workStatus.ts";
 import { sessionHints } from "./staleChanges.ts";
 import { UpdateChecker } from "./updateCheck.ts";
 import { VERSION } from "./version.ts";
+import { LifecycleDeliveryMonitor } from "./lifecycleDelivery.ts";
 
 // With `type: "text"` Bun hands us the file contents; bun-types only knows the HTMLBundle shape.
 const indexHtml = indexHtmlAsset as unknown as string;
@@ -101,6 +102,7 @@ async function main(): Promise<void> {
           // A scan can make a repository eligible (now scanned, now has a remote) or not; the schedule follows it.
           state.autoFetcher?.plan();
           void activity.append(diffSnapshots(previous, next, { now: new Date(), pollIntervalSeconds: state.config.pollIntervalSeconds }));
+          void state.lifecycleDelivery?.observe(next).catch((error) => console.warn("lifecycle observation failed:", error));
         },
         sessionsFor: (repoId) => sessionHints(state.sessions?.list() ?? [], repoId),
       },
@@ -110,6 +112,7 @@ async function main(): Promise<void> {
   state.sessions = new SessionManager({
     getConfig: () => state.config,
     getSnapshot: () => state.scanner.snapshot,
+    triggerScan: () => { state.scanner.trigger(); },
     onActivity: (session, what) => void activity.append([sessionEvent(session, state.config.repos.find((r) => r.id === session.repoId)?.name ?? session.repoId, what)]),
     // The marker, not the agent's word: if `openspec/config.yaml` is there now, the repository becomes tracked.
     onIntegrationEnded: (session) => void confirmIntegrationSession(state, session).catch(() => undefined),
@@ -118,6 +121,21 @@ async function main(): Promise<void> {
     listPullRequests: (repoId: string) => listRepoPullRequests(state, repoId),
   });
   await state.sessions.init();
+  state.lifecycleDelivery = new LifecycleDeliveryMonitor({
+    getConfig: () => state.config,
+    getSnapshot: () => state.scanner.snapshot,
+    listSessions: () => state.sessions?.list() ?? [],
+    completion: (sessionId) => state.sessions?.managedCompletion(sessionId),
+    readReports: () => state.sessions?.readReports() ?? Promise.resolve(),
+    deliver: async (record) => {
+      const result = await state.sessions?.deliverLifecycle(record);
+      return {
+        ...(result?.pullRequestUrl ? { pullRequestUrl: result.pullRequestUrl } : {}),
+        ...(result?.pullRequestNumber ? { pullRequestNumber: result.pullRequestNumber } : {}),
+      };
+    },
+  });
+  await state.lifecycleDelivery.init();
   // Holds idle sleep off while an agent is busy, with the system's own `caffeinate` (macOS only; off in Settings).
   const sessions = state.sessions;
   state.keepAwake = new KeepAwake({

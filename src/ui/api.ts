@@ -1,7 +1,7 @@
 import type { ActivityQuery } from "../shared/activity.ts";
 import type { RepoAgentPatch } from "../shared/repoSettings.ts";
 import type { AgentPermissionProfileId, EditorAvailability, EditorStarted, GithubClone, GithubClonesResponse, GithubRepoList, KeepAwakeStatus } from "../shared/types.ts";
-import type { ActivityPage, AutoMergePromptResult, BranchDeletePreview, BranchDeleteRequest, BranchDeleteResult, ConsoleSession, ProjectConsoleLike, CleanupPreview, CleanupResult, CleanupSelection, ChangeIssueRef, CreateChangeResponse, DismissPreview, DismissResult, EnvironmentReport, EnvironmentView, FolderPickResult, PromptResult, PullRequestsResponse, PullResolve, PullResult, RepoIssues, SessionCleanup, SetupState, ShipRequest, ShipResult, StaleCleanupPreview, StaleCleanupRequest, StaleCleanupResult, StartResult, UpdateStatus, WorkStatus } from "../shared/types.ts";
+import type { ActivityPage, AutoMergePromptResult, BranchDeletePreview, BranchDeleteRequest, BranchDeleteResult, ConsoleSession, ProjectConsoleLike, CleanupPreview, CleanupResult, CleanupSelection, ChangeIssueRef, CreateChangeResponse, DeleteFilesPreview, DeleteFilesResult, DismissedChange, DismissPreview, DismissResult, EnvironmentReport, EnvironmentView, FolderPickResult, PromptResult, PullRequestsResponse, PullResolve, PullResult, RepoIssues, SessionCleanup, SetupState, ShipRequest, ShipResult, StaleCleanupPreview, StaleCleanupRequest, StaleCleanupResult, StartResult, UpdateStatus, WorkStatus } from "../shared/types.ts";
 import type { AgentAvailability, AutoFetchSeconds, ArtifactFileContent, ChangeArtifacts, Config, CreateProjectResponse, DiscoverResult, IntegrationSession, PrTitleConvention, RepoConfig, ScanTriggerResult, Session, SessionAction, SessionWorktree, SharedConfig, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Snapshot } from "../shared/types.ts";
 import { socketOrigin } from "./url.ts";
 
@@ -16,6 +16,21 @@ export class ConfigConflictError extends ApiError {
   constructor(message: string, readonly config: Config) {
     super(412, message);
   }
+}
+
+export interface LifecycleDeliveryView {
+  id: string;
+  phase: "proposal" | "implementation" | "archive";
+  revision: number;
+  state: string;
+  head?: string;
+  pullRequestNumber?: number;
+  pullRequestUrl?: string;
+  blocker?: string;
+  recovery: string[];
+  attempts: number;
+  updatedAt: string;
+  retryAt?: string;
 }
 
 /** The revision the backend reported for each config object it answered with (the `ETag` over HTTP). */
@@ -78,10 +93,14 @@ export function labelLists(patch: Pick<RepoConfig, "labels" | "hiddenLabels">): 
 
 export interface Api {
   state(): Promise<Snapshot>;
+  lifecycleDeliveries(repoId: string, change: string): Promise<LifecycleDeliveryView[]>;
+  retryLifecycleDelivery(repoId: string, change: string, checkpointId: string): Promise<LifecycleDeliveryView>;
   /** Read-only: a change's artifacts and their existing files. Rejects with `ApiError` 404 for an unknown repository or change. */
   changeArtifacts(repoId: string, change: string): Promise<ChangeArtifacts>;
   /** Read-only: one file of a change. `ApiError` 400 for a bad path, 404 when it is not a file of the change, 413 when too large. */
   artifactFile(repoId: string, change: string, path: string): Promise<ArtifactFileContent>;
+  /** Confirms one displayed `[~]` task by line number against its complete displayed file version. */
+  confirmTask(repoId: string, change: string, expectedText: string, lineNumber: number): Promise<{ confirmed: true }>;
   /** What the dashboard observed, newest first. Read-only history; nothing else depends on it. */
   activity(query?: ActivityQuery): Promise<ActivityPage>;
   config(): Promise<Config>;
@@ -205,13 +224,13 @@ export interface Api {
    * pending on that session, whose `cleanup` later holds the outcome (cleanup-background).
    */
   staleCleanupInBackground(repoId: string, change: string, request: StaleCleanupRequest, sessionId: string): Promise<{ session: Session; cleanup: SessionCleanup }>;
-  /** Read-only: what dismissing the change would delete, file by file, and whether git could restore each. */
+  /** Read-only preview of reversible logical dismissal. */
   dismissPreview(repoId: string, change: string): Promise<DismissPreview>;
-  /**
-   * Deletes the change's directory from the main checkout and stages that removal — only when it is still what the
-   * preview with `fingerprint` showed; `ApiError` 409 otherwise. The only call that deletes a change.
-   */
-  dismissChange(repoId: string, change: string, fingerprint: string): Promise<DismissResult>;
+  dismissChange(repoId: string, change: string, identity: string): Promise<DismissResult>;
+  dismissedChanges(repoId: string): Promise<{ changes: DismissedChange[] }>;
+  restoreChange(repoId: string, change: string, identity: string): Promise<{ name: string; identity: string; dismissed: false }>;
+  deleteFilesPreview(repoId: string, change: string): Promise<DeleteFilesPreview>;
+  deleteChangeFiles(repoId: string, change: string, fingerprint: string): Promise<DeleteFilesResult>;
   sharedConfig(): Promise<SharedConfig>;
   /** Stores the profiles in the dashboard home; never writes to a repository. */
   saveSharedConfig(config: SharedConfig): Promise<SharedConfig>;
@@ -253,6 +272,8 @@ export interface Api {
   resumeSession(id: string): Promise<Session>;
   /** Asks the session's agent to commit, push and open a pull request. */
   shipSession(id: string, request?: ShipRequest): Promise<ShipResult>;
+  confirmPhaseComplete(id: string, actionId: string): Promise<Session>;
+  acceptUnresolvedArchive(id: string, actionId: string): Promise<Session>;
   finishChecks(repoId: string, change: string): Promise<PromptResult>;
   resolveConflicts(id: string): Promise<PromptResult>;
   /** Asks the session's agent to merge its ready pull request; the server takes the number and head commit from its own list. */
@@ -316,8 +337,11 @@ export function activityQueryString(query: ActivityQuery): string {
 
 export const httpApi: Api = {
   state: () => call<Snapshot>("/api/state"),
+  lifecycleDeliveries: async (repoId, change) => (await call<{ deliveries: LifecycleDeliveryView[] }>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/delivery`)).deliveries,
+  retryLifecycleDelivery: async (repoId, change, checkpointId) => (await call<{ delivery: LifecycleDeliveryView }>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/delivery`, { method: "POST", body: JSON.stringify({ checkpointId }) })).delivery,
   changeArtifacts: (repoId, change) => call<ChangeArtifacts>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/artifacts`),
   artifactFile: (repoId, change, path) => call<ArtifactFileContent>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/file?path=${encodeURIComponent(path)}`),
+  confirmTask: (repoId, change, expectedText, lineNumber) => call(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/tasks/confirm`, { method: "POST", body: JSON.stringify({ expectedText, lineNumber }) }),
   activity: async (query = {}) => {
     try {
       return await call<ActivityPage>(`/api/activity${activityQueryString(query)}`);
@@ -387,8 +411,12 @@ export const httpApi: Api = {
   staleCleanupInBackground: (repoId, change, request, sessionId) =>
     call(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/stale-cleanup`, { method: "POST", body: JSON.stringify({ ...request, session: sessionId }) }),
   dismissPreview: (repoId, change) => call<DismissPreview>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/dismiss`),
-  dismissChange: (repoId, change, fingerprint) =>
-    call<DismissResult>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/dismiss`, { method: "POST", body: JSON.stringify({ fingerprint }) }),
+  dismissChange: (repoId, change, identity) =>
+    call<DismissResult>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/dismiss`, { method: "POST", body: JSON.stringify({ identity }) }),
+  dismissedChanges: (repoId) => call<{ changes: DismissedChange[] }>(`/api/repos/${encodeURIComponent(repoId)}/dismissed-changes`),
+  restoreChange: (repoId, change, identity) => call(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/restore`, { method: "POST", body: JSON.stringify({ identity }) }),
+  deleteFilesPreview: (repoId, change) => call<DeleteFilesPreview>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/delete-files`),
+  deleteChangeFiles: (repoId, change, fingerprint) => call<DeleteFilesResult>(`/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/delete-files`, { method: "POST", body: JSON.stringify({ fingerprint }) }),
   sharedConfig: () => call<SharedConfig>("/api/shared-config"),
   saveSharedConfig: (config) => call<SharedConfig>("/api/shared-config", { method: "PUT", body: JSON.stringify(config) }),
   previewSharedConfig: (assignments) => call<{ previews: SharedConfigPreview[] }>("/api/shared-config/preview", { method: "POST", body: JSON.stringify({ assignments }) }),
@@ -401,6 +429,8 @@ export const httpApi: Api = {
   createProject: (root, name) => call<CreateProjectResponse>("/api/projects", { method: "POST", body: JSON.stringify({ root, name }) }),
   resumeSession: (id) => call<Session>(`/api/sessions/${id}/resume`, { method: "POST" }),
   shipSession: (id, request = {}) => call<ShipResult>(`/api/sessions/${id}/ship`, { method: "POST", body: JSON.stringify(request) }),
+  confirmPhaseComplete: (id, actionId) => call<Session>(`/api/sessions/${encodeURIComponent(id)}/confirm-phase-complete`, { method: "POST", body: JSON.stringify({ actionId }) }),
+  acceptUnresolvedArchive: (id, actionId) => call<Session>(`/api/sessions/${encodeURIComponent(id)}/accept-unresolved-archive`, { method: "POST", body: JSON.stringify({ actionId }) }),
   finishChecks: (repoId, change) => call<PromptResult>("/api/sessions", { method: "POST", body: JSON.stringify({ repoId, change, finishChecks: true }) }),
   resolveConflicts: (id) => call<PromptResult>(`/api/sessions/${id}/resolve-conflicts`, { method: "POST" }),
   mergeSession: (id) => call<PromptResult>(`/api/sessions/${id}/merge`, { method: "POST" }),
@@ -445,8 +475,11 @@ export function setApi(impl: Api): void {
 /** What components import; forwards to the implementation the entry point chose (HTTP unless told otherwise). */
 export const api: Api = {
   state: () => current.state(),
+  lifecycleDeliveries: (...args) => current.lifecycleDeliveries(...args),
+  retryLifecycleDelivery: (...args) => current.retryLifecycleDelivery(...args),
   changeArtifacts: (...args) => current.changeArtifacts(...args),
   artifactFile: (...args) => current.artifactFile(...args),
+  confirmTask: (...args) => current.confirmTask(...args),
   activity: (query) => current.activity(query),
   config: () => current.config(),
   saveConfig: (...args) => current.saveConfig(...args),
@@ -496,6 +529,10 @@ export const api: Api = {
   staleCleanupInBackground: (...args) => current.staleCleanupInBackground(...args),
   dismissPreview: (...args) => current.dismissPreview(...args),
   dismissChange: (...args) => current.dismissChange(...args),
+  dismissedChanges: (...args) => current.dismissedChanges(...args),
+  restoreChange: (...args) => current.restoreChange(...args),
+  deleteFilesPreview: (...args) => current.deleteFilesPreview(...args),
+  deleteChangeFiles: (...args) => current.deleteChangeFiles(...args),
   sharedConfig: () => current.sharedConfig(),
   saveSharedConfig: (config) => current.saveSharedConfig(config),
   previewSharedConfig: (assignments) => current.previewSharedConfig(assignments),
@@ -508,6 +545,8 @@ export const api: Api = {
   createProject: (...args) => current.createProject(...args),
   resumeSession: (...args) => current.resumeSession(...args),
   shipSession: (...args) => current.shipSession(...args),
+  confirmPhaseComplete: (...args) => current.confirmPhaseComplete(...args),
+  acceptUnresolvedArchive: (...args) => current.acceptUnresolvedArchive(...args),
   finishChecks: (...args) => current.finishChecks(...args),
   resolveConflicts: (...args) => current.resolveConflicts(...args),
   mergeSession: (...args) => current.mergeSession(...args),

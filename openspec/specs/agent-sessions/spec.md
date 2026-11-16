@@ -5,6 +5,58 @@ Defines agent sessions: starting a user-configured agent CLI for a change from t
 
 ## Requirements
 
+### Requirement: Custom commands belong to one project
+A project SHALL support an optional list of custom command prefixes. The list SHALL apply to that project's change sessions and project console, including when a change selects another agent. It SHALL NOT apply to another project, the main console or an integration session. An absent or empty list SHALL preserve existing permissions. Command allowances SHALL NOT change workflow prompts or execute commands themselves.
+
+#### Scenario: Project and change scope
+- **WHEN** `demo-ops` allows `bun run lint` and a change selects an agent other than the project's default
+- **THEN** the change's effective policy includes that project allowance, and `alpha-infra`, the main console and integration sessions do not inherit it
+
+#### Scenario: Saving is configuration only
+- **WHEN** a project command list is saved
+- **THEN** no command runs, no workflow prompt changes and no tracked repository or global agent settings file is written
+
+### Requirement: Custom command prefixes use a bounded literal syntax
+A custom command prefix SHALL contain whitespace-separated literal tokens using only ASCII letters, digits and `_./:@%+=,-`. Entries SHALL be trimmed, internal spaces collapsed and duplicates removed in first-occurrence order. A list SHALL contain at most 50 entries, each at most 256 characters after normalization. Empty entries, control characters, shell syntax, wildcards, bypass flags and prefixes capable of overriding protected or gated operations SHALL be rejected.
+
+#### Scenario: Normalize literal prefixes
+- **WHEN** a list contains `  bun   run lint  `, `bun run lint` and `./scripts/check`
+- **THEN** it is stored as `bun run lint` and `./scripts/check` in that order
+
+#### Scenario: Reject executable shell syntax and oversized lists
+- **WHEN** an entry includes a newline, `;`, `&&`, a pipe, redirection, quoting, command substitution, a wildcard or a bypass flag, or the list exceeds its bounds
+- **THEN** validation refuses the entire update and leaves the previous configuration unchanged
+
+#### Scenario: Reject broad or protected prefixes
+- **WHEN** an entry is `git`, `gh pr`, `git push`, `git push --force`, `sudo`, `sh -c` or an interpreter or wrapper prefix that can authorize arbitrary commands
+- **THEN** validation refuses it rather than allowing it to cover protected commands or merge and cleanup operations
+
+### Requirement: Custom command allowances respect the effective profile and runtime
+Custom prefixes SHALL supplement existing allowances only under `less-friction` and `full-automation`. Matching SHALL respect token boundaries and allow the prefix itself and trailing arguments. Protected rules, merge/cleanup opt-ins and host policies SHALL take precedence. Unsupported runtimes SHALL report unapplied allowances without weakening approval or sandbox settings. Preview and launch SHALL use the same translation.
+
+#### Scenario: Claude receives an additional command allowance
+- **WHEN** Claude starts under `less-friction` with `bun run lint` configured
+- **THEN** its session permission list allows `bun run lint` and `bun run lint --fix`, keeps the existing defaults and restrictions, and does not allow `bun run lint-extra` through this entry
+
+#### Scenario: Minimum retains planning permissions
+- **WHEN** the effective profile is `minimum` and project commands are configured
+- **THEN** the commands remain saved but no custom allowance is injected, and the preview explains that they are inactive under this profile
+
+#### Scenario: Unsupported runtime reports the limitation
+- **WHEN** custom commands are configured for Codex, Antigravity without session-rule delivery, or an unrecognized agent
+- **THEN** the preview says these entries are not applied, and launch preserves that runtime's existing approval and sandbox configuration without writing global settings
+
+#### Scenario: Restrictions outrank custom allowances
+- **WHEN** an agent is launched with custom commands while merge and cleanup opt-ins are off
+- **THEN** the generated permissions retain protected-command restrictions and the merge and cleanup gates
+
+### Requirement: Command allowance edits take effect on the next agent launch
+A running agent SHALL retain its launch permissions when project commands change. Every later process start, including resume and restart of an existing session and project console launch, SHALL resolve the project's latest list. Existing permission-profile inheritance SHALL remain unchanged. The dashboard SHALL NOT restart an agent or submit terminal input as a side effect of saving the list.
+
+#### Scenario: Edit while a session is running
+- **WHEN** `bun run lint` is replaced with `bun run typecheck` while an agent runs
+- **THEN** the process is unchanged, and its next explicit resume or restart uses the updated project list with its applicable permission profile
+
 ### Requirement: Agent sessions are off until enabled, then apply to every tracked repository
 Agent sessions SHALL be available only when the global `agentSessions.enabled` setting is true. That switch SHALL be in the Agent sessions section of Settings. Once it is on, agent sessions apply to every tracked (enabled) repository by default. A repository MAY be excluded individually, and MAY be given an agent profile other than the default, with that repository's agent-session toggle and agent picker on the projects overview, which take effect at once. The Agent sessions section of Settings SHALL also hold the editor command of the `editor-launch` capability. It SHALL NOT list repositories; it SHALL say that agent sessions are switched on or off per project on the projects overview, and link there. An excluded or untracked repository MUST NOT show session starters and MUST be refused by the API. A fresh or migrated configuration MUST have the feature disabled. A repository entry without agent settings counts as included.
 
@@ -1437,47 +1489,6 @@ branch. An in-place session SHALL never get the offer.
 - **THEN** the session ends, that worktree is kept and reported as changed since the user looked, and the session's own
   worktree is still cleaned up
 
-### Requirement: A Draft session in a docs auto-merge project opens its proposal pull request
-When a **Draft artifacts** session works on `docs/<change>` and the repository has docs auto-merge switched on, Spec Control SHALL record `autoMergeAskedAt` on the session when the worktree holds nothing outside `openspec/` (with an empty worktree counting as holding nothing outside), and SHALL NOT append a prose proposal git/PR instruction to the Draft prompt; the agent receives only the profile's Draft prompt and its additional Draft instructions.
-
-When that Draft session on `docs/<change>` exits with code `0`, or the user explicitly ends it, `autoMergeDocs` is on, every required artifact of `<change>` in the worktree is `done`, and the worktree holds only files under `openspec/`, Spec Control SHALL automatically run the deterministic Ship flow in that worktree: it writes `spec-control.branch: docs/<change>` in `openspec/changes/<change>/.openspec.yaml`, commits all changes with title `docs(openspec): add <change>` when the project declares Conventional Commits pull request titles and `Add OpenSpec proposal <change>` otherwise, pushes `docs/<change>` to `origin`, opens the pull request against the default branch via `gh pr create`, and sets `autoMergeAskedAt` on the session so that "A ready docs-only pull request is merged automatically by the server" and "A merged auto-merge pull request ends its session" merge the proposal pull request and clean up its worktree once its checks pass. An application shutdown or other non-user termination SHALL NOT trigger this user-ended path.
-
-#### Scenario: Draft opens the proposal pull request
-- **WHEN** `demo-ops` declares Conventional Commits titles, has docs auto-merge on, the user starts **Draft artifacts** for `rotate-keys`, and the agent writes all required artifacts under `openspec/changes/rotate-keys/` and exits with code `0`
-- **THEN** the agent's opening prompt was only the profile's Draft prompt with its additional Draft instructions, and on exit Spec Control commits the artifacts on `docs/rotate-keys` with message `docs(openspec): add rotate-keys`, pushes `docs/rotate-keys`, opens the pull request against the default branch, and records `autoMergeAskedAt` on the session
-
-#### Scenario: Ending a completed proposal ships it
-- **WHEN** the Draft agent is still running on `docs/rotate-keys`, docs auto-merge is on, all required artifacts are done, the worktree contains only OpenSpec files, and the user explicitly ends the session
-- **THEN** Spec Control ends the agent and automatically ships the proposal through the deterministic Ship flow, then records `autoMergeAskedAt` on the session
-
-#### Scenario: Ending an incomplete proposal does not ship it
-- **WHEN** the user explicitly ends the Draft session but a required artifact is missing or not done
-- **THEN** Spec Control ends the agent without committing, pushing or opening a pull request
-
-#### Scenario: Shutdown does not ship a proposal
-- **WHEN** the application ends a Draft agent during shutdown, even though the required artifacts are done
-- **THEN** Spec Control does not run proposal auto-ship
-
-#### Scenario: Without a title convention
-- **WHEN** the same project declares no title convention and the Draft session on `docs/rotate-keys` exits with all required artifacts written
-- **THEN** Spec Control commits and opens the proposal pull request with the title `Add OpenSpec proposal rotate-keys`
-
-#### Scenario: The worktree holds code
-- **WHEN** the `docs-rotate-keys` worktree, reused from an earlier session, holds an uncommitted `src/app.ts`, and Draft is started or exits for `rotate-keys`
-- **THEN** Spec Control does not auto-ship or set `autoMergeAskedAt` on the session
-
-#### Scenario: Without docs auto-merge
-- **WHEN** `demo-ops` has docs auto-merge off and the user starts **Draft artifacts**
-- **THEN** the session works on `feat/rotate-keys` and does not auto-ship on exit or explicit end
-
-#### Scenario: Draft sent into an Implement session
-- **WHEN** Draft is sent into the running Implement session of `rotate-keys` on `feat/rotate-keys`
-- **THEN** the prompt carries no proposal instruction and the session does not auto-ship as a proposal PR
-
-#### Scenario: Fast-forward is unchanged
-- **WHEN** the user starts **Fast-forward** for `rotate-keys` in a project with docs auto-merge on
-- **THEN** the session works on `feat/rotate-keys` and never carries the auto-merge record
-
 ### Requirement: The proposal session gives way to the next step
 While a change's running session is a **Draft artifacts** session on `docs/<change>`, the dashboard SHALL accept a request to open **Implement**, **Validate** or **Archive** for that change — never Draft, which goes into that session, and never Fast-forward — that explicitly asks to end the proposal session first. It SHALL first apply every refusal an opening is subject to (the change's stage, its dependencies, the repository's agent), so a refused request ends nothing. It SHALL then end the proposal session as **End session** does and wait until its agent has ended, and only then open the requested action as a new session under the usual rules — Implement on `feat/<change>`, created from the local `docs/<change>` while the default branch does not hold the change, as "Every session works in its own git worktree, created by the dashboard" specifies. Ending it SHALL keep the proposal session's worktree and branch whatever their work status, because its pull request may still be open: it MUST NOT remove a worktree, delete a branch or run any git command beyond those the new session's worktree needs. The ended proposal session SHALL keep its auto-merge record. When its agent does not end, the request SHALL be refused and nothing SHALL be started. The result SHALL be the new session. A request without that explicit ask is refused as "Session lifecycle and control" says, so a card or a stale page can never end an agent by starting a step.
 
@@ -1736,14 +1747,14 @@ repository.
 - **THEN** no file in the repository changes, no git command runs and no scan is triggered
 
 ### Requirement: Ship commits, pushes and opens a pull request deterministically
-For a session whose worktree has status `uncommitted`, `unpushed` or `pushed` the dashboard SHALL offer a **Ship** action that executes deterministically on the server without starting, resuming, or typing into an agent. When Ship is activated (or triggered automatically when a managed `Draft` session on `docs/<change>`, `Archive` session, or `Fast-forward` session exits cleanly after completing its work), the server SHALL:
+For a session whose worktree has status `uncommitted`, `unpushed` or `pushed` the dashboard SHALL offer a **Ship** action that executes deterministically on the server without starting, resuming, or typing into an agent. When Ship is activated (or triggered by a verified managed lifecycle checkpoint under lifecycle-delivery, including while its agent remains running), the server SHALL:
 
 1. Write `spec-control.branch` (or `spec-control.archive-branch` for an archive session) into the change's `.openspec.yaml` (or archived `.openspec.yaml`) in the session's worktree if not already set to the session's branch.
-2. Check with read-only git whether the worktree has uncommitted or untracked changes (`status --porcelain=v1 -z`) and, if so, stage all changes (`git add --all`) and commit them (`git commit --no-verify -m <title>`) in the session's worktree with repository hooks disabled.
+2. Check with read-only git whether the worktree has uncommitted or untracked changes (`status --porcelain=v1 -z`) and, if so, stage the checkpoint-approved paths (all worktree changes for an explicit Ship; only planning artifacts and metadata for automatic proposal delivery) and commit them (`git commit --no-verify -m <title>`) in the session's worktree with repository hooks disabled.
 3. Push the session's branch to `origin` (`git push --no-verify --set-upstream origin HEAD:refs/heads/<branch>`) with batch SSH and credentials masked.
 4. Determine whether an open pull request for `<branch>` already exists in the repository's GitHub repository; if none exists, create one against the repository's default branch via `gh pr create --repo <owner/name> --head <branch> --base <defaultBranch> --title <title> --body <body>` and refresh the repository's pull-request cache.
 
-When the session's repository has auto-merge of docs-only pull requests switched on, the server SHALL decide with read-only git in the session's worktree whether the branch ships **only OpenSpec documents**: every path that differs between the base and `HEAD` lies under `openspec/` at the repository root, and at least one such path exists. When that holds, the server SHALL record `autoMergeAskedAt` on the session (and return `autoMergeInstructionIncluded: true`), and the panel SHALL say that, because only OpenSpec documents changed, Spec Control will merge the pull request automatically once its checks pass. An in-place session has no worktree and no branch: it has no work status, Ship MUST NOT be offered for it, and a Ship request for it SHALL be refused.
+When the session's repository has auto-merge of docs-only pull requests switched on, the server SHALL decide with read-only git in the session's worktree whether the branch contains documentation only under "Documentation merge eligibility is shared". When that holds, the server SHALL record `autoMergeAskedAt` on the session (and return `autoMergeInstructionIncluded: true`), and the panel SHALL say that, because only documentation changed, Spec Control will merge the pull request automatically once its checks pass. An in-place session has no worktree and no branch: it has no work status, Ship MUST NOT be offered for it, and a Ship request for it SHALL be refused.
 
 #### Scenario: Ship commits, pushes and opens a pull request without an agent
 - **WHEN** Ship is used on a running or ended session for `rotate-keys` whose worktree on `feat/rotate-keys` has uncommitted files
@@ -1785,21 +1796,21 @@ A Merge request SHALL be refused when agent sessions are disabled, the session i
 ### Requirement: A ready docs-only pull request is merged automatically by the server
 Whenever a pull-request query for a repository completes with a good list — whatever started it: the user's Refresh, opening a view that shows pull requests, or the board's pull-request watch — the dashboard SHALL, for each change session of that repository (whether `running` or `exited`) that carries the auto-merge record of "A merged auto-merge pull request ends its session", is not in place and did not adopt its worktree, look in that query's result for an open pull request whose head branch is the session's branch, and SHALL merge that pull request directly via `gh pr merge <number> --repo <owner/name> --squash --match-head-commit <headOid>` only when **all** of these hold at that moment:
 
-- agent sessions are enabled, the repository has docs auto-merge switched on, and this is not the demo;
-- the pull request is open and not a draft, its base branch is the repository's default branch, its mergeability is `mergeable` and its checks are `passing` — checks `none` SHALL NOT count, because a pull request whose checks have not registered yet looks the same;
+- agent sessions are enabled, the repository has docs auto-merge switched on or this is standard proposal persistence under lifecycle-delivery, and this is not the demo;
+- the pull request is open and not a draft, its base branch is the repository's default branch, its mergeability is `mergeable` and its checks pass, or fresh GitHub evidence confirms no required checks apply and no reported check is failing or pending; an empty cached check list alone SHALL NOT prove this;
 - the pull request is docs-only (`pull-requests`: "What a pull-request list contains") and carries a head commit;
-- when the session's worktree still exists, its checked-out commit is that head commit and the worktree holds only OpenSpec documents under the check Ship makes — decided with read-only git, without contacting a remote, at that moment; a git command that fails counts as not holding;
+- when the session's worktree still exists, its checked-out commit is that head commit and the worktree holds documentation only under the shared eligibility check Ship makes — decided with read-only git, without contacting a remote, at that moment; a git command that fails counts as not holding;
 - no merge was already attempted by the dashboard for this session, pull request and head commit.
 
-Before running `gh pr merge`, the session SHALL record the pull request's number, the head commit and the time (`mergeAsked`), so that a second query completing meanwhile starts no duplicate merge. At most one automatic merge attempt SHALL be made per session, pull request and head commit; a new head commit makes the pull request eligible again. Because the merge runs directly through `gh pr merge` on the server, it works identically whether the session's agent is still running or has already exited, and never starts, resumes, or types into an agent. Sessions started by Fast-forward never carry the record and SHALL never be auto-merged.
+Before running `gh pr merge`, the session SHALL record the pull request's number, the head commit and the time (`mergeAsked`), so that a second query completing meanwhile starts no duplicate merge. Concurrent or repeated observations SHALL make at most one merge attempt at a time per PR head. Failed attempts SHALL retain an actionable blocker and follow the retry rules of lifecycle-delivery; a recorded attempt SHALL NOT permanently prevent recovery. Because the merge runs directly through `gh pr merge` on the server, it works identically whether the session's agent is still running or has already exited, and never starts, resumes, or types into an agent. Fast-forward implementation code SHALL NOT be auto-merged; documentation-only checkpoints follow the same project policy as other implementations.
 
 #### Scenario: Archive pull request goes green after the agent exited
 - **WHEN** `demo-ops` has docs auto-merge on, the archive session of `rotate-keys` carries the auto-merge record, its worktree is at commit `c0ffee0123456789abcdef0123456789abcdef01` with only `openspec/` changes, and a watch refresh lists `#88` from `chore/archive-rotate-keys` open against the default branch, not a draft, mergeable, checks passing, docs-only, head commit `c0ffee0123456789abcdef0123456789abcdef01`
 - **THEN** the server records `#88` and `c0ffee0123456789abcdef0123456789abcdef01` on the session and runs `gh pr merge 88 --repo acme/demo-ops --squash --match-head-commit c0ffee0123456789abcdef0123456789abcdef01` without starting or typing into an agent
 
 #### Scenario: No checks at all
-- **WHEN** everything holds except that `#88` has no checks
-- **THEN** no merge is run and `#88` is shown as ready as before
+- **WHEN** all other conditions hold and GitHub freshly confirms that no checks are required or pending for `#88`
+- **THEN** the PR is merged; unknown required-check evidence instead leaves an actionable waiting status
 
 #### Scenario: A file outside openspec
 - **WHEN** everything holds except that `#88` is not docs-only
@@ -1815,14 +1826,14 @@ Before running `gh pr merge`, the session SHALL record the pull request's number
 
 #### Scenario: Seen again at the same head commit
 - **WHEN** a later refresh lists `#88` still open at the same head commit after a merge for it was already attempted
-- **THEN** no second `gh pr merge` is run for that head commit
+- **THEN** no duplicate merge runs; a recorded failure remains retryable under the lifecycle retry policy
 
 #### Scenario: A fix was pushed
 - **WHEN** a check failed, a fix was pushed, and a later refresh lists `#88` ready again at a new head commit with checks passing
 - **THEN** one `gh pr merge` naming the new head commit is run
 
 #### Scenario: Docs auto-merge switched off
-- **WHEN** the user switched docs auto-merge off for `demo-ops` after the session recorded `autoMergeAskedAt`, and a refresh lists `#88` ready and docs-only
+- **WHEN** the user switched docs auto-merge off for `demo-ops` after a non-proposal session recorded `autoMergeAskedAt`, and a refresh lists `#88` ready and docs-only
 - **THEN** no merge is run
 
 #### Scenario: Demo
@@ -2013,27 +2024,69 @@ The preset Implement and Fast-forward prompts SHALL ask the agent to complete an
 - **THEN** the prompt asks the agent to complete the parts it can, mark the task `- [~]`, and state exactly what the person must do
 
 ### Requirement: Ship preflight exposes unfinished tasks
-Before Ship commits, pushes or opens a pull request, the dashboard SHALL read task state from the session's own checkout and show unresolved tasks. When any remain, it SHALL offer to ask the agent to finish them and SHALL require explicit confirmation to ship with unresolved tasks. It MUST NOT change task files itself.
+Before Ship commits, pushes or opens a pull request, the dashboard SHALL read task state from the session's own checkout and show unresolved tasks. When any remain, it SHALL offer to ask the agent to finish them and SHALL require explicit confirmation to ship with unresolved tasks. For a verified, untruncated task summary, it SHALL also offer the explicit **Mark all complete and Ship** choice. Only that user choice may mark remaining task markers complete; it MUST compare the complete task-file version shown in the preflight, and automatic shipping MUST NOT change task files.
 
 #### Scenario: Open tasks before shipping
-- **WHEN** Ship is activated and the session checkout has an open task
-- **THEN** the preflight names it, offers to ask the agent to complete it, and does not ship without an explicit choice to ship anyway
+- **WHEN** Ship is activated for an artifact-ready change with an open task
+- **THEN** Ship proceeds and reports the task as unresolved without requiring a task-specific override
 
 #### Scenario: Person needed before shipping
 - **WHEN** Ship is activated and a task is marked `- [~]`
-- **THEN** the preflight shows that task and asks the user to review it; the dashboard does not mark it complete
+- **THEN** the preflight shows that task and asks the user to review it; it may mark it complete only after the user chooses **Mark all complete and Ship**
+
+#### Scenario: Explicitly confirm all remaining tasks
+- **WHEN** the user chooses **Mark all complete and Ship** for a verified, untruncated preflight
+- **THEN** the dashboard marks remaining tasks complete only if the displayed task-file version still matches, then continues shipping
+
+#### Scenario: Stale or unverified task summary
+- **WHEN** the summary is truncated, unverified, or the task file changed after preflight
+- **THEN** the bulk confirmation choice is unavailable or returns a refreshed preflight without changing the file
 
 #### Scenario: A check requires a pull request
-- **WHEN** a task can only be verified after a PR is opened
-- **THEN** the user can explicitly ship despite that unfinished task, and the agent is asked to report the pending check and revisit it after evidence is available
+- **WHEN** a remaining check requires a pull request or its CI
+- **THEN** explicit Ship opens the pull request and reports the unresolved check without changing its marker
 
 #### Scenario: All tasks are complete
-- **WHEN** the session checkout has readable tasks and every task is checked
-- **THEN** deterministic Ship proceeds without an unfinished-task confirmation
+- **WHEN** every task is marked complete and required artifacts are ready
+- **THEN** Ship proceeds without task confirmation and reports the task summary
 
 #### Scenario: Task state is unavailable
-- **WHEN** tasks cannot be read or their state is unknown
-- **THEN** the preflight says it cannot verify completion and requires explicit confirmation before Ship
+- **WHEN** task files are missing, malformed, unreadable or truncated
+- **THEN** Ship reports that task state could not be verified and proceeds if the required artifacts are ready
+
+#### Scenario: Required artifacts are not ready
+- **WHEN** Ship is activated before the required artifacts are ready
+- **THEN** the existing artifact-readiness refusal remains in force
+
+### Requirement: Ship returns an actionable pull request result
+When Ship finds or creates a pull request, its result SHALL include the pull request URL and whether it was newly created or already existed. The UI SHALL present a direct link to that pull request and report any unresolved or unknown task state alongside the result. It SHALL offer the applicable existing agent action for reviewing PR feedback or resolving conflicts, without starting an agent automatically. A successful Ship SHALL NOT imply that the pull request is merged, that checks passed, or that unresolved tasks were completed.
+
+#### Scenario: Ship creates a pull request
+- **WHEN** Ship successfully creates a pull request
+- **THEN** its result gives the user a direct link and identifies the pull request as newly created
+
+#### Scenario: Ship finds an existing pull request
+- **WHEN** Ship finds a pull request for the session branch
+- **THEN** its result gives the user a direct link and identifies the existing pull request without changing its body
+
+#### Scenario: User follows up on pull request feedback
+- **WHEN** Ship has returned a pull request and the session can run the relevant agent action
+- **THEN** the UI lets the user open the pull request and explicitly ask the agent to review feedback or resolve conflicts
+
+#### Scenario: Pull request URL is unavailable
+- **WHEN** Ship cannot obtain a valid pull request URL
+- **THEN** it does not report a complete successful Ship result without a review destination
+
+### Requirement: Explicit Archive is not blocked by unfinished tasks
+Spec Control SHALL offer **Archive** only when the change is in `Done` and its required artifacts are ready. Unresolved or unknown task state SHALL NOT make Archive available before `Done`. A dependency that is not met SHALL NOT withhold Archive from a change in `Done`. Archive SHALL preserve task state and SHALL NOT imply that outstanding work was completed. Automatic Archive SHALL continue to follow its separate eligibility requirements, including its task completion gate.
+
+#### Scenario: Ready change has unresolved tasks
+- **WHEN** a change's required artifacts are ready but its stage is `Ready` or `Implementing`
+- **THEN** Archive is not offered, whether or not the change has an unmet dependency
+
+#### Scenario: Done change has an unmet dependency
+- **WHEN** a change is in `Done`, its required artifacts are ready, and one or more dependencies are unresolved
+- **THEN** Archive is offered and preserves the dependency and task state
 
 ### Requirement: Finish tasks after a merged implementation
 For a change with unresolved tasks and a linked merged implementation PR, the dashboard SHALL offer **Finish checks** to ask an agent to verify and finish remaining tasks. It SHALL use the relevant session or a safe session worktree, and SHALL ask the agent to prepare a reviewable task update after verification.
@@ -2051,21 +2104,70 @@ For a change with unresolved tasks and a linked merged implementation PR, the da
 - **THEN** Finish checks offers a safe new session based on the change's current checkout, or explains why one cannot be started
 
 ### Requirement: Automatic shipping and merging respect task completion
-Automatic implementation and archive Ship and docs-only Merge SHALL require a fresh bounded task summary proving every task checked. Awaiting, open, missing, malformed and truncated tasks SHALL withhold automation. Automatic proposal shipping and merging MAY precede task completion because proposals precede implementation. Fast-forward SHALL carry the completion instruction and SHALL use the same server gate rather than infer completion from the agent's exit alone.
+Automatic implementation Ship and implementation docs-only Merge SHALL require a fresh bounded task summary proving every task checked. Awaiting, open, missing, malformed and truncated tasks SHALL withhold automation. Automatic proposal shipping and merging MAY precede task completion because proposals precede implementation. Archive delivery SHALL verify the archived task summary unless Archive was explicitly accepted with unresolved tasks under the explicit-action rules; that accepted archive SHALL still be published and its unresolved tasks displayed, without claiming completion. Fast-forward SHALL carry the completion instruction and SHALL use the same server gate rather than infer completion from the agent's exit alone.
 
 #### Scenario: Fast-forward ends with a human check
 - **WHEN** a Fast-forward agent exits cleanly with a task marked `- [~]`
 - **THEN** the dashboard does not ship automatically, and interactive Ship still offers the unresolved-task choices
 
 #### Scenario: Docs-only work has an old auto-merge record
-- **WHEN** a previously shipped implementation or archive has a ready docs-only PR but unresolved tasks in its checkout
+- **WHEN** a previously shipped implementation has a ready docs-only PR but unresolved tasks in its checkout
 - **THEN** the dashboard withholds automatic Merge
 
 #### Scenario: Merged-PR cleanup observes a task-only follow-up
 - **WHEN** Finish tasks or Finish checks is active and a refresh observes the session's previously merged pull request
 - **THEN** automatic shipping, merging and merged-PR cleanup remain suppressed until an explicit new workflow choice; the follow-up agent stays available
 
-## ADDED Requirements
+### Requirement: Draft and Implement maintain a pull request description
+
+The **Draft artifacts** prompt SHALL ask the agent to create `openspec/changes/<change>/pull-request.md` containing a
+concise summary of the problem, intended outcome and planned verification, based on the change artifacts. The
+**Implement** prompt SHALL ask the agent to update that file to describe the delivered behavior and checks actually
+performed, remove planned or unverified claims, and keep it concise for pull request reviewers. Neither prompt SHALL
+claim a check passed unless it was run and passed. The file SHALL be ordinary Markdown included in the change's own
+checkout.
+
+#### Scenario: Draft prepares a description
+
+- **WHEN** Draft artifacts completes the proposal for `rotate-keys`
+- **THEN** `openspec/changes/rotate-keys/pull-request.md` summarizes the problem, intended outcome and planned
+  verification for reviewers
+
+#### Scenario: Implement records delivered work
+
+- **WHEN** Implement completes code and runs its available checks for `rotate-keys`
+- **THEN** `pull-request.md` describes the delivered behavior and reports only checks that were actually performed
+
+### Requirement: Ship uses the prepared description for a new pull request
+
+When deterministic Ship creates a pull request, it SHALL read `openspec/changes/<change>/pull-request.md` from the
+session's own worktree, where `<change>` is the validated change name. If it is a readable regular file with non-empty
+content after trimming surrounding whitespace, Ship SHALL pass that trimmed Markdown as the pull request body. It
+MUST NOT read the artifact from the main checkout, another worktree, or a path outside the session worktree.
+
+If the file is absent, blank, unreadable, or not a regular file, Ship SHALL use a fixed non-empty fallback body that
+identifies the change and directs reviewers to its OpenSpec artifacts. This SHALL NOT prevent Ship from proceeding.
+When a pull request for the session's branch already exists, Ship SHALL leave its title and body unchanged.
+
+#### Scenario: New pull request uses the prepared description
+
+- **WHEN** Ship creates a pull request for `rotate-keys` and the session worktree's description contains Markdown
+- **THEN** `gh pr create` receives the trimmed Markdown as `--body`
+
+#### Scenario: Legacy change has no description artifact
+
+- **WHEN** Ship creates a pull request for a change whose worktree has no `pull-request.md`
+- **THEN** the pull request receives the fixed non-empty fallback body and Ship proceeds
+
+#### Scenario: Description artifact is empty or unsafe
+
+- **WHEN** the description is blank, unreadable, or not a regular file
+- **THEN** Ship uses the fallback and reads no file outside the session worktree
+
+#### Scenario: Pull request already exists
+
+- **WHEN** Ship finds an existing pull request for the session's branch
+- **THEN** it does not change that pull request's body
 
 ### Requirement: Predefined agent permission profiles and shared policy
 The dashboard SHALL support three predefined, opt-in agent permission profiles across all supported agent runtimes:
@@ -2200,3 +2302,67 @@ The dashboard SHALL explicitly inform users that validation checks, test runners
 #### Scenario: Security notice accompanies profile activation
 - **WHEN** a user inspects or selects the `less-friction` or `full-automation` permission profile
 - **THEN** the system displays a clear disclosure that running tests and build scripts executes repository code
+
+### Requirement: Managed actions have a verified OpenSpec workflow
+Before launching a managed OpenSpec action, the dashboard SHALL verify its workflow in the actual session checkout. It SHALL resolve readable project skill instructions or supply the supported OpenSpec CLI workflow as a fallback. Missing skill discovery SHALL NOT authorize improvised artifact editing or bypass blocked state, context, task tracking, or verification. Missing CLI and skill support SHALL produce an actionable setup blocker.
+
+#### Scenario: Fresh worktree lacks untracked skills
+- **WHEN** the main checkout has untracked agent skills that are absent from a fresh session worktree
+- **THEN** the dashboard does not claim those skills are available and uses a verified CLI fallback or reports the setup blocker
+
+#### Scenario: Skill exists outside runtime discovery
+- **WHEN** a readable repository OpenSpec skill exists in a project directory not automatically discovered by the selected runtime
+- **THEN** the action provides its resolved checkout-relative path explicitly instead of relying only on a skill name or another runtime's slash command
+
+#### Scenario: Apply falls back to CLI instructions
+- **WHEN** openspec-apply-change cannot be resolved but the installed CLI supports status and apply instructions
+- **THEN** the agent receives the selected change, status and instructions commands, resolved context files, task tracking rules, and blocked-state handling, rather than permission to invent a workflow
+
+#### Scenario: Workflow unavailable
+- **WHEN** neither a readable compatible skill nor the required CLI workflow is available
+- **THEN** launch is blocked with the missing capability and a project setup action; global agent settings are not changed automatically
+
+#### Scenario: Runtime parity
+- **WHEN** Codex or Antigravity starts the same managed action in equivalent fresh worktrees
+- **THEN** both receive the same workflow contract and action boundaries without requiring identical native skill-discovery behavior
+
+### Requirement: Session branch recording supports changes without metadata markers
+When the dashboard records a session branch and the matching active or archived change directory exists without `.openspec.yaml`, it SHALL create the marker in the session worktree and record the branch there. It SHALL NOT create or modify the marker in the main checkout. Existing markers SHALL keep their other content, and missing change directories or unsafe paths SHALL still be refused.
+
+#### Scenario: Deterministic Archive of a markerless change
+- **WHEN** the user starts deterministic Archive for a complete change whose active directory has no `.openspec.yaml`
+- **THEN** the archived change in the session worktree has an `.openspec.yaml` recording `archive-branch`, the archive ships successfully, and the main checkout remains unchanged
+
+#### Scenario: Ship of a markerless active change
+- **WHEN** a session ships a change whose active directory has no `.openspec.yaml`
+- **THEN** the session worktree gains an `.openspec.yaml` recording the session branch and Ship continues
+
+#### Scenario: Missing or unsafe change directory
+- **WHEN** the matching change directory does not exist or a path segment is a symbolic link
+- **THEN** branch recording is refused and no marker is created outside the session worktree
+
+### Requirement: Standard drafting uses proposal sessions
+A managed Draft SHALL use a dedicated proposal branch and worktree regardless of docs auto-merge. It SHALL deliver verified planning artifacts under lifecycle-delivery, preserve configured Draft instructions and title conventions, and reuse existing proposal PRs. Draft sent into an implementation session SHALL NOT publish code as a proposal; mixed work SHALL be blocked with a recovery path.
+
+#### Scenario: Docs automation is disabled
+- **WHEN** Draft artifacts starts with docs auto-merge off
+- **THEN** it uses `docs/<change>` and a completed proposal is automatically persisted and merged
+
+#### Scenario: Existing proposal branch
+- **WHEN** a resumed Draft already has an open proposal PR
+- **THEN** checkpoint reconciliation updates that PR instead of opening another
+
+### Requirement: Documentation merge eligibility is shared
+Ship, automatic Merge, and their UI SHALL share a documentation-only classification of the exact PR head. It SHALL include `openspec/**`, `docs/**`, and Markdown or reStructuredText documents, and SHALL reject executable scripts, application code, workflows, manifests, lockfiles, and unknown paths. Renames SHALL classify both paths. A nonempty complete diff is required; unavailable or truncated evidence SHALL block merging.
+
+#### Scenario: Documentation outside OpenSpec
+- **WHEN** an eligible PR changes only `README.md` and `docs/usage.md`, docs auto-merge is on, and GitHub protections permit merging
+- **THEN** it merges automatically using the same policy as an OpenSpec-only PR
+
+#### Scenario: Code disguised by location
+- **WHEN** a PR changes `docs/build.sh`, `.github/workflows/docs.yml`, or a package manifest
+- **THEN** it is not automatically classified as documentation only
+
+#### Scenario: Missing check evidence
+- **WHEN** the cached PR has no checks and applicable required-check evidence cannot be read
+- **THEN** the UI explains the verification blocker and no automatic merge occurs

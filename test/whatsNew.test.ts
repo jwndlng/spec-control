@@ -72,6 +72,7 @@ test("months group by the entry's calendar date, across a year boundary", () => 
 test("the changelog is well-formed: unique ids of its own date, valid dates, newest first, title and summary", () => {
   expect(CHANGELOG.length).toBeGreaterThan(0);
   expect(() => validateEntries(CHANGELOG)).not.toThrow();
+  expect(CHANGELOG.some((item) => item.id === "2026-11-11-confirm-awaiting-tasks")).toBe(true);
 });
 
 test("the loader sorts deterministically and reports invalid entries", () => {

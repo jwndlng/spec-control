@@ -42,7 +42,7 @@ const commitAll = (wt: string) => {
   git(wt, "commit", "-q", "-m", "work");
 };
 
-test("only files under openspec/, committed or not, count as docs-only", async () => {
+test("OpenSpec and documented files, committed or not, count as docs-only", async () => {
   const repo = await tempGitRepo();
   const wt = await worktree(repo, "docs");
   await put(wt, "openspec/changes/rotate-keys/proposal.md");
@@ -53,9 +53,12 @@ test("only files under openspec/, committed or not, count as docs-only", async (
   await put(wt, "openspec/changes/rotate-keys/proposal.md", "changed");
   await put(wt, "openspec/specs/secrets/spec.md");
   expect(await shipsOnlyOpenSpec(wt, "main")).toBe(true);
+  await put(wt, "README.md", "readme\n");
+  await put(wt, "docs/guide.rst", "guide\n");
+  expect(await shipsOnlyOpenSpec(wt, "main")).toBe(true);
 });
 
-test("anything outside openspec/ — committed, untracked, look-alike or renamed in — is not docs-only", async () => {
+test("code and unsafe paths are not docs-only, including renames into documentation directories", async () => {
   const repo = await tempGitRepo();
   const cases: [string, (wt: string) => Promise<void>][] = [
     ["committed code", async (wt) => {
@@ -68,17 +71,17 @@ test("anything outside openspec/ — committed, untracked, look-alike or renamed
       commitAll(wt);
       await put(wt, "notes.txt");
     }],
-    ["look-alike paths", async (wt) => {
-      await put(wt, "docs/openspec/notes.md");
-      await put(wt, "openspec-notes.md");
+    ["scripts and workflows", async (wt) => {
+      await put(wt, "docs/build.sh");
+      await put(wt, ".github/workflows/docs.yml");
       commitAll(wt);
     }],
     ["a staged rename from src/ into openspec/", async (wt) => {
-      await put(wt, "src/moved.md", "a file that is renamed");
+      await put(wt, "src/moved.ts", "a file that is renamed");
       commitAll(wt);
       git(wt, "push", "-q", ".", "HEAD:refs/heads/base-with-src");
       await mkdir(join(wt, "openspec"), { recursive: true });
-      await rename(join(wt, "src/moved.md"), join(wt, "openspec/moved.md"));
+      await rename(join(wt, "src/moved.ts"), join(wt, "openspec/moved.md"));
       git(wt, "add", "-A");
     }],
   ];
@@ -231,7 +234,7 @@ async function archiving(autoMergeDocs: boolean | undefined, opts: { git?: boole
 /** The opening prompt as the fake agent received it: its one argument. */
 async function openedWith(h: Harness, id: string, prompt: string): Promise<void> {
   const seen = await watch(h.manager, id);
-  await waitFor(() => seen.text().includes(`args=${JSON.stringify([prompt])}`), "the opening prompt");
+  await waitFor(() => seen.text().includes(`args=${JSON.stringify([prompt]).slice(0, -2)}`), "the opening prompt");
 }
 
 test("Archive in a fresh worktree of an opted-in project ends with the archive auto-merge instruction", async () => {

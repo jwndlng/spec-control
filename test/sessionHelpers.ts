@@ -65,7 +65,22 @@ export async function harness(overrides: { enabled?: boolean; repoOff?: boolean;
   const repo = { ...newRepoConfig(repoPath, true), agent: overrides.repoOff ? { enabled: false } : undefined };
   const config: Config = { ...defaultConfig(), repos: [repo], agentSessions: { ...defaultAgentSessions(), enabled: overrides.enabled ?? true, agents: [fakeProfile(overrides.agent)], defaultAgent: "fake" } };
   const snapshot: Snapshot = { generatedAt: new Date().toISOString(), repos: [await scanRepo(repo)] };
-  const newManager = (extra: Partial<ManagerDeps> = {}) => new SessionManager({ getConfig: () => config, getSnapshot: () => snapshot, typePromptDelayMs: 150, ...extra });
+  const workflowCommand: NonNullable<ManagerDeps["workflowCommand"]> = async (cwd, argv) => {
+    if (argv[1] === "--version") return { code: 0, stdout: "openspec 1.15.0", stderr: "" };
+    const change = argv[argv.indexOf("--change") + 1] ?? "upgrade-runtime";
+    if (argv[1] === "status") return { code: 0, stdout: JSON.stringify({ changeName: change, schemaName: "spec-driven", planningHome: { kind: "repo", root: cwd }, artifacts: [{ id: "proposal" }, { id: "specs" }, { id: "design" }, { id: "tasks" }] }), stderr: "" };
+    if (argv[1] === "instructions" && argv[2] === "apply") {
+      const prefix = `openspec/changes/${change}/`;
+      const context = ["proposal.md", "specs/agent-sessions/spec.md", "design.md", "tasks.md"];
+      const readable = [];
+      for (const file of context) if (await Bun.file(join(cwd, prefix, file)).exists()) readable.push(`${prefix}${file}`);
+      return { code: 0, stdout: JSON.stringify({ changeName: change, schemaName: "spec-driven", state: "ready", contextFiles: { change: readable } }), stderr: "" };
+    }
+    if (argv[1] === "instructions") return { code: 0, stdout: JSON.stringify({ instruction: "Follow the schema", outputPath: `${argv[2]}.md` }), stderr: "" };
+    if (argv[1] === "archive" && argv[2] === "--help") return { code: 0, stdout: "Usage: openspec archive [change] --skip-specs", stderr: "" };
+    return { code: 1, stdout: "", stderr: "unsupported" };
+  };
+  const newManager = (extra: Partial<ManagerDeps> = {}) => new SessionManager({ getConfig: () => config, getSnapshot: () => snapshot, typePromptDelayMs: 150, workflowCommand, ...extra });
   return { config, snapshot, repoId: repo.id, repoPath, manager: newManager(), newManager };
 }
 

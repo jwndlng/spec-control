@@ -50,7 +50,13 @@ export function mergePending(pr: Partial<PullRequest> | undefined, asked: Pick<M
  * where those are known.
  */
 export function mergeReady(pr: Partial<PullRequest> | undefined): boolean {
-  return pr?.state === "open" && pr.draft !== true && pr.mergeable === "mergeable" && pr.checks === "passing" && pr.docsOnly === true && typeof pr.headOid === "string" && pr.headOid !== "";
+  const policyAt = Date.parse(pr?.requiredChecks?.fetchedAt ?? "");
+  const policyFresh = Number.isFinite(policyAt) && policyAt <= Date.now() && Date.now() - policyAt <= 5 * 60_000;
+  const exactPolicy = typeof pr?.headOid === "string" && pr.requiredChecks?.headOid === pr.headOid && policyFresh;
+  const checksReady = exactPolicy && pr?.requiredChecks?.state === "none"
+    ? pr.checks === "none" || pr.checks === "passing"
+    : exactPolicy && pr?.requiredChecks?.state === "required" && pr.checks === "passing" && Array.isArray(pr.checkNames) && (pr.requiredChecks.contexts ?? []).every((context) => pr.checkNames?.includes(context));
+  return pr?.state === "open" && pr.draft !== true && pr.mergeable === "mergeable" && checksReady && pr.docsOnly === true && typeof pr.headOid === "string" && pr.headOid !== "";
 }
 
 /** The status role a readiness wears, on the card and in the header alike. Never `info`: that is a running agent's. */

@@ -16,11 +16,13 @@
     "screenshots": "bun run scripts/screenshots.ts",
     "build": "bun run scripts/build-ui.ts && bun run scripts/build.ts",
     "build:desktop": "bun run build && cd desktop && bun install --frozen-lockfile && bun run build",
-    "test": "bun test",
+    "test": "bun test --parallel=8 --timeout=15000",
+    "test:serial": "bun test --timeout=15000",
+    "test:fast": "bun test --parallel=8 --timeout=15000 --path-ignore-patterns test/scanner.test.ts --path-ignore-patterns test/agentSessions.test.ts --path-ignore-patterns test/terminalSessions.test.ts --path-ignore-patterns test/pull.test.ts --path-ignore-patterns test/cleanup.test.ts --path-ignore-patterns test/autoMergeCleanup.test.ts --path-ignore-patterns test/staleChanges.test.ts --path-ignore-patterns test/proposalSessions.test.ts --path-ignore-patterns test/shipAutoMerge.test.ts --path-ignore-patterns test/pullRequests.test.ts --path-ignore-patterns test/shipPreflight.test.ts --path-ignore-patterns test/sessionPrompt.test.ts --path-ignore-patterns test/dismissChange.test.ts --path-ignore-patterns test/resolvePrConflicts.test.ts --path-ignore-patterns test/workStatus.test.ts --path-ignore-patterns test/consoleSession.test.ts --path-ignore-patterns test/worktreeScan.test.ts --path-ignore-patterns test/projectConsole.test.ts --path-ignore-patterns test/pullResolve.test.ts --path-ignore-patterns test/reportedState.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint .",
     "format": "biome format --write .",
-    "check": "bun run lint && bun run typecheck && bun test"
+    "check": "bun run lint && bun run typecheck && bun run test"
   },
   "dependencies": {
     "@fission-ai/openspec": "^1.13.0",

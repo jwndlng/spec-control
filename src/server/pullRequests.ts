@@ -1,16 +1,17 @@
-// Pull requests of the tracked repositories, read through the user's own GitHub CLI.
+// Pull requests and exact-base rule evidence for tracked repositories, read through the user's own GitHub CLI.
 //
 // This is the second — and only other — place in the dashboard that reaches a network, next to the pull action
-// (openspec/specs/dashboard-api: "never writes"; openspec/specs/pull-requests). It runs `gh pr list` and
-// `gh api user` and nothing else, never in a tracked repository's directory (the repository is named with `--repo`,
+// (openspec/specs/dashboard-api: "never writes"; openspec/specs/pull-requests). It runs read-only `gh pr list`,
+// `gh api user`, and the exact branch-rules API for docs/proposal merge candidates, never in a tracked repository's directory (the repository is named with `--repo`,
 // the process runs in the dashboard home), and only because the user opened or refreshed a pull-request list.
 // It writes nothing to a repository, runs no git command but the read-only `config --get remote.origin.url`
 // that discovery already uses, and changes nothing on GitHub.
 //
-// Everything it keeps is display-only: the cache is never an input to scanning, columns, counts or actions.
+// Cleanup may use exact merged head/merge identities as additional evidence, checked against local git.
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { PullRequest, PullRequestsResponse, RepoPullRequests } from "../shared/types.ts";
+import { documentationOnly } from "../shared/documentation.ts";
 import { type GhFailure as Failure, GH_TIMEOUT_MS, failureOf, githubRepoFromRemote, runGh } from "./gh.ts";
 import { originUrl } from "./git.ts";
 import { pullRequestsCachePath } from "./paths.ts";
@@ -34,7 +35,7 @@ export const WATCH_MIN_GAP_MS = 60_000;
 const CACHE_VERSION = 1;
 
 /** Only the documented `--json` fields; anything else is parsed defensively or ignored. */
-const FIELDS = "number,title,url,author,headRefName,baseRefName,isDraft,state,createdAt,mergedAt,closedAt,reviewDecision,reviewRequests,statusCheckRollup,mergeable,headRefOid,isCrossRepository";
+const FIELDS = "number,title,url,author,headRefName,baseRefName,isDraft,state,createdAt,mergedAt,closedAt,reviewDecision,reviewRequests,statusCheckRollup,mergeable,headRefOid,isCrossRepository,mergeCommit";
 /**
  * Asked for in addition only on the open call, and only for a GitHub repository an enabled project with docs auto-merge
  * maps to (agent-merges-docs-prs D2): enough to answer "docs-only", and dropped right after parsing.
@@ -48,6 +49,8 @@ export interface RepoTarget {
   isGit: boolean;
   /** The project has docs auto-merge on: its open pull requests are asked for their changed files. */
   autoMergeDocs?: boolean;
+  /** Managed proposal PRs are eligible for persistence checks regardless of the optional docs setting. */
+  proposalDelivery?: boolean;
 }
 
 
@@ -90,10 +93,20 @@ export function parseDocsOnly(entry: Record<string, unknown>): boolean | undefin
   const { files, changedFiles } = entry;
   if (!Array.isArray(files) || typeof changedFiles !== "number" || !Number.isInteger(changedFiles)) return false;
   if (changedFiles < 1 || files.length !== changedFiles) return false;
-  return files.every((file) => {
+  const paths: string[] = [];
+  for (const file of files) {
     const path = (file as Record<string, unknown> | null)?.path;
-    return typeof path === "string" && path.startsWith("openspec/") && path.length > "openspec/".length && !path.split("/").includes("..");
-  });
+    if (typeof path !== "string") return false;
+    paths.push(path);
+    const entry = file as Record<string, unknown> | null;
+    const previous = entry?.previousFilename ?? entry?.previousPath;
+    if (previous !== undefined) {
+      if (typeof previous !== "string") return false;
+      paths.push(previous);
+    }
+    if (["120000", "160000", "symlink", "submodule"].includes(String(entry?.mode))) return false;
+  }
+  return documentationOnly({ paths, complete: true });
 }
 
 /** GitHub's `isCrossRepository`: only a boolean is an answer; anything else leaves it unknown, which refuses like a fork. */
@@ -104,6 +117,26 @@ export function parseCrossRepository(value: unknown): boolean | undefined {
 /** GitHub's `mergeable`; anything missing or unrecognised is `unknown`, so drift never looks mergeable. */
 export function parseMergeable(value: unknown): NonNullable<PullRequest["mergeable"]> {
   return MERGEABLE[str(value).toUpperCase()] ?? "unknown";
+}
+
+/** Parse the rules GitHub says apply to one branch; unsupported required-workflow rules fail closed. */
+export function parseRequiredCheckPolicy(value: unknown): { state: "none" | "required" | "unknown"; contexts?: string[] } {
+  if (!Array.isArray(value)) return { state: "unknown" };
+  const contexts = new Set<string>();
+  for (const raw of value) {
+    const rule = (raw ?? {}) as Record<string, unknown>;
+    if (rule.type === "workflows" || rule.type === "code_scanning") return { state: "unknown" };
+    if (rule.type !== "required_status_checks") continue;
+    const params = (rule.parameters ?? {}) as Record<string, unknown>;
+    if (!Array.isArray(params.required_status_checks)) return { state: "unknown" };
+    for (const check of params.required_status_checks) {
+      const context = (check as Record<string, unknown> | null)?.context;
+      if (typeof context !== "string" || !context.trim()) return { state: "unknown" };
+      contexts.add(context);
+    }
+  }
+  const sorted = [...contexts].sort();
+  return sorted.length ? { state: "required", contexts: sorted } : { state: "none", contexts: [] };
 }
 const FAILING_CONCLUSIONS = new Set(["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"]);
 const FAILING_STATES = new Set(["FAILURE", "ERROR"]);
@@ -134,6 +167,18 @@ export function summarizeChecks(rollup: unknown): PullRequest["checks"] {
   return pending ? "pending" : "passing";
 }
 
+function parseCheckNames(rollup: unknown): string[] | undefined {
+  if (!Array.isArray(rollup)) return undefined;
+  const names: string[] = [];
+  for (const raw of rollup) {
+    const entry = (raw ?? {}) as Record<string, unknown>;
+    const name = typeof entry.name === "string" ? entry.name : typeof entry.context === "string" ? entry.context : undefined;
+    if (!name) return undefined;
+    names.push(name);
+  }
+  return [...new Set(names)].sort();
+}
+
 /** One entry of `gh pr list --json …`, or undefined when it carries no usable number. */
 export function parsePullRequest(raw: unknown, viewer?: string): PullRequest | undefined {
   const entry = (raw ?? {}) as Record<string, unknown>;
@@ -148,6 +193,7 @@ export function parsePullRequest(raw: unknown, viewer?: string): PullRequest | u
   const mergedAt = str(entry.mergedAt) || undefined;
   const closedAt = str(entry.closedAt) || undefined;
   const headOid = parseHeadOid(entry.headRefOid);
+  const mergeOid = parseHeadOid((entry.mergeCommit as Record<string, unknown> | null)?.oid);
   const docsOnly = parseDocsOnly(entry);
   const isCrossRepository = parseCrossRepository(entry.isCrossRepository);
   // The paths are read here and nowhere else: only the answer is kept, cached and sent to the browser.
@@ -166,8 +212,10 @@ export function parsePullRequest(raw: unknown, viewer?: string): PullRequest | u
     review: REVIEW[str(entry.reviewDecision).toUpperCase()] ?? "none",
     reviewRequestedFromViewer: requestedFromViewer,
     checks: summarizeChecks(entry.statusCheckRollup),
+    ...(parseCheckNames(entry.statusCheckRollup) ? { checkNames: parseCheckNames(entry.statusCheckRollup) } : {}),
     mergeable: parseMergeable(entry.mergeable),
     ...(headOid ? { headOid } : {}),
+    ...(mergeOid ? { mergeOid } : {}),
     ...(docsOnly !== undefined ? { docsOnly } : {}),
     ...(isCrossRepository !== undefined ? { isCrossRepository } : {}),
   };
@@ -178,10 +226,15 @@ export function parsePullRequest(raw: unknown, viewer?: string): PullRequest | u
  * it is one, docs-only only when it says exactly that — so an old or edited cache can never trigger a merge.
  */
 function fromCache(pr: PullRequest): PullRequest {
-  const { headOid, docsOnly, isCrossRepository, ...rest } = pr;
+  const { headOid, mergeOid, docsOnly, isCrossRepository, requiredChecks, checkNames, ...rest } = pr;
   const head = parseHeadOid(headOid);
+  const merge = parseHeadOid(mergeOid);
   const cross = parseCrossRepository(isCrossRepository);
-  return { ...rest, mergeable: parseMergeable(pr.mergeable), ...(head ? { headOid: head } : {}), ...(typeof docsOnly === "boolean" ? { docsOnly } : {}), ...(cross !== undefined ? { isCrossRepository: cross } : {}) };
+  const policyHead = parseHeadOid(requiredChecks?.headOid);
+  const policy = requiredChecks && typeof requiredChecks === "object" && ["none", "required", "unknown"].includes(requiredChecks.state) && policyHead !== undefined && policyHead === head
+    ? { headOid: policyHead, state: requiredChecks.state, ...(Array.isArray(requiredChecks.contexts) && requiredChecks.contexts.every((item) => typeof item === "string") ? { contexts: requiredChecks.contexts } : {}), ...(typeof requiredChecks.fetchedAt === "string" ? { fetchedAt: requiredChecks.fetchedAt } : {}) }
+    : undefined;
+  return { ...rest, mergeable: parseMergeable(pr.mergeable), ...(head ? { headOid: head } : {}), ...(merge ? { mergeOid: merge } : {}), ...(typeof docsOnly === "boolean" ? { docsOnly } : {}), ...(cross !== undefined ? { isCrossRepository: cross } : {}), ...(policy ? { requiredChecks: policy } : {}), ...(Array.isArray(checkNames) && checkNames.every((item) => typeof item === "string") ? { checkNames } : {}) };
 }
 
 /** When a pull request left the open list; undefined while it is open. */
@@ -346,7 +399,7 @@ export class PullRequests {
         // One `gh api user` per round, for the "review requested from you" marker; a failure only loses the marker.
         if (startsRound || this.viewerFetch) await this.ensureViewer();
         // Changed files only where a project acts on them: one with docs auto-merge on (agent-merges-docs-prs D2).
-        const withFiles = (github: string) => (byGithub.get(github) ?? []).some((t) => t.autoMergeDocs === true);
+        const withFiles = (github: string) => (byGithub.get(github) ?? []).some((t) => t.autoMergeDocs === true || t.proposalDelivery === true);
         await this.runBounded(wanted.map((github) => () => this.queryOnce(github, withFiles(github))));
         await this.persist();
       }
@@ -431,6 +484,18 @@ export class PullRequests {
     }
     const cutoff = since.getTime();
     const openList = (open.items ?? []).filter((pr) => pr.state === "open").sort(newestFirst);
+    if (withFiles) {
+      const policies = new Map<string, { state: "none" | "required" | "unknown"; contexts?: string[] }>();
+      for (const base of new Set(openList.map((pr) => pr.base).filter(Boolean))) {
+        policies.set(base, await this.requiredCheckPolicy(github, base));
+      }
+      const fetchedAt = new Date(this.now()).toISOString();
+      for (const pr of openList) {
+        if (!pr.headOid) continue;
+        const policy = policies.get(pr.base) ?? { state: "unknown" as const };
+        pr.requiredChecks = { headOid: pr.headOid, ...policy, fetchedAt };
+      }
+    }
     const closedList = (closed.items ?? [])
       .filter((pr) => pr.state !== "open")
       .filter((pr) => (endedAt(pr) ?? 0) >= cutoff)
@@ -440,6 +505,16 @@ export class PullRequests {
       pullRequests: [...openList, ...closedList],
       truncated: { open: open.truncated === true, closed: closed.truncated === true },
     });
+  }
+
+  private async requiredCheckPolicy(github: string, branch: string): Promise<{ state: "none" | "required" | "unknown"; contexts?: string[] }> {
+    const run = await runGh(["api", `repos/${github}/rules/branches/${encodeURIComponent(branch)}`], this.timeoutMs);
+    if (!run.ok) return { state: "unknown" };
+    try {
+      return parseRequiredCheckPolicy(JSON.parse(run.out || "null"));
+    } catch {
+      return { state: "unknown" };
+    }
   }
 
   private async listPrs(github: string, args: string[], fields: string): Promise<{ items?: PullRequest[]; truncated?: boolean; failure?: Failure }> {

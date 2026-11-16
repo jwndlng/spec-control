@@ -1,10 +1,11 @@
 // One change with its artifacts, as an overlay over the board it belongs to. The header comes from the snapshot the
-// boards use; file lists and file text are fetched on demand from the read-only artifact endpoints. The one write is
-// dismissing the change, and only after the user confirmed it in its own dialog.
+// boards use; file lists and file text are fetched on demand. Explicit writes are limited to confirming an awaiting
+// task and dismissing the change, each after its own user action and server-side recheck.
 import type { ComponentChildren, RefObject } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { AgentPermissionProfileId, ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, DismissPreview, DismissResult, RepoSnapshot, Snapshot, TaskProgress } from "../shared/types.ts";
-import { ApiError, api } from "./api.ts";
+import type { AgentPermissionProfileId, ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, DeleteFilesPreview, DeleteFilesResult, DismissPreview, DismissResult, RepoSnapshot, Snapshot, TaskProgress } from "../shared/types.ts";
+import { parseTaskLine } from "../shared/taskLine.ts";
+import { ApiError, api, type LifecycleDeliveryView } from "./api.ts";
 import { CopyButton, CopyRefButton, Meter } from "./kanban.tsx";
 import { type LinkResolver, renderMarkdown } from "./markdown.tsx";
 import { backTarget, CONSOLE_TAB, changePath, type DetailQuery, parseDetailQuery, repoPath, serializeDetailQuery } from "./routes.ts";
@@ -18,11 +19,13 @@ import { IconCheck, IconFolder } from "./icons.tsx";
 import { SourceIssueLink } from "./importIssues.tsx";
 import { type DetailPr, DetailPullRequest, detailPullRequest, usePullRequests } from "./pullRequests.tsx";
 import { StaleCleanupDialog } from "./staleCleanup.tsx";
-import { DismissDialog } from "./dismissChange.tsx";
+import { DeleteFilesDialog, DismissDialog } from "./dismissChange.tsx";
+import { ChangePermissionPicker } from "./changePermissionPicker.tsx";
 import { duplicateNotice, staleHint, staleReason } from "./staleState.ts";
-import { dismissedNotice, dismissOffer } from "./dismissState.ts";
+import { deletedFilesNotice, dismissedNotice, dismissOffer } from "./dismissState.ts";
 import { checkoutHint, daysSince, leftoverHint, pendingArchiveHint, relTime, splitPathLabel } from "./format.ts";
 import { currentQuery, followInApp, href, hrefWithQuery, navigate, replaceQuery } from "./url.ts";
+import { dismissActiveSelect } from "./select.tsx";
 
 export function artifactLabel(id: string): string {
   return id.replace(/[-_]+/g, " ").replace(/^./, (c) => c.toUpperCase());
@@ -87,12 +90,14 @@ export function artifactLinks(repoId: string, changeName: string, shownFile: str
 
 /** Same line shape and the same three states the scanner counts, so the checklist's label cannot disagree with the boxes below it. */
 export function taskProgress(markdown: string): TaskProgress {
-  const boxes = markdown.match(/^\s*(?:[-*+]|\d+[.)])\s+\[\s*[^\]\s]?\s*\]/gm) ?? [];
-  const state = (box: string) => box.slice(box.indexOf("[") + 1, box.lastIndexOf("]")).trim();
+  const states = markdown.split(/\r?\n/).flatMap((line) => {
+    const task = parseTaskLine(line);
+    return task ? [task.state] : [];
+  });
   return {
-    done: boxes.filter((b) => state(b).toLowerCase() === "x").length,
-    awaiting: boxes.filter((b) => state(b) === "~").length,
-    total: boxes.length,
+    done: states.filter((state) => state.toLowerCase() === "x").length,
+    awaiting: states.filter((state) => state === "~").length,
+    total: states.length,
   };
 }
 
@@ -101,12 +106,16 @@ export function taskProgress(markdown: string): TaskProgress {
  * Plain text, rendered as text — what the user has to check or do, shown before the checklist.
  */
 export function awaitingTaskTexts(markdown: string): string[] {
-  const texts: string[] = [];
-  for (const line of markdown.split(/\r?\n/)) {
-    const match = /^\s*(?:[-*+]|\d+[.)])\s+\[\s*~\s*\]/.exec(line);
-    if (match) texts.push(line.slice(match[0].length).trim());
+  return awaitingTaskRows(markdown).map((task) => task.text);
+}
+
+export function awaitingTaskRows(markdown: string): { text: string; lineNumber: number }[] {
+  const rows: { text: string; lineNumber: number }[] = [];
+  for (const [index, line] of markdown.split(/\r?\n/).entries()) {
+    const task = parseTaskLine(line);
+    if (task?.state === "~") rows.push({ text: task.text, lineNumber: index + 1 });
   }
-  return texts;
+  return rows;
 }
 
 export function absoluteFilePath(changeDir: string, file: string): string {
@@ -187,6 +196,11 @@ export function closeOnEscape(onClose: () => void): (e: KeyboardEvent) => void {
     // Duck-typed rather than `instanceof Element`, so this stays a pure function testable without a DOM.
     const target = e.target as { closest?: (selector: string) => unknown } | null;
     if (typeof target?.closest === "function" && target.closest(TERMINAL_SELECTOR)) return;
+    if (dismissActiveSelect()) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     e.preventDefault();
     onClose();
   };
@@ -241,6 +255,7 @@ export function DetailHeader({
   from,
   onClose,
   onDismiss,
+  onDeleteFiles,
   pullRequest,
 }: {
   repo: RepoSnapshot;
@@ -249,6 +264,7 @@ export function DetailHeader({
   onClose: () => void;
   /** Opens the dismiss confirmation; absent where dismissing is not offered at all. */
   onDismiss?: () => void;
+  onDeleteFiles?: () => void;
   /** The change's pull request, or why pull requests are unavailable; absent when there is nothing to say. */
   pullRequest?: DetailPr;
 }) {
@@ -267,6 +283,7 @@ export function DetailHeader({
           <CopyRefButton project={repo.name} change={change.name} />
         </h1>
         {onDismiss && "column" in change && <DismissButton change={change} failing={!repo.ok} onDismiss={onDismiss} />}
+        {onDeleteFiles && "column" in change && !change.archived && <button type="button" class="btn sm ghost" disabled={!repo.ok} title="Delete only the main checkout's change files" onClick={onDeleteFiles}>Delete change files</button>}
         <CloseButton onClose={onClose} />
       </div>
       {"column" in change && <ChangeFacts change={change} pullRequest={pullRequest} />}
@@ -288,8 +305,7 @@ function DismissButton({ change, failing, onDismiss }: { change: ChangeSnapshot;
     <button
       type="button"
       class="btn sm ghost dismiss-change"
-      disabled={offer.disabledReason !== undefined}
-      title={offer.disabledReason ?? "Delete this change's directory from the project, after you confirm"}
+      title="Hide this change from the board while preserving its files and any running agent"
       onClick={onDismiss}
     >
       Dismiss change
@@ -482,7 +498,28 @@ export function FileList({ artifact, selected, onSelect }: { artifact: ChangeArt
 }
 
 /** The content column for one file state. `rendered` is the memoised Markdown of `state.text`. */
-export function FileContent({ state, raw, isTasks, rendered, filePath }: { state: FileState; raw: boolean; isTasks: boolean; rendered: ComponentChildren; filePath?: string }) {
+function AwaitingTaskList({ tasks, onConfirmTask }: { tasks: { text: string; lineNumber: number }[]; onConfirmTask?: (lineNumber: number) => Promise<void> }) {
+  const [pendingLine, setPendingLine] = useState<number>();
+  const [confirmedLine, setConfirmedLine] = useState<number>();
+  const [confirmError, setConfirmError] = useState<string>();
+  const inFlight = useRef(false);
+  const confirm = async (lineNumber: number) => {
+    if (!onConfirmTask || inFlight.current) return;
+    inFlight.current = true;
+    setPendingLine(lineNumber); setConfirmError(undefined);
+    try { await onConfirmTask(lineNumber); setConfirmedLine(lineNumber); }
+    catch (err) { setConfirmError(err instanceof Error ? err.message : String(err)); }
+    finally { inFlight.current = false; setPendingLine(undefined); }
+  };
+  return <>
+    <ul class="needs-you-list">{tasks.map(({ text, lineNumber }) => (
+      <li>{text}{onConfirmTask && <button type="button" class="button small" disabled={pendingLine !== undefined || confirmedLine === lineNumber} onClick={() => void confirm(lineNumber)}>{pendingLine === lineNumber ? "Confirming…" : confirmedLine === lineNumber ? "Confirmed" : "Mark confirmed"}</button>}</li>
+    ))}</ul>
+    {confirmError && <p class="notice warn" role="alert">{confirmError} <button type="button" class="button small" onClick={() => void api.scan().catch(() => undefined)}>Refresh</button></p>}
+  </>;
+}
+
+export function FileContent({ state, raw, isTasks, rendered, filePath, onConfirmTask }: { state: FileState; raw: boolean; isTasks: boolean; rendered: ComponentChildren; filePath?: string; onConfirmTask?: (lineNumber: number) => Promise<void> }) {
   if (state.status === "too-large") {
     return (
       <div class="notice warn detail-problem">
@@ -501,7 +538,7 @@ export function FileContent({ state, raw, isTasks, rendered, filePath }: { state
     );
   }
   const progress = isTasks ? taskProgress(state.text) : undefined;
-  const needsYou = progress && (progress.awaiting ?? 0) > 0 ? awaitingTaskTexts(state.text) : [];
+  const needsYou = progress && (progress.awaiting ?? 0) > 0 ? awaitingTaskRows(state.text) : [];
   return (
     <>
       {progress && progress.total > 0 && (
@@ -513,13 +550,9 @@ export function FileContent({ state, raw, isTasks, rendered, filePath }: { state
                 <strong>
                   {needsYou.length} {needsYou.length === 1 ? "task needs" : "tasks need"} you
                 </strong>{" "}
-                — each is something to check or do that only you can. Confirm them with <strong>Validate</strong> on the card, or when archiving.
+                — each is something to check or do that only you can. Confirm with <strong>Validate</strong>, when archiving, or here.
               </p>
-              <ul class="needs-you-list">
-                {needsYou.map((text) => (
-                  <li>{text}</li>
-                ))}
-              </ul>
+              {onConfirmTask ? <AwaitingTaskList tasks={needsYou} onConfirmTask={onConfirmTask} /> : <ul class="needs-you-list">{needsYou.map(({ text }) => <li>{text}</li>)}</ul>}
             </div>
           )}
         </div>
@@ -602,10 +635,14 @@ export function ChangeDetail({
   // Cached only: the board this view opens over already refreshed a stale cache when it opened.
   const pullRequests = usePullRequests();
   const [dismissing, setDismissing] = useState(false);
-  const [savingPermission, setSavingPermission] = useState(false);
-  const [permissionError, setPermissionError] = useState<string>();
+  const [deletingFiles, setDeletingFiles] = useState(false);
   const [query, setQueryState] = useState<DetailQuery>(() => parseDetailQuery(currentQuery()));
   const [listing, setListing] = useState<ChangeArtifacts | null>(null);
+  const [deliveries, setDeliveries] = useState<LifecycleDeliveryView[]>([]);
+  const [deliveryError, setDeliveryError] = useState<string>();
+  const [retryingDelivery, setRetryingDelivery] = useState<string>();
+  const [confirmingPhase, setConfirmingPhase] = useState(false);
+  const [acceptingArchive, setAcceptingArchive] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [fileState, setFileState] = useState<FileState | null>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -619,15 +656,6 @@ export function ChangeDetail({
   const repo = snapshot?.repos.find((r) => r.id === repoId);
   const change = repo?.changes.find((c) => c.name === changeName);
   const known = change !== undefined;
-  const repoConfig = ui.config?.repos.find((r) => r.id === repoId);
-  const savePermission = async (value: string) => {
-    if (savingPermission) return;
-    setSavingPermission(true);
-    setPermissionError(undefined);
-    try { ui.saveConfig(await api.setChangePermissionProfile(repoId, changeName, value ? value as AgentPermissionProfileId : null)); }
-    catch (err) { setPermissionError(err instanceof Error ? err.message : String(err)); }
-    finally { setSavingPermission(false); }
-  };
 
   // The console's own inputs. A worktree outlives its change, so a change the snapshot no longer carries can still
   // have one — that is what keeps an interrupted archive session reachable once its change is gone from the board.
@@ -657,6 +685,53 @@ export function ChangeDetail({
       cancelled = true;
     };
   }, [repoId, changeName, known, snapshot]);
+
+  useEffect(() => {
+    if (!known) return;
+    let cancelled = false;
+    api.lifecycleDeliveries(repoId, changeName).then(
+      (next) => { if (!cancelled) { setDeliveries(next); setDeliveryError(undefined); } },
+      (err) => { if (!cancelled) setDeliveryError(err instanceof Error ? err.message : String(err)); },
+    );
+    return () => { cancelled = true; };
+  }, [repoId, changeName, known, snapshot]);
+
+  const retryDelivery = async (delivery: LifecycleDeliveryView) => {
+    if (retryingDelivery) return;
+    setRetryingDelivery(delivery.id);
+    setDeliveryError(undefined);
+    try {
+      const next = await api.retryLifecycleDelivery(repoId, changeName, delivery.id);
+      setDeliveries((current) => current.map((item) => item.id === next.id ? next : item));
+    } catch (err) {
+      setDeliveryError(err instanceof Error ? err.message : String(err));
+      void api.lifecycleDeliveries(repoId, changeName).then(setDeliveries).catch(() => undefined);
+    } finally { setRetryingDelivery(undefined); }
+  };
+
+  const confirmPhase = async () => {
+    if (!shownSession?.managedActionId || confirmingPhase) return;
+    setConfirmingPhase(true);
+    setDeliveryError(undefined);
+    try {
+      await api.confirmPhaseComplete(shownSession.id, shownSession.managedActionId);
+      await ui.refresh();
+    } catch (err) {
+      setDeliveryError(err instanceof Error ? err.message : String(err));
+    } finally { setConfirmingPhase(false); }
+  };
+
+  const acceptUnresolvedArchive = async () => {
+    if (!shownSession?.managedActionId || acceptingArchive) return;
+    setAcceptingArchive(true);
+    setDeliveryError(undefined);
+    try {
+      await api.acceptUnresolvedArchive(shownSession.id, shownSession.managedActionId);
+      await ui.refresh();
+    } catch (err) {
+      setDeliveryError(err instanceof Error ? err.message : String(err));
+    } finally { setAcceptingArchive(false); }
+  };
 
   const selection = useMemo(() => resolveSelection(listing?.artifacts ?? [], query, hasConsole), [listing, query, hasConsole]);
   const onConsole = selection.artifactId === CONSOLE_TAB;
@@ -749,8 +824,12 @@ export function ChangeDetail({
   const dismissed = (result: DismissResult, preview: DismissPreview) => {
     setDismissing(false);
     onDismissed?.(dismissedNotice(result, preview));
-    // A worktree's copy keeps the change on the board: stay, and show that copy after the rescan.
-    if (preview.copies.length === 0) close();
+    close();
+  };
+  const deletedFiles = (result: DeleteFilesResult) => {
+    setDeletingFiles(false);
+    onDismissed?.(deletedFilesNotice(result));
+    close();
   };
   const filePath = listing && file ? absoluteFilePath(listing.change.dir, file) : undefined;
   const current = fileState && fileState.path === file ? fileState : null;
@@ -764,12 +843,29 @@ export function ChangeDetail({
         from={query.from}
         onClose={close}
         onDismiss={onDismissed ? () => setDismissing(true) : undefined}
+        onDeleteFiles={onDismissed ? () => setDeletingFiles(true) : undefined}
         pullRequest={detailPullRequest(change, pullRequests.data)}
       />
-      {!change.archived && repoConfig && ui.config?.agentSessions.enabled && <div class="detail-permission-picker"><label>Permission profile for this change <select aria-label="Change permission profile" value={repoConfig.agentOverrides?.[changeName]?.permissionProfile ?? ""} disabled={savingPermission} onChange={(event) => void savePermission(event.currentTarget.value)}>
-        <option value="">Inherit ({repoConfig.agent?.permissionProfile ?? ui.config.agentSessions.defaultPermissionProfile ?? "minimum"})</option>
-        <option value="minimum">Minimum</option><option value="less-friction">Less friction</option><option value="full-automation">Full automation</option>
-      </select></label>{permissionError && <span class="notice danger" role="alert">{permissionError}</span>}</div>}
+      {(deliveries.length > 0 || deliveryError || (shownSession?.state === "running" && shownSession.managedActionId && ["draft", "implement", "fastForward", "archive"].includes(shownSession.action)) || (shownSession?.action === "archive" && shownSession.managedActionId && change.archived && change.tasks && change.tasks.total > change.tasks.done)) && <section class="notice lifecycle-delivery" aria-label="Lifecycle delivery">
+        {deliveries.map((delivery) => <p key={delivery.id}>
+          <strong>{delivery.phase[0].toUpperCase() + delivery.phase.slice(1)} delivery · {delivery.state.replaceAll("-", " ")}</strong>
+          {delivery.pullRequestUrl && <> · <a href={delivery.pullRequestUrl} target="_blank" rel="noopener noreferrer">PR #{delivery.pullRequestNumber ?? "open"}</a></>}
+          {delivery.blocker && <><br />{delivery.blocker}</>}
+          {(delivery.state === "blocked" || delivery.state === "unavailable" || delivery.state === "pending") && delivery.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => void retryDelivery(delivery)}>{retryingDelivery === delivery.id ? "Retrying…" : "Retry delivery"}</button>}
+        </p>)}
+        {shownSession?.state === "running" && shownSession.managedActionId && ["draft", "implement", "fastForward", "archive"].includes(shownSession.action) && <p>
+          <strong>{shownSession.phaseCompletionConfirmedActionId === shownSession.managedActionId ? "Completion confirmed; checking the checkpoint…" : "Agent did not report phase completion?"}</strong>{" "}
+          Check the current artifacts and tasks before confirming. The server still verifies them and waits for a stable worktree snapshot.
+          {shownSession.phaseCompletionConfirmedActionId !== shownSession.managedActionId && <button type="button" class="btn sm" disabled={confirmingPhase} onClick={() => void confirmPhase()}>{confirmingPhase ? "Confirming…" : "Confirm phase complete"}</button>}
+        </p>}
+        {shownSession?.action === "archive" && shownSession.managedActionId && change.archived && change.tasks && change.tasks.total > change.tasks.done && <p>
+          {shownSession.unresolvedArchiveAcceptedActionId === shownSession.managedActionId
+            ? <><strong>Unresolved archive publication accepted.</strong> Task markers remain unchanged; delivery opens a PR for review and will not auto-merge.</>
+            : <><strong>{change.tasks.total - change.tasks.done} archive tasks remain unresolved.</strong> Accepting publishes this archived checkpoint for review without marking tasks complete or enabling auto-merge. <button type="button" class="btn sm" disabled={acceptingArchive} onClick={() => void acceptUnresolvedArchive()}>{acceptingArchive ? "Accepting…" : "Accept and publish archive"}</button></>}
+        </p>}
+        {deliveryError && <p role="alert">Could not read lifecycle delivery status: {deliveryError}</p>}
+      </section>}
+      {!change.archived && ui.config?.agentSessions.enabled && <ChangePermissionPicker key={`${repoId}/${changeName}`} repoId={repoId} changeName={changeName} />}
       <StaleNotice repo={repo} change={change} />
       {(listing || hasConsole) && (
         <ArtifactTabs artifacts={listing?.artifacts ?? []} selected={selection.artifactId} onSelect={(id) => setQuery({ artifact: id, file: undefined })} console={hasConsole} />
@@ -804,7 +900,7 @@ export function ChangeDetail({
           ) : !current ? (
             <p class="detail-hint">Loading…</p>
           ) : (
-            <FileContent state={current} raw={query.raw} isTasks={selection.artifactId === "tasks"} rendered={rendered} filePath={filePath} />
+            <FileContent state={current} raw={query.raw} isTasks={selection.artifactId === "tasks"} rendered={rendered} filePath={filePath} onConfirmTask={selection.artifactId === "tasks" && !change.archived ? async (lineNumber) => { if (current.status !== "ok") throw new Error("Task content is unavailable; refresh before confirming."); await api.confirmTask(repoId, changeName, current.text, lineNumber); } : undefined} />
           )}
             </>
           )}
@@ -813,6 +909,7 @@ export function ChangeDetail({
     </DetailOverlay>
     {/* Outside the panel: a dialog of its own over the detail view, whose Escape closes only this dialog. */}
     {dismissing && <DismissDialog repoId={repo.id} repoName={repo.name} change={change.name} onClose={() => setDismissing(false)} onDismissed={dismissed} />}
+    {deletingFiles && <DeleteFilesDialog repoId={repo.id} repoName={repo.name} change={change.name} onClose={() => setDeletingFiles(false)} onDeleted={deletedFiles} />}
     </>
   );
 }

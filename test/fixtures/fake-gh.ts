@@ -31,11 +31,14 @@ interface Mode {
 
 interface Scenario extends Mode {
   login?: string;
+  createOutput?: string;
   repos?: Record<string, { open?: unknown[]; closed?: unknown[] }>;
   issues?: Record<string, unknown[]>;
   owners?: Record<string, unknown[]>;
   perRepo?: Record<string, Mode>;
   userMode?: Mode["mode"];
+  commandModes?: Record<string, Mode>;
+  rules?: Record<string, unknown[]>;
 }
 
 const argv = process.argv.slice(2);
@@ -79,6 +82,12 @@ const flag = (name: string): string | undefined => {
 
 if (argv[0] === "api" && argv[1] === "user") {
   finish({ ...scenario, mode: scenario.userMode ?? scenario.mode }, () => `${scenario.login ?? "demo-user"}\n`);
+} else if (argv[0] === "api" && argv[1]?.startsWith("repos/") && argv[1]?.includes("/rules/branches/")) {
+  const route = argv[1];
+  const split = route.indexOf("/rules/branches/");
+  const repo = route.slice("repos/".length, split);
+  const branch = decodeURIComponent(route.slice(split + "/rules/branches/".length));
+  finish({ ...scenario, ...(scenario.perRepo?.[repo] ?? {}), ...(scenario.commandModes?.rules ?? {}) }, () => `${JSON.stringify(scenario.rules?.[`${repo}:${branch}`] ?? [])}\n`);
 } else if (argv[0] === "pr" && argv[1] === "list") {
   const repo = flag("repo") ?? "";
   const limit = Number(flag("limit") ?? 30);
@@ -96,11 +105,11 @@ if (argv[0] === "api" && argv[1] === "user") {
   const repo = flag("repo") ?? "";
   const mode: Mode = { ...scenario, ...(scenario.perRepo?.[repo] ?? {}) };
   finish(mode, () => {
-    return `https://github.com/${repo}/pull/99\n`;
+    return scenario.createOutput ?? `https://github.com/${repo}/pull/99\n`;
   });
 } else if (argv[0] === "pr" && argv[1] === "merge") {
   const repo = flag("repo") ?? "";
-  const mode: Mode = { ...scenario, ...(scenario.perRepo?.[repo] ?? {}) };
+  const mode: Mode = { ...scenario, ...(scenario.perRepo?.[repo] ?? {}), ...(scenario.commandModes?.merge ?? {}) };
   finish(mode, () => {
     return "";
   });

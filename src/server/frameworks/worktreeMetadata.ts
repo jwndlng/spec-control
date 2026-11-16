@@ -47,6 +47,18 @@ export async function assertNoSymlinks(root: string, relPath: string): Promise<n
   throw new Error(`invalid path: ${relPath}`);
 }
 
+/** Verifies with `lstat` that every path segment from `root` down to `relPath` is a real directory. */
+async function assertDirectoryPathNoSymlinks(root: string, relPath: string): Promise<void> {
+  const segments = relPath.split(/[\\/]+/).filter(Boolean);
+  for (let i = 1; i <= segments.length; i++) {
+    const sub = segments.slice(0, i).join("/");
+    const info = await lstat(join(root, sub)).catch(() => undefined);
+    if (!info) throw new Error(`path does not exist: ${sub}`);
+    if (info.isSymbolicLink()) throw new Error(`symbolic link not allowed: ${sub}`);
+    if (!info.isDirectory()) throw new Error(`expected directory but found file: ${sub}`);
+  }
+}
+
 /**
  * Verifies with `lstat` that `root/relPath` and every ancestor segment exists and is not a symbolic link,
  * and recursively verifies that no file or subdirectory within `root/relPath` is a symbolic link.
@@ -91,17 +103,20 @@ export async function findChangeMetadataRelPath(
     const absArchived = join(worktreePath, paths.archived);
     const exists = await lstat(absArchived).then(() => true, () => false);
     if (exists) return paths.archived;
+    const archiveDirExists = await lstat(dirname(absArchived)).then(() => true, () => false);
+    if (archiveDirExists) return paths.archived;
   }
 
   const findInArchive = async () => {
-    const archiveBase = join(worktreePath, openSpec.layout.archiveDir ?? "openspec/changes/archive");
+    const archiveDir = openSpec.layout.archiveDir ?? "openspec/changes/archive";
+    const archiveBase = join(worktreePath, archiveDir);
     const archiveEntries = await readdir(archiveBase).catch(() => [] as string[]);
-    for (const entry of archiveEntries) {
-      if (entry.endsWith(`-${changeName}`)) {
-        const candidate = `${openSpec.layout.archiveDir}/${entry}/.openspec.yaml`;
-        const candidateExists = await lstat(join(worktreePath, candidate)).then((i) => i.isFile(), () => false);
-        if (candidateExists) return candidate;
-      }
+    for (const entry of archiveEntries.filter((name) => name.endsWith(`-${changeName}`)).sort().reverse()) {
+      const candidate = `${archiveDir}/${entry}/.openspec.yaml`;
+      const candidateExists = await lstat(join(worktreePath, candidate)).then(() => true, () => false);
+      if (candidateExists) return candidate;
+      const archiveExists = await lstat(join(archiveBase, entry)).then(() => true, () => false);
+      if (archiveExists) return candidate;
     }
     return undefined;
   };
@@ -114,6 +129,8 @@ export async function findChangeMetadataRelPath(
   const absActive = join(worktreePath, paths.active);
   const activeExists = await lstat(absActive).then(() => true, () => false);
   if (activeExists) return paths.active;
+  const activeDirExists = await lstat(dirname(absActive)).then(() => true, () => false);
+  if (activeDirExists) return paths.active;
 
   if (!preferArchived) {
     const candidate = await findInArchive();
@@ -124,8 +141,9 @@ export async function findChangeMetadataRelPath(
 }
 
 /**
- * Atomically records `branch` or `archive-branch` in `.openspec.yaml` inside `worktreePath`.
- * Verifies that no segment is a symbolic link and uses a temporary sibling file with atomic rename.
+ * Records `branch` or `archive-branch` in `.openspec.yaml` inside `worktreePath`.
+ * Existing markers are updated through a temporary sibling file and atomic rename; a missing marker is created exclusively.
+ * Both paths verify that no segment is a symbolic link.
  */
 export async function recordBranchInWorktree(
   worktreePath: string,
@@ -144,8 +162,16 @@ export async function recordBranchInWorktree(
     throw new Error(`could not find metadata file for change "${changeName}" in worktree`);
   }
 
-  const mode = await assertNoSymlinks(worktreePath, relPath);
   const absPath = join(worktreePath, relPath);
+  const existing = await lstat(absPath).catch(() => undefined);
+  if (!existing) {
+    await assertDirectoryPathNoSymlinks(worktreePath, dirname(relPath));
+    const updatedText = setRecordedBranchInMarker("", key, branch);
+    await writeFile(absPath, updatedText, { encoding: "utf8", flag: "wx", mode: 0o644 });
+    return { updated: true, relPath, absPath };
+  }
+
+  const mode = await assertNoSymlinks(worktreePath, relPath);
   const text = await readFile(absPath, "utf8");
   const updatedText = setRecordedBranchInMarker(text, key, branch);
 

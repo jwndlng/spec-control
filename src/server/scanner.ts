@@ -22,7 +22,7 @@ export const DEFAULT_REPO_TIMEOUT_MS = 30_000;
 /** Only the most recent archives get a git lookup; older ones are rarely looked at. */
 export const ARCHIVED_ACTIVITY_LIMIT = 25;
 /** Linked worktrees that get a `git status` per repository; the main checkout always does. The rest are listed uninspected. */
-export const MAX_INSPECTED_WORKTREES = 12;
+export const MAX_INSPECTED_WORKTREES = 50;
 const CHECKOUT_CONCURRENCY = 3;
 /** Cap the size of a change's `prompt.md` in the snapshot; a tooltip does not need more. */
 export const PROMPT_LIMIT_BYTES = 8 * 1024;
@@ -151,7 +151,7 @@ function newestDirty(files: DirtyFile[], under: string): string | undefined {
 }
 
 /** At most this many linked worktrees are read per repository; the most recently touched ones win. */
-export const WORKTREE_LIMIT = 12;
+export const WORKTREE_LIMIT = 50;
 const WORKTREE_CONCURRENCY = 3;
 const WORKTREE_TIMEOUT_MS = 10_000;
 

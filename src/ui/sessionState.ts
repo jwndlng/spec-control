@@ -801,6 +801,8 @@ const shortCommit = (head: string) => head.slice(0, 7);
 export function mergeNotice(session: Pick<ChangeSession, "mergeAsked"> | undefined, pr: PullRequest | undefined): { text: string; title?: string; tone: "warn" | "info" } | undefined {
   const asked = session?.mergeAsked;
   if (!asked || !mergePending(pr, asked)) return undefined;
+  if (asked.outcomeUnknown) return { text: `Merge outcome for #${asked.pr} is unknown. Refresh GitHub before retrying.`, title: asked.head, tone: "warn" };
+  if (asked.failure) return { text: `Could not merge #${asked.pr}: ${asked.failure}. A fresh pull-request refresh can retry this head (up to three attempts).`, title: asked.head, tone: "warn" };
   if (!asked.submitted) return { text: `The Merge prompt for #${asked.pr} was typed but not sent. Press Enter in the terminal to send it.`, tone: "warn" };
   return { text: `Asked the agent to merge #${asked.pr} at ${shortCommit(asked.head)}.`, title: asked.head, tone: "info" };
 }

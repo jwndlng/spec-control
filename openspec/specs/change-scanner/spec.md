@@ -5,6 +5,17 @@ Defines how the scanner polls tracked repositories and derives each change's art
 
 ## Requirements
 
+### Requirement: Archived changes are merged with active copies
+When multiple archive directories have the same change name, the scanner SHALL report only the newest archive directory for that name. An older archive SHALL NOT produce another board card. Any leftover active copy SHALL be folded into the newest archive, as before.
+
+#### Scenario: Two archives with the same name
+- **WHEN** a repository contains archives `2026-11-09-agent-permission-sets` and `2026-11-10-agent-permission-sets`
+- **THEN** the scanner reports one archived card dated `2026-11-10`
+
+#### Scenario: Leftover belongs to newest archive
+- **WHEN** a main checkout has an active copy older than both archives
+- **THEN** it is folded into the newest archive, and the older archive does not appear as a separate card
+
 ### Requirement: Scanner polls enabled repositories on an interval
 The scanner SHALL scan every enabled repository each `pollIntervalSeconds` (default 60) and on explicit trigger. Repositories MUST be scanned concurrently with a bounded concurrency (default 4) and a per-repository timeout. If a scan is already in flight, a trigger MUST NOT start a second concurrent full scan; instead it SHALL queue exactly one follow-up scan, which starts once the running scan has finished and reads the configuration and the repositories afresh, so that whatever was written before the trigger is in the snapshot it produces. Any number of triggers while a scan is in flight SHALL queue that one follow-up and no more, and at most one scan SHALL run at any time.
 
@@ -363,7 +374,27 @@ All active copies of the same change name across a repository's checkouts SHALL 
 - **THEN** the worktree's copy leads, and the change is reported in `Drafts` with `3/4` artifacts
 
 ### Requirement: Reading worktrees is bounded and isolated
-The scanner SHALL read a repository's worktrees with bounded concurrency and SHALL read at most 12 worktrees per repository, preferring those whose `openspec/changes` directory was modified most recently; when worktrees are left out, the repository's warnings SHALL say how many. A worktree that cannot be read, or whose reading fails or times out, SHALL be skipped with a repository warning naming it, and MUST NOT fail the repository's scan or affect changes read from other checkouts. All of it SHALL run within the repository's scan timeout. The repository's snapshot SHALL list the paths of the linked worktrees that have an `openspec/changes` directory but were not read, as the same paths its changes' checkouts carry — left out by the limit, or skipped because reading failed or timed out — so that a change missing from that scan can be told from a change that is gone (`activity-feed`: "A worktree left unread is not activity"); the list SHALL be omitted when every such worktree was read. It SHALL NOT change what the board shows.
+The scanner SHALL read every eligible linked worktree with bounded concurrency, preferring those whose changes directory was modified most recently for scheduling only. It MUST NOT omit a readable worktree solely because other worktrees are newer or because there are more than twelve. A worktree that cannot be read, or whose reading fails or times out, SHALL be skipped with a repository warning naming it, and MUST NOT fail the repository's scan or affect changes read from other checkouts. All of it SHALL run within the repository's scan timeout. The repository snapshot SHALL list paths of worktrees whose changes directory exists but could not be read, and SHALL omit that list when all were read. Stale-leftover detection SHALL resolve each linked worktree path at most once per invocation, reusing it across archived changes without caching it across scans. It SHALL inspect archived changes with bounded concurrency and preserve their report ordering.
+
+#### Scenario: More worktrees than the cap
+- **WHEN** a repository has fifteen readable linked worktrees containing unique draft changes and completes within the scan deadline
+- **THEN** all fifteen drafts appear, including those in the oldest worktrees, without a count-limit warning
+
+#### Scenario: One worktree fails
+- **WHEN** one worktree cannot be read and the others are readable
+- **THEN** the failed path is reported as unread with a warning, while changes from the other worktrees appear
+
+#### Scenario: Many archived changes
+- **WHEN** stale detection checks many archives against the same linked worktrees
+- **THEN** each linked worktree path is resolved once for that invocation
+
+#### Scenario: Worktree directory was deleted by hand
+- **WHEN** git reports a worktree as prunable because its directory no longer exists
+- **THEN** it is skipped, the repository is reported with `ok: true`, and changes from other checkouts are unaffected
+
+#### Scenario: Every worktree read
+- **WHEN** a repository scan reads all its linked worktrees
+- **THEN** its snapshot lists no worktree as not read
 
 #### Scenario: Worktree directory was deleted by hand
 - **WHEN** git reports a worktree as prunable because its directory no longer exists
@@ -471,11 +502,11 @@ For the main checkout and each linked worktree of a git repository the scanner S
 - **THEN** the snapshot contains the count but the string `secret-plan.md` appears nowhere in it
 
 ### Requirement: Checkout inspection is bounded and failure-isolated
-The scanner SHALL inspect the checkouts of a repository with a bounded concurrency and within the repository's existing scan timeout. It SHALL always inspect the main checkout and SHALL inspect at most 12 linked worktrees per repository; further linked worktrees SHALL still be listed, marked as not inspected and without a status. When the status of a checkout cannot be determined — the command fails or times out — that checkout SHALL be reported with an unknown status, and this MUST NOT fail the repository's scan nor affect the status of its other checkouts. Only paths reported by `git worktree list` for a tracked repository SHALL be used as the working directory of such a command. When a repository's scan fails, its previously recorded checkouts and their statuses SHALL be retained. A repository that is not a git repository SHALL report no checkouts.
+The scanner SHALL inspect the checkouts of a repository with a bounded concurrency and within the repository's existing scan timeout. It SHALL always inspect the main checkout and SHALL inspect at most 50 linked worktrees per repository; further linked worktrees SHALL still be listed, marked as not inspected and without a status. When the status of a checkout cannot be determined — the command fails or times out — that checkout SHALL be reported with an unknown status, and this MUST NOT fail the repository's scan nor affect the status of its other checkouts. Only paths reported by `git worktree list` for a tracked repository SHALL be used as the working directory of such a command. When a repository's scan fails, its previously recorded checkouts and their statuses SHALL be retained. A repository that is not a git repository SHALL report no checkouts.
 
 #### Scenario: More worktrees than the cap
-- **WHEN** a repository has 15 linked worktrees
-- **THEN** all 15 are listed, 12 of them with a status, and 3 marked as not inspected
+- **WHEN** a repository has 53 linked worktrees
+- **THEN** all 53 are listed, 50 of them with a status, and 3 marked as not inspected
 
 #### Scenario: Status fails for one worktree
 - **WHEN** the status command fails in one of three linked worktrees

@@ -2,7 +2,8 @@ import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pullRequestsCachePath } from "../src/server/paths.ts";
-import { githubRepoFromRemote, parseMergeable, parsePullRequest, PullRequests, type RepoTarget, summarizeChecks } from "../src/server/pullRequests.ts";
+import { failureOf } from "../src/server/gh.ts";
+import { githubRepoFromRemote, parseMergeable, parsePullRequest, parseRequiredCheckPolicy, PullRequests, type RepoTarget, summarizeChecks } from "../src/server/pullRequests.ts";
 import type { PullRequest } from "../src/shared/types.ts";
 import { checkRun, ghPr, installFakeGh, statusContext, type GhHarness } from "./ghHelpers.ts";
 import { gitIn, tempDir, useTempHome } from "./helpers.ts";
@@ -10,6 +11,33 @@ import { gitIn, tempDir, useTempHome } from "./helpers.ts";
 // Spawning the fake gh in a real process is fast, but CI runners are not; the 5 s default is too tight for the
 // tests that start several at once.
 setDefaultTimeout(30_000);
+
+test("a timed-out gh mutation carries unknown outcome instead of confirmed failure", () => {
+  expect(failureOf({ ok: false, out: "", err: "", timedOut: true, missing: false }, "create a pull request")).toMatchObject({
+    kind: "failed",
+    reason: "gh timed out",
+    outcomeUnknown: true,
+  });
+});
+
+test("required-check policy distinguishes no checks, required checks and incomplete or unsupported rules", () => {
+  expect(parseRequiredCheckPolicy([])).toEqual({ state: "none", contexts: [] });
+  expect(parseRequiredCheckPolicy([{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "build" }, { context: "test" }] } }])).toEqual({ state: "required", contexts: ["build", "test"] });
+  expect(parseRequiredCheckPolicy([{ type: "required_status_checks", parameters: {} }])).toEqual({ state: "unknown" });
+  expect(parseRequiredCheckPolicy([{ type: "workflows", parameters: { workflows: [] } }])).toEqual({ state: "unknown" });
+  expect(parseRequiredCheckPolicy({})).toEqual({ state: "unknown" });
+});
+
+test("an unavailable branch-rules query leaves exact-head required-check policy unknown", async () => {
+  await gh.scenario({
+    repos: { "acme/alpha-infra": { open: [ghPr({ number: 126, headRefOid: OID, ...files("openspec/a.md") })], closed: [] } },
+    commandModes: { rules: { mode: "fail", stderr: "permission denied" } },
+  });
+  await gh.forget();
+  const target: RepoTarget = { id: "alpha", path: await repoAt("alpha-rules-unknown", ALPHA), isGit: true, proposalDelivery: true };
+  const answer = await newStore().refresh([target], { force: true });
+  expect(answer.repos[0]?.pullRequests[0]?.requiredChecks).toMatchObject({ headOid: OID, state: "unknown" });
+});
 
 let gh: GhHarness;
 let cleanupHome: () => Promise<void>;
@@ -46,7 +74,7 @@ async function plainDir(): Promise<string> {
 
 const ALPHA = "https://github.com/acme/alpha-infra.git";
 const BETA = "git@github.com:acme/beta-soc.git";
-const newStore = (patch: { now?: () => number; timeoutMs?: number } = {}) => new PullRequests({ timeoutMs: 2000, ...patch });
+const newStore = (patch: { now?: () => number; timeoutMs?: number } = {}) => new PullRequests({ timeoutMs: 5000, ...patch });
 
 // ---- the fake gh itself (1.2) ----
 
@@ -181,6 +209,7 @@ test("a pull request is parsed from the fields gh prints", () => {
     review: "changes_requested",
     reviewRequestedFromViewer: true,
     checks: "passing",
+    checkNames: ["ci"],
     mergeable: "mergeable",
   });
   // A team review request is not a request from the signed-in user, and no viewer means no marker.
@@ -531,18 +560,22 @@ test("the head commit is a 40-character object name or absent", () => {
   }
 });
 
-test("docs-only: every path under openspec/, as many as GitHub counts, at least one; anything else is not", () => {
+test("docs-only: complete OpenSpec and documentation paths pass; unsafe and incomplete diffs fail", () => {
   const docs = (patch: Record<string, unknown>) => parsePullRequest(ghPr({ number: 88, ...patch }))?.docsOnly;
   expect(docs(files("openspec/specs/secrets/spec.md", "openspec/changes/archive/2026-10-20-rotate-keys/proposal.md"))).toBe(true);
   expect(docs(files("openspec/changes/rotate-keys/tasks.md", "src/keys.ts"))).toBe(false);
-  // A look-alike is not under openspec/ at the root.
-  expect(docs(files("openspec-notes.md"))).toBe(false);
-  expect(docs(files("docs/openspec/x"))).toBe(false);
+  // Root-level Markdown is documentation regardless of its name.
+  expect(docs(files("openspec-notes.md"))).toBe(true);
+  expect(docs(files("docs/openspec/x"))).toBe(true);
   expect(docs(files("openspec/../src/keys.ts"))).toBe(false);
   // gh returns at most 100 paths: 140 counted and 100 returned is not a complete list.
   const hundred = Array.from({ length: 100 }, (_, i) => ({ path: `openspec/changes/c${i}/tasks.md` }));
   expect(docs({ files: hundred, changedFiles: 140 })).toBe(false);
   expect(docs({ files: hundred, changedFiles: 100 })).toBe(true);
+  expect(docs(files("docs/guide.md", "README.md"))).toBe(true);
+  expect(docs(files("docs/build.sh"))).toBe(false);
+  expect(docs(files(".github/workflows/docs.yml"))).toBe(false);
+  expect(docs(files("docs/package.json"))).toBe(false);
   // No files, or a field missing or malformed.
   expect(docs({ files: [], changedFiles: 0 })).toBe(false);
   expect(docs({ files: [{ path: "openspec/a.md" }] })).toBe(false);
@@ -556,7 +589,7 @@ test("docs-only: every path under openspec/, as many as GitHub counts, at least 
   expect(["files", "changedFiles"].some((key) => key in parsed)).toBe(false);
 });
 
-test("changed files are asked for only on the open call of a repository with docs auto-merge, and never kept", async () => {
+test("changed files are asked for on open PRs for docs merge or proposal delivery, and never kept", async () => {
   await gh.scenario({
     login: "demo-user",
     repos: {
@@ -566,31 +599,33 @@ test("changed files are asked for only on the open call of a repository with doc
         closed: [ghPr({ number: 87, state: "MERGED", mergedAt: ago(DAY), closedAt: ago(DAY), headRefOid: OID, ...files("openspec/a.md") })],
       },
     },
+    rules: { "acme/alpha-infra:main": [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "ci" }] } }] },
   });
   await gh.forget();
   const targets: RepoTarget[] = [
-    { id: "alpha", path: await repoAt("alpha-files", ALPHA), isGit: true },
+    { id: "alpha", path: await repoAt("alpha-files", ALPHA), isGit: true, proposalDelivery: true },
     { id: "demo", path: await repoAt("demo-files", "https://github.com/acme/demo-ops.git"), isGit: true, autoMergeDocs: true },
   ];
   const answer = await newStore().refresh(targets, { force: true });
   const [alpha, demo] = answer.repos;
-  // alpha-infra has docs auto-merge off and shares no GitHub repository with a project that has it on.
-  expect(alpha.pullRequests.map((pr) => [pr.number, pr.headOid, pr.docsOnly])).toEqual([[125, OID, undefined]]);
+  // alpha-infra has docs auto-merge off; proposal delivery still needs an exact file classification.
+  expect(alpha.pullRequests.map((pr) => [pr.number, pr.headOid, pr.docsOnly, pr.requiredChecks])).toEqual([[125, OID, true, { headOid: OID, state: "required", contexts: ["ci"], fetchedAt: alpha.fetchedAt }]]);
   expect(demo.pullRequests.map((pr) => [pr.number, pr.headOid, pr.docsOnly])).toEqual([
     [88, OID, true],
     [87, OID, undefined],
   ]);
+  expect(demo.pullRequests[0]?.requiredChecks).toMatchObject({ headOid: OID, state: "none", contexts: [] });
 
   const calls = (await gh.calls()).filter((c) => c.argv[0] === "pr");
   const asked = calls.map((c) => ({ repo: c.argv[c.argv.indexOf("--repo") + 1], closed: c.argv.includes("--search"), files: fieldsOf(c).includes("files") && fieldsOf(c).includes("changedFiles") }));
   expect(asked.sort((a, b) => `${a.repo}${a.closed}`.localeCompare(`${b.repo}${b.closed}`))).toEqual([
-    { repo: "acme/alpha-infra", closed: false, files: false },
+    { repo: "acme/alpha-infra", closed: false, files: true },
     { repo: "acme/alpha-infra", closed: true, files: false },
     { repo: "acme/demo-ops", closed: false, files: true },
     { repo: "acme/demo-ops", closed: true, files: false },
   ]);
   for (const call of calls) expect(fieldsOf(call)).toContain("headRefOid");
-  for (const call of await gh.calls()) expect(call.argv.slice(0, 2).join(" ")).toMatch(/^(pr list|api user)$/);
+  for (const call of await gh.calls()) expect(call.argv.slice(0, 2).join(" ")).toMatch(/^(pr list|api user|api repos\/.*\/rules\/branches\/.*)$/);
 
   // The paths are in neither the cache file nor the answer.
   const cached = await readFile(pullRequestsCachePath(), "utf8");
@@ -622,6 +657,33 @@ test("a cache from an earlier version, or one carrying drift, has no head commit
 });
 
 // ---- whether the head is in a fork (resolve-pr-conflicts 1.1) ----
+
+test("merge identity is parsed, queried and cached defensively without extra GitHub calls", async () => {
+  const oid = "a".repeat(40);
+  for (const bad of [null, {}, { oid: "--all" }, { oid: "a".repeat(39) }, { oid: 1 }, oid]) {
+    expect(parsePullRequest(ghPr({ number: 1, mergeCommit: bad }))?.mergeOid).toBeUndefined();
+  }
+  await gh.scenario({ repos: { "acme/alpha-infra": { open: [], closed: [ghPr({
+    number: 81, state: "MERGED", mergedAt: new Date().toISOString(), headRefOid: "b".repeat(40),
+    mergeCommit: { oid }, isCrossRepository: false,
+  })] } } });
+  const targets: RepoTarget[] = [{ id: "merge", path: await repoAt("merge-evidence", ALPHA), isGit: true }];
+  await gh.forget();
+  const answer = await newStore().refresh(targets, { force: true });
+  expect(answer.repos[0].pullRequests[0]).toMatchObject({ mergeOid: oid, headOid: "b".repeat(40), base: "main", isCrossRepository: false });
+  expect((await gh.calls()).filter((c) => c.argv[0] === "pr")).toHaveLength(2);
+  for (const call of (await gh.calls()).filter((c) => c.argv[0] === "pr")) expect(fieldsOf(call)).toContain("mergeCommit");
+  await gh.forget();
+  expect((await newStore().list(targets)).repos[0].pullRequests[0].mergeOid).toBe(oid);
+  expect(await gh.calls()).toEqual([]);
+  const stored = JSON.parse(await readFile(pullRequestsCachePath(), "utf8"));
+  stored.repos["acme/alpha-infra"].pullRequests[0].mergeOid = "--all";
+  await writeFile(pullRequestsCachePath(), JSON.stringify(stored));
+  expect((await newStore().list(targets)).repos[0].pullRequests[0].mergeOid).toBeUndefined();
+  delete stored.repos["acme/alpha-infra"].pullRequests[0].mergeOid;
+  await writeFile(pullRequestsCachePath(), JSON.stringify(stored));
+  expect((await newStore().list(targets)).repos[0].pullRequests[0].mergeOid).toBeUndefined();
+});
 
 test("isCrossRepository is read with the same pr list, kept only as a boolean, and an old cache leaves it unknown", async () => {
   await gh.scenario({

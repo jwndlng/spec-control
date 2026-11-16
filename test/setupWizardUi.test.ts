@@ -37,7 +37,7 @@ test("the wizard is a dialog named as the setup, showing its position and every 
   expect(steps.map(textOf)).toEqual(["Welcome, done", "System check, done", "Workspace, done", "Agents, done", "Console", "Project settings", "Done"]);
   expect(steps.filter((li) => li.props["aria-current"] === "step").map(textOf)).toEqual(["Console"]);
   // Steps passed are done: green (the `past` class) with a check mark; the current and later ones are not.
-  expect(steps.map((li) => li.props.class)).toEqual(["past", "past", "past", "past", "current", "", ""]);
+  expect(steps.map((li) => li.props.class ?? "")).toEqual(["past", "past", "past", "past", "current", "", ""]);
   expect(steps.map((li) => byTag(li, "svg").length)).toEqual([1, 1, 1, 1, 0, 0, 0]);
   expect(byTag(frame, "button").map(textOf)).toEqual(["Skip setup", "Back", "Continue"]);
 });
@@ -258,7 +258,7 @@ test("the Console step explains the console and offers the default agent or any 
   const chosen: unknown[] = [];
   const picked = ConsoleStep({ view: consoleView({ choice: "codex" }), onChoose: (id) => chosen.push(id) });
   expect(byTag(picked, "select")[0].props.value).toBe("codex");
-  (byTag(picked, "select")[0].props.onChange as (e: unknown) => void)({ currentTarget: { value: "" } });
+  (byTag(picked, "select")[0].props.onChange as (value: string) => void)("");
   expect(chosen).toEqual([undefined]);
 });
 

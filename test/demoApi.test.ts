@@ -227,7 +227,8 @@ test("cleanup is simulated: a merged worktree and its branch go, kept items say 
   const worktree = preview.worktrees.find((w) => w.branch === "chore/upgrade-terraform")!;
   expect(worktree).toMatchObject({ removable: true, work: { state: "merged" } });
   expect(preview.worktrees.some((w) => !w.removable && w.reason)).toBe(true);
-  expect(preview.branches.find((b) => b.name === "experiment/plan-cache")).toMatchObject({ removable: false, reason: "4 commit(s) not in origin/main" });
+  expect(preview.branches.find((b) => b.name === "experiment/plan-cache")).toMatchObject({ removable: false, reason: expect.stringContaining("merge evidence is insufficient"), nextAction: expect.stringContaining("Refresh Pull requests"), evidenceFetchedAt: repo.scannedAt });
+  expect(preview.branches.find((b) => b.name === "fix/state-lock-timeout")).toMatchObject({ mergedBy: "pull-request", pullRequest: 81, evidenceFetchedAt: repo.scannedAt });
   expect(preview.prunable.length).toBe(1);
   const branch = preview.branches.find((b) => b.name === "chore/upgrade-terraform")!;
   expect(branch).toMatchObject({ removable: true, worktreePath: worktree.path });
@@ -245,6 +246,19 @@ test("cleanup is simulated: a merged worktree and its branch go, kept items say 
 
   const fresh = demo().api;
   expect((await fresh.state()).repos.find((r) => r.id === repo.id)!.worktrees.some((w) => w.path === worktree.path)).toBe(true);
+});
+
+test("demo cleanup prunes a stale branch's record before deleting the branch in one confirmation", async () => {
+  const { api } = demo();
+  const repo = (await api.state()).repos.find((r) => r.name === "lantern-infra")!;
+  const b = (await api.cleanupPreview(repo.id)).branches.find((b) => b.prunePath)!;
+  expect(b).toMatchObject({ name: "feat/abandoned-dns-module", removable: true });
+  const branches = [{ name: b.name, commit: b.commit }];
+  const kept = await api.cleanup(repo.id, { worktrees: [], prune: false, branches });
+  expect(kept.items[0]).toMatchObject({ outcome: "kept", reason: expect.stringContaining("select pruning") });
+  const result = await api.cleanup(repo.id, { worktrees: [], prune: true, branches });
+  expect(result.items.map((i) => i.outcome)).toEqual(["pruned", "deleted"]);
+  expect(result.items[1].commit).toBe(b.commit);
 });
 
 test("deleting a branch is simulated: a worktree with work goes with its branch, and a reload brings it back", async () => {
@@ -273,18 +287,19 @@ test("the main checkout's branch is never offered in the demo either", async () 
   expect(preview.branches.find((b) => b.name === "fix/focus-ring-contrast")).toMatchObject({ removable: true });
 });
 
-test("dismissing is simulated: a draft shows a file lost for good, leaves the board, and a reload brings it back", async () => {
+test("dismissal is reversible in the demo and leaves active card evidence intact", async () => {
   const { api } = demo();
   const repos = (await api.state()).repos;
   const repo = repos.find((r) => r.changes.some((c) => c.stage === "drafts" && !c.archived && (!c.checkout || c.checkout.isMain)))!;
   const draft = repo.changes.find((c) => c.stage === "drafts" && !c.archived && (!c.checkout || c.checkout.isMain))!;
   const preview = await api.dismissPreview(repo.id, draft.name);
-  expect(preview.files.some((f) => f.state === "lost")).toBe(true);
-  expect(preview.files.some((f) => f.path === ".openspec.yaml" && f.state === "restorable")).toBe(true);
   await expect(api.dismissChange(repo.id, draft.name, "stale")).rejects.toMatchObject({ status: 409 });
-  expect(await api.dismissChange(repo.id, draft.name, preview.fingerprint)).toEqual({ name: draft.name, staged: true });
-  expect((await api.state()).repos.find((r) => r.id === repo.id)!.changes.some((c) => c.name === draft.name && !c.archived)).toBe(false);
-  await expect(api.dismissPreview(repo.id, draft.name)).rejects.toMatchObject({ status: 404 });
+  expect(await api.dismissChange(repo.id, draft.name, preview.identity)).toEqual({ name: draft.name, identity: preview.identity, dismissed: true });
+  expect((await api.dismissedChanges(repo.id)).changes.some((c) => c.name === draft.name && c.identity === preview.identity)).toBe(true);
+  expect((await api.state()).repos.find((r) => r.id === repo.id)!.changes.some((c) => c.name === draft.name && !c.archived)).toBe(true);
+  await api.restoreChange(repo.id, draft.name, preview.identity);
+  await api.restoreChange(repo.id, draft.name, preview.identity);
+  expect((await api.dismissedChanges(repo.id)).changes.some((c) => c.name === draft.name)).toBe(false);
 
   const fresh = demo().api;
   expect((await fresh.state()).repos.find((r) => r.id === repo.id)!.changes.some((c) => c.name === draft.name)).toBe(true);
@@ -374,9 +389,12 @@ test("the overview's per-project settings change the in-memory config at once, w
   expect((await api.state()).repos.find((r) => r.id === first.id)?.name).toBe("Renamed");
   await expect(api.renameRepo(first.id, " ")).rejects.toMatchObject({ status: 400 });
 
-  expect((await api.setRepoAgent(first.id, { enabled: false })).repos[0].agent).toEqual({ enabled: false });
+  expect((await api.setRepoAgent(first.id, { enabled: false })).repos[0].agent).toMatchObject({ enabled: false, allowedCommands: ["go test ./..."] });
   expect((await api.setRepoAgent(first.id, { permissionProfile: "less-friction" })).repos[0].agent?.permissionProfile).toBe("less-friction");
   expect((await api.setRepoAgent(first.id, { permissionProfile: null })).repos[0].agent?.permissionProfile).toBeUndefined();
+  expect((await api.setRepoAgent(first.id, { allowedCommands: [" bun   run lint ", "bun run lint"] })).repos[0].agent?.allowedCommands).toEqual(["bun run lint"]);
+  await expect(api.setRepoAgent(first.id, { allowedCommands: ["git push"] })).rejects.toMatchObject({ status: 400 });
+  expect((await api.setRepoAgent(first.id, { allowedCommands: [] })).repos[0].agent?.allowedCommands).toBeUndefined();
   await expect(api.setRepoAgent(first.id, { agentId: "nope" })).rejects.toMatchObject({ status: 400 });
   await expect(api.setRepoAgent(first.id, {})).rejects.toMatchObject({ status: 400 });
 

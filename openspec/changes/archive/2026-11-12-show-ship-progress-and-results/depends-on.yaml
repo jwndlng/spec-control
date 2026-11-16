@@ -1,0 +1,3 @@
+depends_on:
+  - ship-button-should-only-block-implement
+  - repair-permission-spec-structure

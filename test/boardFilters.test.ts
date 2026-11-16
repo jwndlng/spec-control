@@ -27,12 +27,12 @@ test("the threshold lives in the URL as active=, and the former stale parameter 
 
 test("the filter bar captions the selector Activity and selects the threshold from the URL", () => {
   const tree = h(FilterBar, { filters: parseFilters("?active=7"), setFilters: () => {}, repos: [], hues: new Map(), single: true, showing: 0, layout: "lanes" });
-  const control = byTag(tree, "label").find((el) => String(el.props.class ?? "").includes("select-control"));
+  const control = byTag(tree, "div").find((el) => String(el.props.class ?? "").includes("select-control"));
   expect(control).toBeDefined();
   expect(textOf(byTag(control?.props.children, "span"))).toBe("Activity");
   const select = byTag(control?.props.children, "select")[0];
-  expect(select.props.value).toBe(7);
-  const selected = byTag(select.props.children, "option").find((o) => o.props.value === select.props.value);
+  expect(select.props.value).toBe("7");
+  const selected = byTag(select, "option").find((o) => o.props.value === select.props.value);
   expect(textOf(selected?.props.children)).toBe("Last 7 days");
   expect(textOf(tree)).toContain("Last 7 days");
 });
@@ -247,4 +247,98 @@ test("a running session keeps an old change, an ended one does not, and a change
   };
   // The board's list holds change sessions only; even were a change-less one passed, it names no change to keep.
   expect(names(visibleCards(cards, lastSeven, false, NOW_ACT, [projectConsole as unknown as ChangeSession]))).toEqual([]);
+});
+
+test("Show running is exact, default-off URL state and round-trips with every other filter", () => {
+  for (const query of ["", "?running=0", "?running=true", "?running=anything", "?running="]) expect(parseFilters(query).runningOnly).toBe(false);
+  const filters = {
+    ...EMPTY_FILTERS,
+    runningOnly: true,
+    repos: ["a1", "b2"],
+    q: "sync",
+    activeDays: 7,
+    hideArchived: true,
+    hideMerged: false,
+    layout: "stack" as const,
+  };
+  expect(parseFilters(serializeFilters(filters))).toEqual(filters);
+  expect(serializeFilters({ ...EMPTY_FILTERS, runningOnly: true })).toBe("?running=1");
+  expect(serializeFilters(EMPTY_FILTERS)).toBe("");
+  expect(hasActiveFilters({ ...EMPTY_FILTERS, runningOnly: true })).toBe(true);
+});
+
+test("Show running exposes a native keyboard-accessible switch and clears while preserving layout even with no sessions", () => {
+  for (const single of [false, true]) {
+    for (const runningOnly of [false, true]) {
+      const patches: unknown[] = [];
+      const tree = h(FilterBar, {
+        filters: { ...EMPTY_FILTERS, runningOnly, layout: "stack" },
+        setFilters: (patch) => patches.push(patch),
+        repos: [],
+        hues: new Map(),
+        single,
+        showing: 0,
+        layout: "stack",
+      });
+      const button = byTag(tree, "button").find((el) => textOf(el).includes("Show running"))!;
+      expect(button.props).toMatchObject({ type: "button", role: "switch", "aria-checked": runningOnly });
+      expect(button.props.disabled).toBeUndefined();
+      expect(button.props.title).toContain("waiting for input");
+      (button.props.onClick as () => void)();
+      expect(patches).toEqual([{ runningOnly: !runningOnly }]);
+      const clear = byTag(tree, "button").find((el) => textOf(el).includes("Clear filters"));
+      expect(Boolean(clear)).toBe(runningOnly);
+      if (clear) {
+        (clear.props.onClick as () => void)();
+        expect(patches[1]).toEqual({ ...EMPTY_FILTERS, layout: "stack" });
+        expect(serializeFilters(patches[1] as typeof EMPTY_FILTERS)).toBe("?layout=stack");
+      }
+    }
+  }
+});
+
+const runningFilter = { ...EMPTY_FILTERS, runningOnly: true };
+
+test("running membership uses process state across badges, actions and repositories, ignoring unrelated activity", () => {
+  const cards = actCards(["working", "waiting", "quiet", "archive", "in-place", "ended", "no-agent"].map((name) => actCard(name, daysAgo(1))));
+  const sessions: ChangeSession[] = [
+    { ...actSession("working", "running"), lastOutputAt: new Date(NOW_ACT).toISOString() },
+    { ...actSession("waiting", "running"), waitingReportedAt: new Date(NOW_ACT).toISOString() },
+    actSession("quiet", "running"),
+    { ...actSession("archive", "running"), action: "archive" },
+    { ...actSession("in-place", "running"), inPlace: true },
+    actSession("ended", "exited"),
+    actSession("ended", "failed"),
+    { ...actSession("no-agent", "running"), repoId: "b2" },
+  ];
+  expect(names(visibleCards(cards, runningFilter, false, NOW_ACT, sessions))).toEqual(["working", "waiting", "quiet", "archive", "in-place"]);
+  expect(visibleCards(cards, runningFilter, false, NOW_ACT, [])).toEqual([]);
+  const duplicate = { ...cards[0], repoId: "b2" };
+  expect(visibleCards([cards[0], duplicate], runningFilter, false, NOW_ACT, sessions)).toEqual([cards[0]]);
+  const changeless = [
+    { ...actSession("working", "running"), change: undefined, console: true },
+    { ...actSession("working", "running"), change: undefined, projectConsole: true },
+    { ...actSession("working", "running"), change: undefined, integration: true },
+  ] as unknown as ChangeSession[];
+  expect(visibleCards(cards, runningFilter, false, NOW_ACT, changeless)).toEqual([]);
+});
+
+test("running membership composes with search, repositories and activity, and updates as the last session ends or resumes", () => {
+  const cards = actCards([actCard("old-idea", daysAgo(30))]);
+  const live = actSession("old-idea", "running");
+  const filters = { ...runningFilter, activeDays: 7 };
+  const visible = (sessions: ChangeSession[]) => visibleCards(cards, filters, false, NOW_ACT, sessions);
+  expect(visible([])).toEqual([]);
+  expect(visible([live])).toEqual(cards);
+  expect(
+    visible([
+      { ...live, state: "exited" },
+      { ...live, id: "second" },
+    ]),
+  ).toEqual(cards);
+  expect(visible([{ ...live, state: "exited" }])).toEqual([]);
+  expect(visible([live])).toEqual(cards);
+  expect(visibleCards(cards, { ...filters, q: "missing" }, false, NOW_ACT, [live])).toEqual([]);
+  expect(visibleCards(cards, { ...filters, repos: ["b2"] }, false, NOW_ACT, [live])).toEqual([]);
+  expect(visibleCards(cards, { ...filters, q: "alpha", repos: ["a1"] }, false, NOW_ACT, [live])).toEqual(cards);
 });

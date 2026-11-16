@@ -1,0 +1,3 @@
+depends_on:
+  - repair-permission-spec-structure
+  - resolve-agent-workflow-instructions

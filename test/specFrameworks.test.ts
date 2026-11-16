@@ -76,6 +76,30 @@ describe("recordBranchInWorktree", () => {
     expect(content).toContain("archive-branch: chore/archive-rotate-keys");
   });
 
+  test("creates a branch marker for a legacy active change without metadata", async () => {
+    const wt = join(root, "legacy-active-wt");
+    const changeDir = join(wt, "openspec", "changes", "legacy-change");
+    await mkdir(changeDir, { recursive: true });
+
+    const res = await recordBranchInWorktree(wt, "legacy-change", "branch", "feat/legacy-change");
+
+    expect(res.updated).toBe(true);
+    expect(res.relPath).toBe("openspec/changes/legacy-change/.openspec.yaml");
+    expect(await readFile(res.absPath, "utf8")).toBe("spec-control:\n  branch: feat/legacy-change\n");
+  });
+
+  test("creates archive-branch in the newest legacy archive without metadata", async () => {
+    const wt = join(root, "legacy-archive-wt");
+    const archiveDir = join(wt, "openspec", "changes", "archive", "2026-10-20-legacy-change");
+    await mkdir(archiveDir, { recursive: true });
+
+    const res = await recordBranchInWorktree(wt, "legacy-change", "archive-branch", "chore/archive-legacy-change");
+
+    expect(res.updated).toBe(true);
+    expect(res.relPath).toBe("openspec/changes/archive/2026-10-20-legacy-change/.openspec.yaml");
+    expect(await readFile(res.absPath, "utf8")).toBe("spec-control:\n  archive-branch: chore/archive-legacy-change\n");
+  });
+
   test("refuses to follow symbolic links for any segment", async () => {
     const wt = join(root, "symlink-wt");
     const outside = join(root, "outside-change");
@@ -90,6 +114,14 @@ describe("recordBranchInWorktree", () => {
     await expect(recordBranchInWorktree(wt, "linked-change", "branch", "feat/linked")).rejects.toThrow(
       "symbolic link not allowed"
     );
+
+    const emptyOutside = join(root, "outside-empty-change");
+    await mkdir(emptyOutside, { recursive: true });
+    await symlink(emptyOutside, join(changesDir, "linked-legacy-change"));
+    await expect(recordBranchInWorktree(wt, "linked-legacy-change", "branch", "feat/linked-legacy")).rejects.toThrow(
+      "symbolic link not allowed"
+    );
+    await expect(readFile(join(emptyOutside, ".openspec.yaml"), "utf8")).rejects.toThrow();
 
     // Symlink at .openspec.yaml file level
     const realChangeDir = join(wt, "openspec", "changes", "real-change");

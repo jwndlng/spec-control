@@ -4,6 +4,7 @@ import { availableName } from "../shared/nameHints.ts";
 import { isChangeDirName } from "../shared/changeNames.ts";
 import { labelKey } from "../shared/labels.ts";
 import { withAutoFetch, withPrTitleConvention, withRepoAgent } from "../shared/repoSettings.ts";
+import { normalizeCustomCommands } from "../shared/customCommands.ts";
 import { MAX_PAGE, type ActivityLog, type PageQuery } from "./activity/log.ts";
 import { isTimeZone, pageEvents } from "../shared/activity.ts";
 import type { AutoFetchSeconds, BranchDeleteRequest, CleanupSelection, Config, DiscoverResult, PullBlockingFile, PullRequest, PullRequestsResponse, PullResult, RepoPullRequests, PullResolve, RepoConfig, RepoSnapshot, ScanTriggerResult, SharedConfigApplyResult, SharedConfigAssignment, SharedConfigPreview, Session, StaleCleanupRequest, StaleCleanupResult, UpdateStatus } from "../shared/types.ts";
@@ -16,7 +17,8 @@ import { NewFolderError } from "./newFolder.ts";
 import { ConfigValidationError, configRevision, newRepoConfig, updateConfig, validateConfig, validateIgnorePaths, validateScanRoots } from "./config.ts";
 import { createChange } from "./createChange.ts";
 import { createProject, CreateProjectError } from "./createProject.ts";
-import { dismissChange, DismissError, previewDismiss } from "./dismissChange.ts";
+import { deleteChangeFiles, DismissError, previewDeleteFiles } from "./dismissChange.ts";
+import { currentIdentity, dismissIdentity, isDismissed, listDismissals, restoreIdentity } from "./dismissalStore.ts";
 import { discoverRepos } from "./discover.ts";
 import { environmentReport } from "./environment.ts";
 import { confirmIntegration, confirmPendingIntegrations, startIntegration } from "./integration.ts";
@@ -28,6 +30,7 @@ import { MAX_BLOCKING_FILES, PullBusyError, pullAll, pullRepository, resolvePull
 import { Issues } from "./issues.ts";
 import { PullRequests, type RepoTarget } from "./pullRequests.ts";
 import type { Scanner } from "./scanner.ts";
+import type { LifecycleDeliveryMonitor } from "./lifecycleDelivery.ts";
 import { applyTo, EMPTY_SHARED_CONFIG, loadSharedConfig, previewDigest, previewFor, SharedConfigValidationError, saveSharedConfig } from "./sharedConfig.ts";
 import { SessionError, type SessionManager } from "./sessions/manager.ts";
 import { CHANGE_NAME, LocalRepoSource } from "./source.ts";
@@ -40,12 +43,15 @@ import { canonicalPath, gitExecutable } from "./paths.ts";
 import { resolvePermissionPolicy } from "./sessions/permissionResolver.ts";
 import { permissionAdapters } from "./sessions/permissionAdapters.ts";
 import { PROTECTED_COMMANDS } from "./sessions/protectedCommands.ts";
+import { confirmTask } from "./taskConfirmation.ts";
 
 export interface AppState {
   config: Config;
   scanner: Scanner;
   /** Absent in contexts that never run agent sessions (some tests); the routes then answer 403. */
   sessions?: SessionManager;
+  /** Managed lifecycle observations and their persisted delivery records. */
+  lifecycleDelivery?: LifecycleDeliveryMonitor;
   /** History for the Activity view. Absent in contexts that record none; the endpoint then answers with an empty feed. */
   activity?: ActivityLog;
   /** Cached pull-request lists; created on first use, so a state without one still serves the endpoints. */
@@ -270,15 +276,17 @@ async function postRepoName(state: AppState, req: Request, id: string): Promise<
  */
 async function postRepoAgent(state: AppState, req: Request, id: string): Promise<Response> {
   const body = await readJson(req);
-  const { enabled, agentId, autoMergeDocs, permissionProfile } = body;
-  if (enabled === undefined && agentId === undefined && autoMergeDocs === undefined && permissionProfile === undefined) return json({ error: "send enabled, agentId, autoMergeDocs or permissionProfile" }, 400);
+  const { enabled, agentId, autoMergeDocs, permissionProfile, allowedCommands } = body;
+  if (enabled === undefined && agentId === undefined && autoMergeDocs === undefined && permissionProfile === undefined && allowedCommands === undefined) return json({ error: "send enabled, agentId, autoMergeDocs, permissionProfile or allowedCommands" }, 400);
   if (enabled !== undefined && typeof enabled !== "boolean") return json({ error: "enabled must be true or false" }, 400);
   if (agentId !== undefined && agentId !== null && typeof agentId !== "string") return json({ error: "agentId must be an agent id or null" }, 400);
   if (autoMergeDocs !== undefined && typeof autoMergeDocs !== "boolean") return json({ error: "autoMergeDocs must be true or false" }, 400);
   if (permissionProfile !== undefined && permissionProfile !== null && (typeof permissionProfile !== "string" || !["minimum", "less-friction", "full-automation"].includes(permissionProfile))) return json({ error: "permissionProfile must be a valid profile or null" }, 400);
+  const normalizedCommands = allowedCommands === undefined ? undefined : normalizeCustomCommands(allowedCommands);
+  if (normalizedCommands?.error) return json({ error: normalizedCommands.error }, 400);
   return updateRepo(state, id, (repo) => {
     if (typeof agentId === "string" && !state.config.agentSessions.agents.some((a) => a.id === agentId)) throw new TrackingError(400, `unknown agent ${agentId}`);
-    return withRepoAgent(repo, { enabled, agentId, autoMergeDocs, permissionProfile: permissionProfile as import("../shared/types.ts").AgentPermissionProfileId | null | undefined });
+    return withRepoAgent(repo, { enabled, agentId, autoMergeDocs, permissionProfile: permissionProfile as import("../shared/types.ts").AgentPermissionProfileId | null | undefined, allowedCommands: allowedCommands === undefined ? undefined : normalizedCommands?.commands ?? [] });
   });
 }
 
@@ -330,6 +338,39 @@ async function getAgentPermissions(state: AppState, id: string, url: URL): Promi
     { agentId: "agy", toolFiltering: "Session settings", workspaceIsolation: "Worktree directory", remoteGit: "Session tool permissions", unattended: "Mode setting" },
   ];
   return json({ effectiveProfile: policy.profile, effectivePolicy: policy, agentPreview: Object.fromEntries(selected.map((agent) => [agent.id, permissionAdapters.resolve(agent.id).preview(agent, policy)])), protectedCommands: PROTECTED_COMMANDS, capabilityMatrix, limitations: [...new Set(selected.flatMap((agent) => permissionAdapters.resolve(agent.id).preview(agent, policy).limitations))], securityNotice: "Running tests, linters, and build scripts executes repository code." });
+}
+
+function lifecycleDeliveryJson(record: import("../shared/types.ts").LifecycleDeliveryRecord): Record<string, unknown> {
+  return {
+    id: record.id,
+    phase: record.phase,
+    revision: record.revision,
+    state: record.state,
+    ...(record.head ? { head: record.head } : {}),
+    ...(record.pullRequestNumber ? { pullRequestNumber: record.pullRequestNumber } : {}),
+    ...(record.pullRequestUrl ? { pullRequestUrl: record.pullRequestUrl } : {}),
+    ...(record.blocker ? { blocker: record.blocker } : {}),
+    recovery: record.recovery,
+    attempts: record.attempts,
+    updatedAt: record.updatedAt,
+    ...(record.retryAt ? { retryAt: record.retryAt } : {}),
+  };
+}
+
+async function lifecycleDeliveryRoute(state: AppState, req: Request, repoId: string, change: string): Promise<Response> {
+  if (!CHANGE_NAME.test(change)) return json({ error: "invalid change name" }, 400);
+  const repo = state.config.repos.find((item) => item.id === repoId);
+  if (!repo?.enabled) return json({ error: "unknown or disabled repository" }, 404);
+  if (!state.config.agentSessions.enabled || !repoAgentEnabled(repo)) return json({ error: "agent sessions are disabled for this repository" }, 403);
+  const monitor = state.lifecycleDelivery;
+  if (!monitor) return json({ error: "lifecycle delivery is not available" }, 503);
+  if (req.method === "GET") return json({ deliveries: monitor.list(repoId, change).map(lifecycleDeliveryJson) });
+  if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
+  const body = await readJson(req);
+  if (Object.keys(body).length !== 1 || typeof body.checkpointId !== "string" || !/^[a-f0-9]{64}$/.test(body.checkpointId)) return json({ error: "send a server-issued checkpointId" }, 400);
+  const retried = await monitor.retry(body.checkpointId, repoId, change);
+  if (!retried) return json({ error: "checkpoint is obsolete", deliveries: monitor.list(repoId, change).map(lifecycleDeliveryJson) }, 409);
+  return json({ delivery: lifecycleDeliveryJson(retried) });
 }
 
 async function postChangePermissionProfile(state: AppState, req: Request, id: string, change: string): Promise<Response> {
@@ -668,10 +709,21 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
       return json(await sessions.worktreeStatus(id));
     } else if (req.method === "POST") {
       if (sub === "resume") return json(await sessions.resume(id));
+      if (sub === "confirm-phase-complete") {
+        const body = await readJson(req);
+        if (typeof body.actionId !== "string") return json({ error: "send the current managed actionId" }, 400);
+        return json(await sessions.confirmPhaseComplete(id, body.actionId));
+      }
+      if (sub === "accept-unresolved-archive") {
+        const body = await readJson(req);
+        if (typeof body.actionId !== "string") return json({ error: "send the current managed actionId" }, 400);
+        return json(await sessions.acceptUnresolvedArchive(id, body.actionId));
+      }
       if (sub === "editor") return json(await sessions.openEditor(id));
       if (sub === "ship") {
         const body = req.body ? await readJson(req) : {};
         if (body.finishTasks !== undefined && typeof body.finishTasks !== "boolean") return json({ error: "finishTasks must be a boolean" }, 400);
+        if (body.confirmAllTasks !== undefined && typeof body.confirmAllTasks !== "boolean") return json({ error: "confirmAllTasks must be a boolean" }, 400);
         if (body.confirmation !== undefined && typeof body.confirmation !== "string") return json({ error: "confirmation must be a preview token" }, 400);
         const title = typeof body.title === "string" && body.title.trim() ? body.title.trim() : undefined;
         return json(await sessions.ship(id, { ...body, title }));
@@ -784,6 +836,7 @@ async function postSharedConfigApply(state: AppState, req: Request): Promise<Res
 }
 
 const ARTIFACT_ROUTE = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/(artifacts|file)$/;
+const CONFIRM_TASK_ROUTE = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/tasks\/confirm$/;
 const FILE_ERROR_STATUS = { "bad-path": 400, "not-found": 404, "too-large": 413 } as const;
 
 /**
@@ -816,6 +869,36 @@ async function artifactRoutes(state: AppState, url: URL, match: RegExpExecArray)
   return result.ok ? json(result.file) : json({ error: result.message }, FILE_ERROR_STATUS[result.reason]);
 }
 
+/** Explicitly changes one awaiting marker in the active change's framework-provided task file. */
+async function postConfirmTask(state: AppState, req: Request, match: RegExpExecArray): Promise<Response> {
+  let repoId: string;
+  let changeName: string;
+  try { repoId = decodeURIComponent(match[1]); changeName = decodeURIComponent(match[2]); }
+  catch { return json({ error: "malformed URL encoding" }, 400); }
+  const repo = state.config.repos.find((r) => r.enabled && r.id === repoId);
+  if (!repo) return json({ error: NOT_TRACKED }, 404);
+  const scanned = state.scanner.snapshot.repos.find((r) => r.id === repoId);
+  if (!scanned?.ok) return json({ error: "repository has not been successfully scanned" }, 409);
+  let body: unknown;
+  try { body = await req.json(); } catch { return json({ error: "body must be JSON" }, 400); }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "body must be an object" }, 400);
+  const { expectedText, lineNumber } = body as Record<string, unknown>;
+  if (typeof expectedText !== "string" || Buffer.byteLength(expectedText) > 1024 * 1024 || !Number.isSafeInteger(lineNumber) || (lineNumber as number) < 1) return json({ error: "expectedText and a positive lineNumber are required" }, 400);
+  const framework = frameworkById(scanned.framework);
+  if (!framework) return json({ error: "unknown change" }, 404);
+  const checkout = scanned.changes.find((c) => c.name === changeName)?.checkout;
+  const source = new LocalRepoSource(checkout && !checkout.isMain ? checkout.path : repo.path);
+  const found = await changeDirFor(source, changeName, framework);
+  if (!found.ok) return found.reason === "invalid-name" ? json({ error: "invalid change name" }, 400) : json({ error: "unknown change" }, 404);
+  if (found.entry.archived) return json({ error: "archived changes cannot be confirmed" }, 409);
+  const outputs = await framework.readChangeOutputs(source, await framework.readProject(source), found.entry);
+  if (!outputs.tasksPath) return json({ error: "this change has no task file" }, 409);
+  const result = await confirmTask(outputs.tasksPath, source.path, found.entry.dir, expectedText, lineNumber as number);
+  if (result !== "ok") return json({ error: "the task file changed or this task is no longer awaiting confirmation; refresh and try again" }, 409);
+  state.scanner.trigger();
+  return json({ confirmed: true });
+}
+
 /**
  * The one API route that writes into a tracked repository outside `openspec/config.yaml`: creates
  * `openspec/changes/<name>/` with its schema marker and, if given, `prompt.md`, `depends-on.yaml` and `issue.yaml`, then stages that
@@ -828,7 +911,7 @@ async function postCreateChange(state: AppState, req: Request, repoId: string): 
   if (!repo) return json({ error: "unknown repository" }, 404);
   if (!repo.enabled) return json({ error: "repository is disabled" }, 409);
   const scanned = state.scanner.snapshot.repos.find((r) => r.id === repoId);
-  if (!scanned || !scanned.ok) return json({ error: "repository has not been successfully scanned" }, 409);
+  if (!scanned?.ok) return json({ error: "repository has not been successfully scanned" }, 409);
   let body: Record<string, unknown>;
   try {
     body = await readJson(req);
@@ -862,30 +945,81 @@ function dismissTarget(state: AppState, repoId: string, name: string): { repo: R
   return { repo, scanned };
 }
 
-/** Read-only: what dismissing the change would delete. */
+/** Read-only reversible dismissal preview resolved from the active scan. */
 async function getDismiss(state: AppState, repoId: string, name: string): Promise<Response> {
   const target = dismissTarget(state, repoId, name);
   if (target instanceof Response) return target;
+  const change = target.scanned.changes.find((c) => c.name === name && !c.archived);
+  if (!change) return json({ error: `there is no active change named "${name}"` }, 404);
+  const copies = [change.checkout, ...(change.otherCheckouts ?? [])].filter((c) => c !== undefined).map((c) => ({ path: c.path, ...(c.branch ? { branch: c.branch } : {}) }));
+  return json({ repoId, name, identity: await currentIdentity(repoId, name, change.created), ...(change.created ? { created: change.created } : {}), copies, message: "This hides the change from the board. Its files stay in every checkout, and any running agent continues." });
+}
+
+/** Persists only the confirmed logical identity; it never writes to a project or ends an agent. */
+async function postDismiss(state: AppState, req: Request, repoId: string, name: string): Promise<Response> {
+  const target = dismissTarget(state, repoId, name);
+  if (target instanceof Response) return target;
   try {
-    return json(await previewDismiss(target.repo, target.scanned, name));
+    const body = await readJson(req);
+    if (typeof body.identity !== "string" || !body.identity) return json({ error: "dismissal is reversible; expected { identity: string }" }, 400);
+    const change = target.scanned.changes.find((c) => c.name === name && !c.archived);
+    if (!change) return json({ error: "unknown active change" }, 404);
+    const actual = await currentIdentity(repoId, name, change.created);
+    if (actual !== body.identity) return json({ error: "the change identity changed; refresh and try again" }, 409);
+    const record = await dismissIdentity(repoId, name, change.created, body.identity);
+    return json({ name, identity: record.identity, dismissed: true });
   } catch (err) {
     if (err instanceof DismissError) return json({ error: err.message }, err.status);
+    if (err instanceof SessionError) return json({ error: err.message }, err.status);
+    if (err instanceof Error && err.message.includes("identity changed")) return json({ error: err.message }, 409);
     throw err;
   }
 }
 
-/**
- * The one route that deletes a change directory: `openspec/changes/<name>/` of the main checkout, after re-checking it
- * is exactly what the user confirmed, then stages that removal. A refusal deletes nothing and runs no writing git.
- */
-async function postDismiss(state: AppState, req: Request, repoId: string, name: string): Promise<Response> {
+async function getDismissedChanges(state: AppState, repoId: string): Promise<Response> {
+  const repo = state.config.repos.find((r) => r.id === repoId);
+  if (!repo) return json({ error: "unknown repository" }, 404);
+  if (!repo.enabled) return json({ error: "repository is disabled" }, 409);
+  const scanned = state.scanner.snapshot.repos.find((r) => r.id === repoId);
+  if (!scanned?.ok) return json({ error: "repository has not been successfully scanned" }, 409);
+  const records = await listDismissals(repoId);
+  const active = scanned.changes.filter((c) => !c.archived);
+  const visible = [];
+  for (const change of active) {
+    if (!await isDismissed(repoId, change.name, change.created)) continue;
+    const identity = await currentIdentity(repoId, change.name, change.created);
+    const record = records.find((r) => r.name === change.name && r.identity === identity) ?? records.find((r) => r.name === change.name);
+    visible.push({ repoId, name: change.name, identity, ...(change.created ? { created: change.created } : {}), dismissedAt: record?.dismissedAt ?? "" });
+  }
+  return json({ changes: visible });
+}
+
+async function postRestore(state: AppState, req: Request, repoId: string, name: string): Promise<Response> {
+  const repo = state.config.repos.find((r) => r.enabled && r.id === repoId);
+  if (!repo) return json({ error: "unknown repository or repository is disabled" }, 404);
+  if (!isChangeDirName(name)) return json({ error: "invalid change name" }, 400);
+  let body: Record<string, unknown>;
+  try { body = await readJson(req); } catch (err) { return json({ error: err instanceof Error ? err.message : "body must be JSON" }, 400); }
+  if (typeof body.identity !== "string" || !body.identity) return json({ error: "expected { identity: string }" }, 400);
+  await restoreIdentity(repoId, name, body.identity);
+  return json({ name, identity: body.identity, dismissed: false });
+}
+
+async function getDeleteFiles(state: AppState, repoId: string, name: string): Promise<Response> {
+  const target = dismissTarget(state, repoId, name);
+  if (target instanceof Response) return target;
+  try { return json(await previewDeleteFiles(target.repo, target.scanned, name)); }
+  catch (err) { if (err instanceof DismissError) return json({ error: err.message }, err.status); throw err; }
+}
+
+async function postDeleteFiles(state: AppState, req: Request, repoId: string, name: string): Promise<Response> {
   const target = dismissTarget(state, repoId, name);
   if (target instanceof Response) return target;
   try {
     const body = await readJson(req);
     if (typeof body.fingerprint !== "string" || !body.fingerprint) return json({ error: "expected { fingerprint: string }" }, 400);
     const sessions = state.sessions;
-    const result = await dismissChange(target.repo, target.scanned, name, body.fingerprint, () => sessions?.hasOpenSession(repoId, name) ?? false);
+    const result = await deleteChangeFiles(target.repo, target.scanned, name, body.fingerprint, () => sessions?.hasOpenSession(repoId, name) ?? false);
     state.scanner.trigger();
     return json(result);
   } catch (err) {
@@ -1009,7 +1143,8 @@ function cleanupSelection(body: Record<string, unknown>): CleanupSelection | und
 async function getCleanup(state: AppState, repoId: string): Promise<Response> {
   const repo = cleanupTarget(state, repoId);
   if (repo instanceof Response) return repo;
-  return json(await previewCleanup(repo, (await state.sessions?.runningWorktreePaths()) ?? new Set()));
+  const evidence = (await pullRequestStore(state).list([{ id: repo.id, path: repo.path, isGit: true }])).repos[0];
+  return json(await previewCleanup(repo, (await state.sessions?.runningWorktreePaths()) ?? new Set(), evidence));
 }
 
 /** Removes worktrees and deletes branches the user selected and confirmed; the only route that deletes a branch. */
@@ -1019,7 +1154,8 @@ async function postCleanup(state: AppState, req: Request, repoId: string): Promi
   try {
     const selection = cleanupSelection(await readJson(req));
     if (!selection) return json({ error: "expected { worktrees: string[], prune: boolean, branches: { name, commit }[] }" }, 400);
-    const result = await applyCleanup(repo, selection, (await state.sessions?.runningWorktreePaths()) ?? new Set());
+    const evidence = (await pullRequestStore(state).list([{ id: repo.id, path: repo.path, isGit: true }])).repos[0];
+    const result = await applyCleanup(repo, selection, (await state.sessions?.runningWorktreePaths()) ?? new Set(), evidence);
     state.sessions?.forgetWorktrees();
     state.scanner.trigger();
     return json(result);
@@ -1192,7 +1328,13 @@ function pullRequestTargets(state: AppState): RepoTarget[] {
   const scanned = new Map(state.scanner.snapshot.repos.map((r) => [r.id, r]));
   return state.config.repos
     .filter((r) => r.enabled)
-    .map((r) => ({ id: r.id, path: r.path, isGit: scanned.get(r.id)?.isGit === true, ...(r.agent?.autoMergeDocs === true ? { autoMergeDocs: true } : {}) }));
+    .map((r) => ({
+      id: r.id,
+      path: r.path,
+      isGit: scanned.get(r.id)?.isGit === true,
+      ...(r.agent?.autoMergeDocs === true ? { autoMergeDocs: true } : {}),
+      ...(state.config.agentSessions.enabled && r.agent?.enabled !== false ? { proposalDelivery: true } : {}),
+    }));
 }
 
 function pullRequestStore(state: AppState): PullRequests {
@@ -1517,6 +1659,8 @@ function routeRequest({ state, indexHtml }: AppOptions): (req: Request, url: URL
       if (pathname === "/api/projects" && req.method === "POST") return projectRoute(state, req);
       const artifactMatch = req.method === "GET" ? ARTIFACT_ROUTE.exec(pathname) : null;
       if (artifactMatch) return artifactRoutes(state, url, artifactMatch);
+      const confirmTaskMatch = req.method === "POST" ? CONFIRM_TASK_ROUTE.exec(pathname) : null;
+      if (confirmTaskMatch) return postConfirmTask(state, req, confirmTaskMatch);
       if (req.method === "POST" && pathname === "/api/worktrees/remove") return postWorktreeRemove(state, req);
       if (req.method === "POST" && pathname === "/api/worktrees/editor") return postWorktreeEditor(state, req);
       if (req.method === "GET" && pathname === "/api/state") return json(state.autoFetcher?.withOutcomes(state.scanner.snapshot) ?? state.scanner.snapshot);
@@ -1558,6 +1702,8 @@ function routeRequest({ state, indexHtml }: AppOptions): (req: Request, url: URL
       if (req.method === "POST" && enabledMatch) return tracking(() => postRepoEnabled(state, req, decodeURIComponent(enabledMatch[1])));
       const changeAgentMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/agent$/.exec(pathname);
       if (req.method === "POST" && changeAgentMatch) return tracking(() => postChangeAgent(state, req, decodeURIComponent(changeAgentMatch[1]), decodeURIComponent(changeAgentMatch[2])));
+      const deliveryMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/delivery$/.exec(pathname);
+      if (deliveryMatch && (req.method === "GET" || req.method === "POST")) return lifecycleDeliveryRoute(state, req, decodeURIComponent(deliveryMatch[1]), decodeURIComponent(deliveryMatch[2]));
       const changePermissionMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/permission-profile$/.exec(pathname);
       if (req.method === "POST" && changePermissionMatch) return tracking(() => postChangePermissionProfile(state, req, decodeURIComponent(changePermissionMatch[1]), decodeURIComponent(changePermissionMatch[2])));
       if (req.method === "POST" && pathname === "/api/labels/color") return tracking(() => postLabelColor(state, req));
@@ -1590,6 +1736,13 @@ function routeRequest({ state, indexHtml }: AppOptions): (req: Request, url: URL
       const staleMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/stale-cleanup$/.exec(pathname);
       if (staleMatch && req.method === "GET") return getStaleCleanup(state, url, decodeURIComponent(staleMatch[1]), decodeURIComponent(staleMatch[2]));
       if (staleMatch && req.method === "POST") return postStaleCleanup(state, req, decodeURIComponent(staleMatch[1]), decodeURIComponent(staleMatch[2]));
+      const dismissedMatch = /^\/api\/repos\/([^/]+)\/dismissed-changes$/.exec(pathname);
+      if (dismissedMatch && req.method === "GET") return getDismissedChanges(state, decodeURIComponent(dismissedMatch[1]));
+      const restoreMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/restore$/.exec(pathname);
+      if (restoreMatch && req.method === "POST") return postRestore(state, req, decodeURIComponent(restoreMatch[1]), decodeURIComponent(restoreMatch[2]));
+      const deleteFilesMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/delete-files$/.exec(pathname);
+      if (deleteFilesMatch && req.method === "GET") return getDeleteFiles(state, decodeURIComponent(deleteFilesMatch[1]), decodeURIComponent(deleteFilesMatch[2]));
+      if (deleteFilesMatch && req.method === "POST") return postDeleteFiles(state, req, decodeURIComponent(deleteFilesMatch[1]), decodeURIComponent(deleteFilesMatch[2]));
       const dismissMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/dismiss$/.exec(pathname);
       if (dismissMatch && req.method === "GET") return getDismiss(state, decodeURIComponent(dismissMatch[1]), decodeURIComponent(dismissMatch[2]));
       if (dismissMatch && req.method === "POST") return postDismiss(state, req, decodeURIComponent(dismissMatch[1]), decodeURIComponent(dismissMatch[2]));

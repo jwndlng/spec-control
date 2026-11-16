@@ -64,7 +64,7 @@ const dialog = (config: Config, t: Tracking, r = row) => modalOf(config, t, r).p
 const switchOf = (node: unknown) => byTag(node as never, "button").find((b) => b.props.role === "switch");
 const click = (el: { props: Record<string, unknown> }) => {
   let stopped = false;
-  (el.props.onClick as (e: unknown) => void)({ stopPropagation: () => (stopped = true), preventDefault: () => {} });
+  ((el.props.onClick ?? el.props.onTriggerClick) as (e: unknown) => void)({ stopPropagation: () => (stopped = true), preventDefault: () => {} });
   return stopped;
 };
 
@@ -110,7 +110,7 @@ test("the agent picker appears only with two agents and sessions on for the proj
   const [select] = agentSelects(dialog(configWith({ agents: 2, agent: { enabled: true, agentId: "my-agent" } }), t));
   expect(select.props.value).toBe("my-agent");
   expect(byTag(select, "option").map(textOf)).toEqual(["default agent", "Claude Code", "My agent"]);
-  (select.props.onChange as (e: unknown) => void)({ currentTarget: { value: "" } });
+  (select.props.onChange as (value: string) => void)("");
   expect(calls).toEqual(['agent a {"agentId":null}']);
 });
 
@@ -123,7 +123,7 @@ test("every git project offers a PR titles picker in its dialog, with agent sess
     expect(String(select.props.title)).toContain(CONVENTIONAL_COMMITS_SHIP_SENTENCE);
     expect(byTag(select, "option").map(textOf)).toEqual(["No convention", "Conventional Commits"]);
     expect(click(select)).toBe(true);
-    (select.props.onChange as (e: unknown) => void)({ currentTarget: { value: "conventional-commits" } });
+    (select.props.onChange as (value: string) => void)("conventional-commits");
   }
   expect(calls).toEqual(Array(3).fill("prTitles a conventional-commits"));
 
@@ -131,7 +131,7 @@ test("every git project offers a PR titles picker in its dialog, with agent sess
   const withConvention: Config = { ...configWith(), repos: [{ ...configWith().repos[0], prTitleConvention: "conventional-commits" }] };
   const [select] = prTitleSelects(dialog(withConvention, set.t));
   expect(select.props.value).toBe("conventional-commits");
-  (select.props.onChange as (e: unknown) => void)({ currentTarget: { value: "" } });
+  (select.props.onChange as (value: string) => void)("");
   expect(set.calls).toEqual(["prTitles a null"]);
 });
 
@@ -154,7 +154,7 @@ test("every git project offers an Auto fetch drop-down in its dialog, every minu
     expect(String(select.props.title)).toContain("Pull");
     expect(byTag(select, "option").map(textOf)).toEqual(["Off", "Every 15 seconds", "Every 30 seconds", "Every minute", "Every 5 minutes", "Every 10 minutes", "Every 15 minutes", "Every 30 minutes", "Every hour"]);
     expect(click(select)).toBe(true);
-    (select.props.onChange as (e: unknown) => void)({ currentTarget: { value: "15" } });
+    (select.props.onChange as (value: string) => void)("15");
   }
   expect(calls).toEqual(Array(3).fill("autoFetch a 15"));
 
@@ -162,8 +162,8 @@ test("every git project offers an Auto fetch drop-down in its dialog, every minu
   const withAutoFetch: Config = { ...configWith(), repos: [{ ...configWith().repos[0], autoFetchSeconds: 15 }] };
   const [select] = autoFetchSelects(dialog(withAutoFetch, set.t));
   expect(select.props.value).toBe("15");
-  (select.props.onChange as (e: unknown) => void)({ currentTarget: { value: "0" } });
-  (select.props.onChange as (e: unknown) => void)({ currentTarget: { value: "60" } });
+  (select.props.onChange as (value: string) => void)("0");
+  (select.props.onChange as (value: string) => void)("60");
   expect(set.calls).toEqual(["autoFetch a 0", "autoFetch a 60"]);
 
   const off: Config = { ...configWith(), repos: [{ ...configWith().repos[0], autoFetchSeconds: 0 }] };
@@ -327,12 +327,11 @@ test("a git project with agent sessions offers auto-merge of docs-only pull requ
   expect(textOf(toggle)).toBe("Off");
   // The tooltip names both actions, which leave the pull request open; the merge is asked for once it is ready
   // (agent-merges-docs-prs), never through GitHub's auto-merge, and never for a pull request without checks.
-  expect(AUTO_MERGE_HINT).toContain("Ship and Archive open their pull request deterministically");
-  expect(AUTO_MERGE_HINT).toContain("Spec Control merges it automatically via the GitHub CLI");
-  expect(AUTO_MERGE_HINT).toContain("one without any checks is not merged this way");
+  expect(AUTO_MERGE_HINT).toContain("documentation-only Ship and Archive pull requests");
+  expect(AUTO_MERGE_HINT).toContain("standard proposal merge policy regardless of this setting");
+  expect(AUTO_MERGE_HINT).toContain("Implementation pull requests containing code remain for review");
   expect(AUTO_MERGE_HINT).not.toMatch(/enable auto-merge|GitHub's auto-merge/i);
   // …and what happens once it has merged (auto-merge-cleanup).
-  expect(AUTO_MERGE_HINT).toContain("ends its session and removes its worktree when that is safe");
   expect(click(toggle!)).toBe(true);
   expect(calls).toEqual(['agent a {"autoMergeDocs":true}']);
 
@@ -466,10 +465,10 @@ test("a folder without git offers no Pull on its tile, and a failed scan none ei
 
 test("the settings dialog lists its lines in order, then Disable set apart; a setting that does not apply leaves no line", () => {
   const t = tracking().t;
-  expect(settingLines(dialog(configWith({ agents: 2 }), t))).toEqual(["Agent sessions", "Agent", "Permission profile", "PR titles", "Docs auto-merge", "Auto fetch", "Labels", "Stop tracking"]);
-  expect(settingLines(dialog(configWith(), t))).toEqual(["Agent sessions", "Permission profile", "PR titles", "Docs auto-merge", "Auto fetch", "Labels", "Stop tracking"]);
+  expect(settingLines(dialog(configWith({ agents: 2 }), t))).toEqual(["Agent sessions", "Agent", "Permission profile", "Custom commands", "PR titles", "Docs auto-merge", "Auto fetch", "Labels", "Stop tracking"]);
+  expect(settingLines(dialog(configWith(), t))).toEqual(["Agent sessions", "Permission profile", "Custom commands", "PR titles", "Docs auto-merge", "Auto fetch", "Labels", "Stop tracking"]);
   const [plainRow] = overviewRows({ generatedAt: "2026-10-01T00:00:00Z", repos: [{ ...snapshotRepo, isGit: false }] });
-  expect(settingLines(dialog(configWith(), t, plainRow))).toEqual(["Agent sessions", "Permission profile", "Labels", "Stop tracking"]);
+  expect(settingLines(dialog(configWith(), t, plainRow))).toEqual(["Agent sessions", "Permission profile", "Custom commands", "Labels", "Stop tracking"]);
   expect(settingLines(dialog(configWith({ agent: { enabled: false } }), t))).toEqual(["Agent sessions", "PR titles", "Auto fetch", "Labels", "Stop tracking"]);
   // The console is an action on the row and tile, not a setting.
   expect(byComponent(dialog(configWith(), t), ProjectConsoleButton)).toHaveLength(0);
