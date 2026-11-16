@@ -206,8 +206,8 @@ test("a full refresh leaves every repository byte-for-byte unchanged and never r
   const calls = await gh.calls();
   expect(calls.length).toBeGreaterThan(0);
   for (const call of calls) {
-    // Only the two read-only queries the spec allows…
-    expect(["pr list", "api user"]).toContain(`${call.argv[0]} ${call.argv[1]}`);
+    // Only the read-only pull-request, viewer and exact-branch-rules queries run…
+    expect(["pr list", "api user"].includes(`${call.argv[0]} ${call.argv[1]}`) || (call.argv[0] === "api" && call.argv[1]?.includes("/rules/branches/") === true)).toBe(true);
     // …and never with a tracked repository as the working directory.
     for (const repo of watched) expect(call.cwd.startsWith(repo)).toBe(false);
   }
@@ -249,7 +249,7 @@ test("with docs auto-merge on and a Merge pending, a refresh still changes no re
     const calls = await gh.calls();
     expect(calls.length).toBeGreaterThan(0);
     for (const call of calls) {
-      expect(["pr list", "api user"]).toContain(`${call.argv[0]} ${call.argv[1]}`);
+      expect(["pr list", "api user"].includes(`${call.argv[0]} ${call.argv[1]}`) || (call.argv[0] === "api" && call.argv[1]?.includes("/rules/branches/") === true)).toBe(true);
       for (const repo of watched) expect(call.cwd.startsWith(repo)).toBe(false);
     }
   } finally {

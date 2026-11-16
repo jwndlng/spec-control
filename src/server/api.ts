@@ -30,6 +30,7 @@ import { MAX_BLOCKING_FILES, PullBusyError, pullAll, pullRepository, resolvePull
 import { Issues } from "./issues.ts";
 import { PullRequests, type RepoTarget } from "./pullRequests.ts";
 import type { Scanner } from "./scanner.ts";
+import type { LifecycleDeliveryMonitor } from "./lifecycleDelivery.ts";
 import { applyTo, EMPTY_SHARED_CONFIG, loadSharedConfig, previewDigest, previewFor, SharedConfigValidationError, saveSharedConfig } from "./sharedConfig.ts";
 import { SessionError, type SessionManager } from "./sessions/manager.ts";
 import { CHANGE_NAME, LocalRepoSource } from "./source.ts";
@@ -49,6 +50,8 @@ export interface AppState {
   scanner: Scanner;
   /** Absent in contexts that never run agent sessions (some tests); the routes then answer 403. */
   sessions?: SessionManager;
+  /** Managed lifecycle observations and their persisted delivery records. */
+  lifecycleDelivery?: LifecycleDeliveryMonitor;
   /** History for the Activity view. Absent in contexts that record none; the endpoint then answers with an empty feed. */
   activity?: ActivityLog;
   /** Cached pull-request lists; created on first use, so a state without one still serves the endpoints. */
@@ -335,6 +338,39 @@ async function getAgentPermissions(state: AppState, id: string, url: URL): Promi
     { agentId: "agy", toolFiltering: "Session settings", workspaceIsolation: "Worktree directory", remoteGit: "Session tool permissions", unattended: "Mode setting" },
   ];
   return json({ effectiveProfile: policy.profile, effectivePolicy: policy, agentPreview: Object.fromEntries(selected.map((agent) => [agent.id, permissionAdapters.resolve(agent.id).preview(agent, policy)])), protectedCommands: PROTECTED_COMMANDS, capabilityMatrix, limitations: [...new Set(selected.flatMap((agent) => permissionAdapters.resolve(agent.id).preview(agent, policy).limitations))], securityNotice: "Running tests, linters, and build scripts executes repository code." });
+}
+
+function lifecycleDeliveryJson(record: import("../shared/types.ts").LifecycleDeliveryRecord): Record<string, unknown> {
+  return {
+    id: record.id,
+    phase: record.phase,
+    revision: record.revision,
+    state: record.state,
+    ...(record.head ? { head: record.head } : {}),
+    ...(record.pullRequestNumber ? { pullRequestNumber: record.pullRequestNumber } : {}),
+    ...(record.pullRequestUrl ? { pullRequestUrl: record.pullRequestUrl } : {}),
+    ...(record.blocker ? { blocker: record.blocker } : {}),
+    recovery: record.recovery,
+    attempts: record.attempts,
+    updatedAt: record.updatedAt,
+    ...(record.retryAt ? { retryAt: record.retryAt } : {}),
+  };
+}
+
+async function lifecycleDeliveryRoute(state: AppState, req: Request, repoId: string, change: string): Promise<Response> {
+  if (!CHANGE_NAME.test(change)) return json({ error: "invalid change name" }, 400);
+  const repo = state.config.repos.find((item) => item.id === repoId);
+  if (!repo?.enabled) return json({ error: "unknown or disabled repository" }, 404);
+  if (!state.config.agentSessions.enabled || !repoAgentEnabled(repo)) return json({ error: "agent sessions are disabled for this repository" }, 403);
+  const monitor = state.lifecycleDelivery;
+  if (!monitor) return json({ error: "lifecycle delivery is not available" }, 503);
+  if (req.method === "GET") return json({ deliveries: monitor.list(repoId, change).map(lifecycleDeliveryJson) });
+  if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
+  const body = await readJson(req);
+  if (Object.keys(body).length !== 1 || typeof body.checkpointId !== "string" || !/^[a-f0-9]{64}$/.test(body.checkpointId)) return json({ error: "send a server-issued checkpointId" }, 400);
+  const retried = await monitor.retry(body.checkpointId, repoId, change);
+  if (!retried) return json({ error: "checkpoint is obsolete", deliveries: monitor.list(repoId, change).map(lifecycleDeliveryJson) }, 409);
+  return json({ delivery: lifecycleDeliveryJson(retried) });
 }
 
 async function postChangePermissionProfile(state: AppState, req: Request, id: string, change: string): Promise<Response> {
@@ -673,6 +709,16 @@ async function sessionRoutes(state: AppState, req: Request, url: URL, server?: S
       return json(await sessions.worktreeStatus(id));
     } else if (req.method === "POST") {
       if (sub === "resume") return json(await sessions.resume(id));
+      if (sub === "confirm-phase-complete") {
+        const body = await readJson(req);
+        if (typeof body.actionId !== "string") return json({ error: "send the current managed actionId" }, 400);
+        return json(await sessions.confirmPhaseComplete(id, body.actionId));
+      }
+      if (sub === "accept-unresolved-archive") {
+        const body = await readJson(req);
+        if (typeof body.actionId !== "string") return json({ error: "send the current managed actionId" }, 400);
+        return json(await sessions.acceptUnresolvedArchive(id, body.actionId));
+      }
       if (sub === "editor") return json(await sessions.openEditor(id));
       if (sub === "ship") {
         const body = req.body ? await readJson(req) : {};
@@ -1282,7 +1328,13 @@ function pullRequestTargets(state: AppState): RepoTarget[] {
   const scanned = new Map(state.scanner.snapshot.repos.map((r) => [r.id, r]));
   return state.config.repos
     .filter((r) => r.enabled)
-    .map((r) => ({ id: r.id, path: r.path, isGit: scanned.get(r.id)?.isGit === true, ...(r.agent?.autoMergeDocs === true ? { autoMergeDocs: true } : {}) }));
+    .map((r) => ({
+      id: r.id,
+      path: r.path,
+      isGit: scanned.get(r.id)?.isGit === true,
+      ...(r.agent?.autoMergeDocs === true ? { autoMergeDocs: true } : {}),
+      ...(state.config.agentSessions.enabled && r.agent?.enabled !== false ? { proposalDelivery: true } : {}),
+    }));
 }
 
 function pullRequestStore(state: AppState): PullRequests {
@@ -1650,6 +1702,8 @@ function routeRequest({ state, indexHtml }: AppOptions): (req: Request, url: URL
       if (req.method === "POST" && enabledMatch) return tracking(() => postRepoEnabled(state, req, decodeURIComponent(enabledMatch[1])));
       const changeAgentMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/agent$/.exec(pathname);
       if (req.method === "POST" && changeAgentMatch) return tracking(() => postChangeAgent(state, req, decodeURIComponent(changeAgentMatch[1]), decodeURIComponent(changeAgentMatch[2])));
+      const deliveryMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/delivery$/.exec(pathname);
+      if (deliveryMatch && (req.method === "GET" || req.method === "POST")) return lifecycleDeliveryRoute(state, req, decodeURIComponent(deliveryMatch[1]), decodeURIComponent(deliveryMatch[2]));
       const changePermissionMatch = /^\/api\/repos\/([^/]+)\/changes\/([^/]+)\/permission-profile$/.exec(pathname);
       if (req.method === "POST" && changePermissionMatch) return tracking(() => postChangePermissionProfile(state, req, decodeURIComponent(changePermissionMatch[1]), decodeURIComponent(changePermissionMatch[2])));
       if (req.method === "POST" && pathname === "/api/labels/color") return tracking(() => postLabelColor(state, req));

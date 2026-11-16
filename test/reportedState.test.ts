@@ -4,8 +4,10 @@ import { existsSync } from "node:fs";
 import { lstat, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { sessionsDir } from "../src/server/paths.ts";
+import { createFetchHandler } from "../src/server/api.ts";
+import { Scanner } from "../src/server/scanner.ts";
 import type { SessionManager } from "../src/server/sessions/manager.ts";
-import { parseReport, readReport, REPORT_MAX_BYTES, terminalRepliesOnly } from "../src/server/sessions/reportedState.ts";
+import { parseCompletionReport, parseReport, readCompletionReport, readReport, REPORT_MAX_BYTES, terminalRepliesOnly } from "../src/server/sessions/reportedState.ts";
 import { SessionStore } from "../src/server/sessions/store.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
 import { harness, waitFor, watch } from "./sessionHelpers.ts";
@@ -84,6 +86,57 @@ test("a report file is read only when it is a small regular file", async () => {
   const { mtimeMs, size } = await lstat(path);
   const known = { state: "working" as const, mtimeMs, size };
   expect((await readReport(path, known))?.state).toBe("working");
+});
+
+test("a live managed completion is accepted only for the current server-issued action identity and phase", async () => {
+  const { manager, s, view, stateFile } = await running();
+  const actionId = (manager.get(s.id) as import("../src/shared/types.ts").ChangeSession).managedActionId as string;
+  await writeFile(stateFile, JSON.stringify({ kind: "phase-complete", actionId: "old-server-action-id", phase: "implement", revision: 1 }));
+  await manager.readReports();
+  expect(manager.managedCompletion(s.id)).toBeUndefined();
+  manager.write(s.id, `complete implement ${actionId}\r`);
+  await waitFor(() => view.text().includes(`you said: complete implement ${actionId}`), "the completion report command");
+  await manager.readReports();
+  expect(manager.managedCompletion(s.id)).toEqual({ kind: "phase-complete", actionId, phase: "implement", revision: 1 });
+  const next = await manager.prompt(s.id, { action: "implement" });
+  expect(next.submitted).toBe(true);
+  await manager.readReports();
+  expect(manager.managedCompletion(s.id)).toBeUndefined();
+});
+
+test("the user can confirm a missing phase report, and later terminal input invalidates that confirmation", async () => {
+  const { h, manager, s, view } = await running();
+  const actionId = (manager.get(s.id) as import("../src/shared/types.ts").ChangeSession).managedActionId as string;
+  expect(manager.managedCompletion(s.id)).toBeUndefined();
+  const handler = createFetchHandler({ state: { config: h.config, scanner: new Scanner(() => h.config, { persist: false }, h.snapshot), sessions: manager }, indexHtml: "" });
+  const endpoint = `http://127.0.0.1/api/sessions/${s.id}/confirm-phase-complete`;
+  const stale = await handler(new Request(endpoint, { method: "POST", headers: { origin: "http://127.0.0.1", "content-type": "application/json" }, body: JSON.stringify({ actionId: "stale-action-id-123456" }) }));
+  expect(stale.status).toBe(409);
+  const confirmed = await handler(new Request(endpoint, { method: "POST", headers: { origin: "http://127.0.0.1", "content-type": "application/json" }, body: JSON.stringify({ actionId }) }));
+  expect(confirmed.status).toBe(200);
+  expect(manager.managedCompletion(s.id)).toEqual({ kind: "phase-complete", actionId, phase: "implement", revision: 1 });
+  await expect(manager.confirmPhaseComplete(s.id, "stale-action-id-123456")).rejects.toMatchObject({ status: 409 });
+  const before = view.text();
+  manager.write(s.id, "continue work\r");
+  await waitFor(() => view.text() !== before, "the user input");
+  expect((manager.get(s.id) as import("../src/shared/types.ts").ChangeSession).managedActionId).not.toBe(actionId);
+  expect(manager.managedCompletion(s.id)).toBeUndefined();
+});
+
+test("managed completion reports are bounded JSON tied to a server-issued action", async () => {
+  const dir = await tempDir("osd-completion-report-");
+  const path = join(dir, "agent-state");
+  const report = { kind: "phase-complete", actionId: "server-issued-action-id", phase: "draft", revision: 1 } as const;
+  expect(parseCompletionReport(JSON.stringify(report))).toEqual(report);
+  expect(parseCompletionReport(JSON.stringify({ ...report, actionId: "stale" }))).toBeUndefined();
+  expect(parseCompletionReport(JSON.stringify({ ...report, phase: "custom" }))).toBeUndefined();
+  expect(parseCompletionReport(JSON.stringify({ ...report, revision: 0 }))).toBeUndefined();
+  expect(parseCompletionReport("waiting")).toBeUndefined();
+  await writeFile(path, JSON.stringify(report));
+  expect(await readCompletionReport(path)).toEqual(report);
+  const link = join(dir, "link");
+  await symlink(path, link);
+  expect(await readCompletionReport(link)).toBeUndefined();
 });
 
 test("a resize and the redraw it provokes do not count as activity, and the redraw is still shown", async () => {

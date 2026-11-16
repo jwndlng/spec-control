@@ -108,11 +108,10 @@ test("merged, closed, a new head, another number or no record ends it", () => {
   expect(mergePending(undefined, asked)).toBe(false);
 });
 
-test("the automatic rule wants open, not a draft, mergeable, checks passing, docs-only and a head", () => {
-  const ready = pr({ headOid: HEAD, docsOnly: true });
+test("the automatic rule wants a fresh exact-head check policy as well as mergeable passing docs", () => {
+  const ready = pr({ headOid: HEAD, checkNames: ["ci"], requiredChecks: { headOid: HEAD, state: "required", contexts: ["ci"], fetchedAt: new Date().toISOString() }, docsOnly: true });
   expect(mergeReady(ready)).toBe(true);
   for (const patch of [
-    { checks: "none" },
     { checks: "pending" },
     { checks: "failing" },
     { draft: true },
@@ -122,11 +121,18 @@ test("the automatic rule wants open, not a draft, mergeable, checks passing, doc
     { docsOnly: false },
     { docsOnly: undefined },
     { headOid: undefined },
+    { requiredChecks: undefined },
+    { requiredChecks: { headOid: "c0ffee0000000000000000000000000000000089", state: "none" } },
+    { requiredChecks: { headOid: HEAD, state: "unknown", fetchedAt: new Date().toISOString() } },
+    { requiredChecks: { headOid: HEAD, state: "none", fetchedAt: new Date(Date.now() - 6 * 60_000).toISOString() } },
+    { checkNames: [] },
     { state: "merged" },
     { state: "closed" },
   ] as Partial<PullRequest>[]) {
     expect({ patch, ready: mergeReady({ ...ready, ...patch }) }).toEqual({ patch, ready: false });
   }
+  expect(mergeReady({ ...ready, requiredChecks: { headOid: HEAD, state: "none", fetchedAt: new Date().toISOString() }, checks: "none" })).toBe(true);
+  expect(mergeReady({ ...ready, requiredChecks: { headOid: HEAD, state: "none", fetchedAt: new Date().toISOString() }, checks: "passing" })).toBe(true);
   // No checks at all is still shown as ready on the card — it is only never merged on its own.
   expect(pullRequestReadiness({ ...ready, checks: "none" })).toEqual({ ready: true });
   expect(mergeReady(undefined)).toBe(false);

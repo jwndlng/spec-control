@@ -90,6 +90,6 @@ test("a foreign origin is refused, a missing acknowledgement is 409, a non-lefto
 
   const done = await send("POST", route(), { ...body, acknowledged: true });
   expect(done.status).toBe(200);
-  expect((done.body as StaleCleanupResult).items).toMatchObject([{ kind: "worktree", outcome: "deleted", branch: `feat/${CHANGE}` }]);
+  expect((done.body as StaleCleanupResult).items).toMatchObject([{ kind: "worktree", outcome: "deleted", branch: `docs/${CHANGE}` }]);
   expect(existsSync(wt)).toBe(false);
 });

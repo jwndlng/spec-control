@@ -71,6 +71,10 @@ for await (const chunk of process.stdin) {
       await Bun.sleep(25);
       await Bun.write(process.env.SPEC_CONTROL_STATE_FILE, report[1]);
     }
+    const complete = /^complete (\S+) (\S+)$/.exec(line);
+    if (complete && process.env.SPEC_CONTROL_STATE_FILE) {
+      await Bun.write(process.env.SPEC_CONTROL_STATE_FILE, JSON.stringify({ kind: "phase-complete", actionId: complete[2], phase: complete[1], revision: 1 }));
+    }
     const stream = /^stream (\d+)$/.exec(line);
     if (stream) {
       const until = Date.now() + Number(stream[1]);

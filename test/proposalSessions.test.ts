@@ -86,12 +86,12 @@ test("Draft in a docs auto-merge project works on docs/<change> and asks for the
   }
 });
 
-test("without docs auto-merge Draft works on feat/<change> as before, with no instruction", async () => {
+test("without docs auto-merge Draft uses its dedicated proposal worktree and standard proposal merge policy", async () => {
   const { h, manager } = await project({ autoMergeDocs: false });
   const s = await manager.open({ repoId: h.repoId, change: CHANGE, action: "draft" });
-  expect([s.branch, s.worktreePath, s.autoMerge]).toEqual([`feat/${CHANGE}`, join(worktreesDir(), h.repoId, CHANGE), false]);
-  expect(asked(manager, s.id)).toBeUndefined();
-  const seen = await started(manager, s.id, draftPrompt(h, false));
+  expect([s.branch, s.worktreePath, s.autoMerge]).toEqual([`docs/${CHANGE}`, join(worktreesDir(), h.repoId, `docs-${CHANGE}`), true]);
+  expect(asked(manager, s.id)).toBeDefined();
+  const seen = await started(manager, s.id, `draft ${CHANGE}`);
   expect(seen.text()).not.toContain("open a pull request against the default branch titled");
 });
 
@@ -239,11 +239,12 @@ test("Implement after the proposal merged starts from the default branch", async
 });
 
 function pr(patch: Partial<PullRequest> & { head: string }): PullRequest {
-  return { number: 90, title: `docs(openspec): add ${CHANGE}`, url: "https://github.com/acme/demo-ops/pull/90", author: "octo", base: "main", draft: false, state: "open", isCrossRepository: false, createdAt: new Date().toISOString(), review: "none", reviewRequestedFromViewer: false, checks: "passing", mergeable: "mergeable", docsOnly: true, ...patch };
+  return { number: 90, title: `docs(openspec): add ${CHANGE}`, url: "https://github.com/acme/demo-ops/pull/90", author: "octo", base: "main", draft: false, state: "open", isCrossRepository: false, createdAt: new Date().toISOString(), review: "none", reviewRequestedFromViewer: false, checks: "passing", mergeable: "mergeable", docsOnly: true, ...(patch.headOid ? { requiredChecks: { headOid: patch.headOid, state: "none" as const, fetchedAt: new Date().toISOString() } } : {}), ...patch };
 }
 
-test("the proposal pull request is merged automatically by the server once ready, and its merge ends the session", async () => {
-  const { h, manager, agent } = await project();
+test("proposal PRs merge once ready with Docs auto-merge both on and off", async () => {
+  for (const autoMergeDocs of [true, false]) {
+  const { h, manager } = await project({ autoMergeDocs });
   git(h.repoPath, "remote", "add", "origin", "https://github.com/acme/demo-ops.git");
   const s = await manager.open({ repoId: h.repoId, change: CHANGE, action: "draft" });
   await started(manager, s.id, draftPrompt(h, true));
@@ -262,6 +263,7 @@ test("the proposal pull request is merged automatically by the server once ready
   expect(ended.autoEnded).toMatchObject({ pr: 90, removed: true });
   expect(await stat(s.worktreePath).catch(() => undefined)).toBeUndefined();
   expect(git(h.repoPath, "rev-parse", `refs/heads/docs/${CHANGE}`)).toBe(head); // the branch is kept
+  }
 });
 
 /** Draft, then Implement asking to end it: the ended proposal session and the running Implement session. */

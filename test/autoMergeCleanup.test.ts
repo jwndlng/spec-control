@@ -305,7 +305,7 @@ test("Archive, then a ready docs-only #88 is handed to the agent, then #88 merge
     expect((manager.get(s.id) as ChangeSession).autoEnded).toMatchObject({ pr: 88, removed: true });
     expect(await exists(s.worktreePath)).toBe(false);
     expect(git(h.repoPath, "show-ref", "--verify", `refs/heads/${BRANCH}`)).toContain(BRANCH);
-    for (const call of await gh.calls()) expect(call.argv.slice(0, 2).join(" ")).toMatch(/^(pr list|api user|pr merge)$/);
+    for (const call of await gh.calls()) expect(call.argv.slice(0, 2).join(" ")).toMatch(/^(pr list|api user|pr merge|api repos\/acme\/demo-ops\/rules\/branches\/main)$/);
   } finally {
     state.scanner.stop();
     server.stop(true);

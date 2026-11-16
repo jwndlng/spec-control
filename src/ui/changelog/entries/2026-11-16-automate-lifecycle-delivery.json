@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-16-automate-lifecycle-delivery",
+  "date": "2026-11-16",
+  "title": "Keep completed phases moving to review",
+  "summary": "Completed Draft, Implement, and Archive phases can be delivered to GitHub with saved progress and safe retry after a restart. Proposal pull requests follow their own merge policy, implementation pull requests stay under human control, and merge readiness uses fresh required check evidence."
+}

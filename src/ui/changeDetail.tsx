@@ -5,7 +5,7 @@ import type { ComponentChildren, RefObject } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentPermissionProfileId, ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, DeleteFilesPreview, DeleteFilesResult, DismissPreview, DismissResult, RepoSnapshot, Snapshot, TaskProgress } from "../shared/types.ts";
 import { parseTaskLine } from "../shared/taskLine.ts";
-import { ApiError, api } from "./api.ts";
+import { ApiError, api, type LifecycleDeliveryView } from "./api.ts";
 import { CopyButton, CopyRefButton, Meter } from "./kanban.tsx";
 import { type LinkResolver, renderMarkdown } from "./markdown.tsx";
 import { backTarget, CONSOLE_TAB, changePath, type DetailQuery, parseDetailQuery, repoPath, serializeDetailQuery } from "./routes.ts";
@@ -638,6 +638,11 @@ export function ChangeDetail({
   const [deletingFiles, setDeletingFiles] = useState(false);
   const [query, setQueryState] = useState<DetailQuery>(() => parseDetailQuery(currentQuery()));
   const [listing, setListing] = useState<ChangeArtifacts | null>(null);
+  const [deliveries, setDeliveries] = useState<LifecycleDeliveryView[]>([]);
+  const [deliveryError, setDeliveryError] = useState<string>();
+  const [retryingDelivery, setRetryingDelivery] = useState<string>();
+  const [confirmingPhase, setConfirmingPhase] = useState(false);
+  const [acceptingArchive, setAcceptingArchive] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [fileState, setFileState] = useState<FileState | null>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -680,6 +685,53 @@ export function ChangeDetail({
       cancelled = true;
     };
   }, [repoId, changeName, known, snapshot]);
+
+  useEffect(() => {
+    if (!known) return;
+    let cancelled = false;
+    api.lifecycleDeliveries(repoId, changeName).then(
+      (next) => { if (!cancelled) { setDeliveries(next); setDeliveryError(undefined); } },
+      (err) => { if (!cancelled) setDeliveryError(err instanceof Error ? err.message : String(err)); },
+    );
+    return () => { cancelled = true; };
+  }, [repoId, changeName, known, snapshot]);
+
+  const retryDelivery = async (delivery: LifecycleDeliveryView) => {
+    if (retryingDelivery) return;
+    setRetryingDelivery(delivery.id);
+    setDeliveryError(undefined);
+    try {
+      const next = await api.retryLifecycleDelivery(repoId, changeName, delivery.id);
+      setDeliveries((current) => current.map((item) => item.id === next.id ? next : item));
+    } catch (err) {
+      setDeliveryError(err instanceof Error ? err.message : String(err));
+      void api.lifecycleDeliveries(repoId, changeName).then(setDeliveries).catch(() => undefined);
+    } finally { setRetryingDelivery(undefined); }
+  };
+
+  const confirmPhase = async () => {
+    if (!shownSession?.managedActionId || confirmingPhase) return;
+    setConfirmingPhase(true);
+    setDeliveryError(undefined);
+    try {
+      await api.confirmPhaseComplete(shownSession.id, shownSession.managedActionId);
+      await ui.refresh();
+    } catch (err) {
+      setDeliveryError(err instanceof Error ? err.message : String(err));
+    } finally { setConfirmingPhase(false); }
+  };
+
+  const acceptUnresolvedArchive = async () => {
+    if (!shownSession?.managedActionId || acceptingArchive) return;
+    setAcceptingArchive(true);
+    setDeliveryError(undefined);
+    try {
+      await api.acceptUnresolvedArchive(shownSession.id, shownSession.managedActionId);
+      await ui.refresh();
+    } catch (err) {
+      setDeliveryError(err instanceof Error ? err.message : String(err));
+    } finally { setAcceptingArchive(false); }
+  };
 
   const selection = useMemo(() => resolveSelection(listing?.artifacts ?? [], query, hasConsole), [listing, query, hasConsole]);
   const onConsole = selection.artifactId === CONSOLE_TAB;
@@ -794,6 +846,25 @@ export function ChangeDetail({
         onDeleteFiles={onDismissed ? () => setDeletingFiles(true) : undefined}
         pullRequest={detailPullRequest(change, pullRequests.data)}
       />
+      {(deliveries.length > 0 || deliveryError || (shownSession?.state === "running" && shownSession.managedActionId && ["draft", "implement", "fastForward", "archive"].includes(shownSession.action)) || (shownSession?.action === "archive" && shownSession.managedActionId && change.archived && change.tasks && change.tasks.total > change.tasks.done)) && <section class="notice lifecycle-delivery" aria-label="Lifecycle delivery">
+        {deliveries.map((delivery) => <p key={delivery.id}>
+          <strong>{delivery.phase[0].toUpperCase() + delivery.phase.slice(1)} delivery · {delivery.state.replaceAll("-", " ")}</strong>
+          {delivery.pullRequestUrl && <> · <a href={delivery.pullRequestUrl} target="_blank" rel="noopener noreferrer">PR #{delivery.pullRequestNumber ?? "open"}</a></>}
+          {delivery.blocker && <><br />{delivery.blocker}</>}
+          {(delivery.state === "blocked" || delivery.state === "unavailable" || delivery.state === "pending") && delivery.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => void retryDelivery(delivery)}>{retryingDelivery === delivery.id ? "Retrying…" : "Retry delivery"}</button>}
+        </p>)}
+        {shownSession?.state === "running" && shownSession.managedActionId && ["draft", "implement", "fastForward", "archive"].includes(shownSession.action) && <p>
+          <strong>{shownSession.phaseCompletionConfirmedActionId === shownSession.managedActionId ? "Completion confirmed; checking the checkpoint…" : "Agent did not report phase completion?"}</strong>{" "}
+          Check the current artifacts and tasks before confirming. The server still verifies them and waits for a stable worktree snapshot.
+          {shownSession.phaseCompletionConfirmedActionId !== shownSession.managedActionId && <button type="button" class="btn sm" disabled={confirmingPhase} onClick={() => void confirmPhase()}>{confirmingPhase ? "Confirming…" : "Confirm phase complete"}</button>}
+        </p>}
+        {shownSession?.action === "archive" && shownSession.managedActionId && change.archived && change.tasks && change.tasks.total > change.tasks.done && <p>
+          {shownSession.unresolvedArchiveAcceptedActionId === shownSession.managedActionId
+            ? <><strong>Unresolved archive publication accepted.</strong> Task markers remain unchanged; delivery opens a PR for review and will not auto-merge.</>
+            : <><strong>{change.tasks.total - change.tasks.done} archive tasks remain unresolved.</strong> Accepting publishes this archived checkpoint for review without marking tasks complete or enabling auto-merge. <button type="button" class="btn sm" disabled={acceptingArchive} onClick={() => void acceptUnresolvedArchive()}>{acceptingArchive ? "Accepting…" : "Accept and publish archive"}</button></>}
+        </p>}
+        {deliveryError && <p role="alert">Could not read lifecycle delivery status: {deliveryError}</p>}
+      </section>}
       {!change.archived && ui.config?.agentSessions.enabled && <ChangePermissionPicker key={`${repoId}/${changeName}`} repoId={repoId} changeName={changeName} />}
       <StaleNotice repo={repo} change={change} />
       {(listing || hasConsole) && (
