@@ -2,3 +2,4 @@ schema: spec-driven
 created: 2026-11-12
 spec-control:
   branch: feat/move-actions-out
+  archive-branch: chore/archive-move-actions-out
