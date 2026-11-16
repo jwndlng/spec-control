@@ -959,7 +959,6 @@ have been started.
 - **WHEN** either route names a disabled repository
 - **THEN** it returns 409 and changes no state
 
-
 ### Requirement: Dismissed identities can be listed and restored
 GET `/api/repos/<id>/dismissed-changes` SHALL list project-scoped dismissal records. POST `/api/repos/<id>/changes/<name>/restore` with its recorded identity SHALL remove that dismissal and refresh visibility. Restore SHALL be idempotent, same-origin protected, and scoped to configured projects. It SHALL NOT modify files, git, agent sessions, or remote state.
 
@@ -967,14 +966,12 @@ GET `/api/repos/<id>/dismissed-changes` SHALL list project-scoped dismissal reco
 - **WHEN** the same dismissed identity is restored twice
 - **THEN** both operations succeed and the active change appears at most once
 
-
 ### Requirement: Deleting change files has a distinct API
 The former destructive dismissal operation SHALL be exposed only through GET/POST `/api/repos/<id>/changes/<name>/delete-files`. Preview, fingerprints, loss warnings, path checks, running-session refusal, deletion scope, and best-effort staging SHALL preserve the previous deletion contract. No caller SHALL infer successful logical dismissal from successful file deletion.
 
 #### Scenario: Deletion confirmation
 - **WHEN** POST delete-files carries a current fingerprint for a safe main-checkout directory
 - **THEN** only its confirmed files are deleted, only their removal is staged, and the result reports staging separately from dismissal
-
 
 ### Requirement: Cleanup endpoints
 `GET /api/repos/<id>/cleanup` SHALL return the repository's cleanup preview as specified in the `repository-cleanup`
@@ -1829,3 +1826,14 @@ Ship SHALL expose a server-issued operation identity, observed stage, running/fi
 #### Scenario: Failure is not a completed PR
 - **WHEN** the push succeeds but PR lookup/creation cannot be verified
 - **THEN** status reports verified push progress and an unresolved PR result without fabricating a PR URL
+
+### Requirement: Lifecycle delivery status and retry are exposed
+The session/state API SHALL expose each managed phase's delivery identity, state, PR link, timestamps, blocker, and available recovery actions. POST `/api/repos/<id>/changes/<name>/delivery/retry` with a server-issued checkpoint identity SHALL re-evaluate that operation. It SHALL apply same-origin and project/session enablement checks and SHALL NOT accept client paths, head commits, commands, or merge eligibility as authority.
+
+#### Scenario: Duplicate retry
+- **WHEN** two requests retry the same pending checkpoint
+- **THEN** both observe one serialized delivery operation and no duplicate PR or merge
+
+#### Scenario: Stale checkpoint
+- **WHEN** retry names an obsolete checkpoint identity
+- **THEN** the server returns 409 with the current state instead of publishing unrelated work
