@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-16-resolve-agent-workflow-instructions",
+  "date": "2026-11-16",
+  "title": "Run OpenSpec workflows from the project checkout",
+  "summary": "OpenSpec sessions resolve workflow instructions from the managed checkout or use the verified OpenSpec CLI fallback. If neither is available, the launch explains how to update project setup."
+}

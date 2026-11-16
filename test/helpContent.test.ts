@@ -37,6 +37,12 @@ test("Help covers the main topics, each section once", () => {
   for (const s of walked) expect([s.id, s.text.length > 100]).toEqual([s.id, true]);
 });
 
+test("Agent sessions Help explains checkout-local workflow resolution and setup failures", () => {
+  const text = walked.find((s) => s.id === "agent-sessions")?.text ?? "";
+  for (const phrase of ["session's own checkout", "OpenSpec CLI fallback", "Update OpenSpec setup", "untracked instructions"])
+    expect(text).toContain(phrase);
+});
+
 test("the board section explains every column by its own name", () => {
   const board = walked.find((s) => s.id === "board");
   for (const [stage, column] of Object.entries(STAGE_COLUMN)) {

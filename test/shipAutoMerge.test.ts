@@ -231,7 +231,7 @@ async function archiving(autoMergeDocs: boolean | undefined, opts: { git?: boole
 /** The opening prompt as the fake agent received it: its one argument. */
 async function openedWith(h: Harness, id: string, prompt: string): Promise<void> {
   const seen = await watch(h.manager, id);
-  await waitFor(() => seen.text().includes(`args=${JSON.stringify([prompt])}`), "the opening prompt");
+  await waitFor(() => seen.text().includes(`args=${JSON.stringify([prompt]).slice(0, -2)}`), "the opening prompt");
 }
 
 test("Archive in a fresh worktree of an opted-in project ends with the archive auto-merge instruction", async () => {

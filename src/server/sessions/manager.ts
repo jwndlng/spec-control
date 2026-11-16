@@ -39,6 +39,7 @@ import { openSpec } from "../frameworks/openspec/index.ts";
 import { DEFAULT_SCHEMA } from "../frameworks/openspec/adapter.ts";
 import { resolvePermissionPolicy } from "./permissionResolver.ts";
 import { permissionAdapters } from "./permissionAdapters.ts";
+import { resolveOpenSpecWorkflow, WorkflowUnavailableError, type OpenSpecAction, type WorkflowCommand, type WorkflowResolution } from "../frameworks/openspec/workflow.ts";
 
 export const SCROLLBACK_BYTES = 1024 * 1024;
 const TYPE_PROMPT_DELAY_MS = 1500;
@@ -188,6 +189,8 @@ export interface ManagerDeps {
   store?: SessionStore;
   refreshPullRequests?: (repoId: string) => Promise<void>;
   listPullRequests?: (repoId: string) => Promise<readonly PullRequest[]>;
+  /** Test seam for the OpenSpec CLI capability probe used before a managed action starts. */
+  workflowCommand?: WorkflowCommand;
   /** Test seam for deterministic PR creation outcomes, including a timed-out/unknown remote result. */
   createPullRequest?: typeof createPullRequest;
   /** Test seam; the real delay gives an agent time to draw its prompt before text is typed into it. */
@@ -427,7 +430,7 @@ export class SessionManager {
     const draftModel = action === "draft" && agent ? resolveModel(config, agent, "draft") : undefined;
     const implementModel = action === "draft" && agent ? resolveModel(config, agent, "implement") : undefined;
     const implementModelCandidates = draftModel && implementModel && draftModel !== implementModel ? { draft: draftModel, implement: implementModel } : undefined;
-    const prompt = followupPrompt ?? fixedPrompt() ?? (agent ? openingPrompt(agent, action, change, { implementModelCandidates }) : undefined);
+    let prompt = followupPrompt ?? fixedPrompt() ?? (agent ? openingPrompt(agent, action, change, { implementModelCandidates }) : undefined);
 
     const isZeroTokenArchive =
       action === "archive" &&
@@ -595,6 +598,11 @@ export class SessionManager {
         throw new SessionError(err instanceof NoCommitError || err instanceof WorktreeMismatchError ? 409 : 500, err instanceof Error ? err.message : String(err));
       }
     }
+    if (scanned.framework === "openspec" && ["draft", "implement", "validate", "archive", "fastForward"].includes(action) && !isZeroTokenArchive && !isZeroTokenDuplicate) {
+      const workflow = await this.checkedOpenSpecWorkflow(session.worktreePath, change, action);
+      session.workflowMode = workflow.mode;
+      prompt = `${prompt ?? ""} ${workflow.instruction}`.trim();
+    }
     // Decided once the worktree exists, so a leftover archive branch with code in it is seen (archive-auto-merge-docs D4).
     const autoMerge = await this.docsAutoMerge(repo, session, action);
     if (autoMerge) {
@@ -634,6 +642,22 @@ export class SessionManager {
   private recordInstruction(repoId: string, change: string, action: SessionAction): string | undefined {
     const scanned = this.deps.getSnapshot().repos.find((r) => r.id === repoId);
     return frameworkById(scanned?.framework)?.recordInstruction?.({ change, archive: action === "archive" });
+  }
+
+  private async checkedOpenSpecWorkflow(root: string, change: string, action: SessionAction): Promise<WorkflowResolution> {
+    try {
+      const actions: OpenSpecAction[] = action === "fastForward" ? ["draft", "implement"] : [action as OpenSpecAction];
+      const resolved = await Promise.all(actions.map((workflowAction) => resolveOpenSpecWorkflow({ root, change, action: workflowAction, command: this.deps.workflowCommand })));
+      return {
+        mode: resolved.some((workflow) => workflow.mode === "cli") ? "cli" : "skill",
+        instruction: resolved.map((workflow) => workflow.instruction).join(" "),
+        diagnostic: resolved.map((workflow) => workflow.diagnostic).join("; "),
+        ...(resolved.length === 1 && resolved[0]?.workflowPath ? { workflowPath: resolved[0].workflowPath } : {}),
+      };
+    } catch (error) {
+      if (error instanceof WorkflowUnavailableError) throw new SessionError(503, error.message);
+      throw error;
+    }
   }
 
   /**
@@ -1437,7 +1461,14 @@ export class SessionManager {
     const repo = config.repos.find((r) => r.id === session.repoId);
     const autoMerge = repo !== undefined && (await this.docsAutoMerge(repo, session, action));
     // Checked before the action or the auto-merge record changes: a prompt that cannot be typed changes nothing (D1).
-    const text = typable(openingPrompt(agent, action, session.change, { implementModelCandidates }) as string);
+    let nextPrompt = openingPrompt(agent, action, session.change, { implementModelCandidates}) as string;
+    const framework = this.deps.getSnapshot().repos.find((r) => r.id === session.repoId)?.framework;
+    if (framework === "openspec" && ["draft", "implement", "validate", "archive", "fastForward"].includes(action)) {
+      const workflow = await this.checkedOpenSpecWorkflow(session.worktreePath, session.change, action);
+      session.workflowMode = workflow.mode;
+      nextPrompt = `${nextPrompt} ${workflow.instruction}`;
+    }
+    const text = typable(nextPrompt);
     // The recorded action is what the user asked for, whether or not the agent's terminal echoed the prompt in time.
     session.action = action;
     if (autoMerge) session.autoMergeAskedAt = new Date().toISOString();

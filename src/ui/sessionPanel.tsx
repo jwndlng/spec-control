@@ -723,6 +723,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
           </div>
         </details>
         {(error ?? session?.error) && <div class="notice danger">{error ?? session?.error}</div>}
+        {session?.workflowMode === "cli" && <div class="notice" role="status">OpenSpec CLI fallback supplied this action's workflow instructions from the session checkout.</div>}
         {session?.autoEnded && <div class={`notice ${session.autoEnded.removed ? "ok" : "warn"}`}>{autoEndedText(session.autoEnded)}</div>}
         {session?.cleanup && (
           <div

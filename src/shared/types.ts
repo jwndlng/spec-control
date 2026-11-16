@@ -941,6 +941,8 @@ export interface ChangeSession extends SessionBase {
   repoId: string;
   change: string;
   action: SessionAction;
+  /** How a managed OpenSpec action was resolved in its actual checkout. Missing on older records and non-OpenSpec work. */
+  workflowMode?: "skill" | "cli";
   /**
    * When the dashboard last appended an auto-merge instruction to a prompt for this session (Ship, Archive started or
    * sent). Only a session that carries it is ever ended because its pull request merged (auto-merge-cleanup D1), or sent
