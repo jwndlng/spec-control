@@ -8,23 +8,15 @@ and check status, read from GitHub through the user's own GitHub CLI and only wh
 ## Requirements
 
 ### Requirement: Pull requests are read through the GitHub CLI, read-only
-The dashboard SHALL obtain pull requests by running the GitHub CLI (`gh`) without a shell, using only `gh pr list` with JSON output and `gh api user` to learn the signed-in login. A tracked repository SHALL be queried only when it is a git repository whose `origin` remote points to `github.com`, in any of its URL forms; the repository SHALL be addressed by its `owner/name` and the `gh` process SHALL run with its working directory outside every tracked repository, so that no tracked repository is read or written by it. `gh` SHALL run with prompts disabled, no standard input and a timeout after which it is stopped and reported as failed. The dashboard SHALL rely on `gh`'s own sign-in and MUST NOT read, store, request, log or forward credentials or tokens, and any text it passes to the browser SHALL have credentials embedded in URLs masked. Refreshing or listing pull requests MUST NOT run any other `gh` subcommand and MUST NOT change anything on GitHub; the only other `gh` subcommands the dashboard may run are `gh issue list` (`issue-import`), `gh repo list` (`github-repositories`), `gh pr close` (`change-dismissal`), and `gh pr create` and `gh pr merge` (`Pull requests are created and merged through the GitHub CLI`). Enabled repositories that share one GitHub repository SHALL cause one query, whose result applies to each of them.
+The dashboard SHALL obtain pull requests by running the GitHub CLI (`gh`) without a shell, using `gh pr list` with JSON output and `gh api user` to learn the signed-in login. When docs or proposal automatic merge is enabled for a tracked project, it SHALL also read the rules that apply to each open pull request's exact base branch through `gh api repos/{owner}/{repo}/rules/branches/{branch}`. All such calls SHALL run outside tracked repositories, with prompts disabled, no standard input, and a timeout. They SHALL NOT write to repositories or GitHub. The dashboard SHALL rely on `gh`'s own sign-in and MUST NOT read, store, request, log or forward credentials or tokens; browser-visible failure text SHALL have credentials in URLs masked.
 
-#### Scenario: HTTPS and SSH remotes
-- **WHEN** one tracked repository's `origin` is `https://github.com/acme/alpha-infra.git` and another's is `git@github.com:acme/beta-soc.git`
-- **THEN** they are queried as `acme/alpha-infra` and `acme/beta-soc`
+#### Scenario: Refresh includes read-only rules for a merge candidate
+- **WHEN** an eligible open pull request is returned for a docs or proposal merge project
+- **THEN** the refresh reads the rules for that pull request's base branch and binds the result to its current head commit
 
-#### Scenario: Two clones of one project
-- **WHEN** two enabled repositories both have `origin` `github.com/acme/alpha-infra`
-- **THEN** `acme/alpha-infra` is queried once and both repositories show its pull requests
-
-#### Scenario: Remote needs a login gh does not have
-- **WHEN** `gh` would ask for authentication
-- **THEN** nothing prompts, the query fails within the timeout or at once, and the reason is reported
-
-#### Scenario: Refreshing pull requests lists no issues
-- **WHEN** the user refreshes pull requests
-- **THEN** only `gh pr list` and `gh api user` processes are started, and no `gh issue list`
+#### Scenario: Rule evidence is unavailable or malformed
+- **WHEN** the rules query fails or does not return a complete supported rule list
+- **THEN** required-check policy remains unknown and automatic merge is withheld
 
 ### Requirement: GitHub is contacted only when the user asks
 The pull-request query SHALL run only when the user activates a **Refresh** control on the Pull requests view or in a repository's pull-request dialog, when the user opens one of the three views that show pull requests — the Pull requests view, a repository's pull-request dialog, or a Kanban board — and the shown repositories' cached lists are older than five minutes or were never fetched, or as the **pull-request watch** of an open Kanban board ("The board watches pull requests that are not ready"). It MUST NOT run on any other timer, during or after a scan, on page load of a view that shows no pull request, on the projects overview, or as a side effect of another operation. While a refresh runs, the control SHALL show that it is running and SHALL NOT start a second one.
@@ -427,3 +419,14 @@ After creating or merging a pull request, Spec Control SHALL refresh that GitHub
 #### Scenario: Merging a ready pull request with head-commit guard
 - **WHEN** Spec Control merges ready pull request `#88` of `acme/demo-ops` at head commit `c0ffee0123456789abcdef0123456789abcdef01`
 - **THEN** `gh pr merge 88 --repo acme/demo-ops --squash --match-head-commit c0ffee0123456789abcdef0123456789abcdef01` runs without `--delete-branch` or `--auto`, and `acme/demo-ops`'s pull-request list is refreshed
+
+### Requirement: Automatic merge uses fresh exact-head required-check policy
+The automatic merge decision SHALL require a fresh rules response associated with the pull request's current head commit. A known policy with no required status checks MAY merge when GitHub reports no checks or all reported checks pass. A known policy with required checks SHALL merge only when the check rollup passes. Missing policy evidence, unsupported required workflow or code-scanning rules, stale head identity, unknown or pending checks, failing checks, conflicts, drafts, wrong base branches, and fork pull requests SHALL remain blocked.
+
+#### Scenario: No required checks are configured
+- **WHEN** GitHub returns a complete supported rule list with no required status checks for the pull request's base branch
+- **THEN** the exact-head policy is recorded as having no required checks, and a non-draft, mergeable docs-only proposal may merge even when the check rollup is empty
+
+#### Scenario: Required checks are configured
+- **WHEN** the base branch requires status checks and any check is missing, unknown, pending, or failing
+- **THEN** automatic merge is withheld until the exact-head check rollup passes
