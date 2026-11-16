@@ -713,7 +713,7 @@ test("requestReadyMerges automatically merges ready docs-only PR directly on ser
 // 4.1 Zero-token Archive
 // ---------------------------------------------------------------------------
 
-test("Zero-token Archive: Done change with complete subState and specsSynced moves change, records archive-branch and ships without agent", async () => {
+test("Zero-token Archive: markerless legacy change moves, records archive-branch and ships without agent", async () => {
   const h = await harness();
   await setupFakeRemote(h.repoPath);
 
@@ -721,6 +721,8 @@ test("Zero-token Archive: Done change with complete subState and specsSynced mov
   managers.push(manager);
 
   const ZERO_ARCHIVE = "bump-toolchain";
+  const mainMarker = join(h.repoPath, `openspec/changes/${ZERO_ARCHIVE}/.openspec.yaml`);
+  await rm(mainMarker, { force: true });
   const target = h.snapshot.repos[0].changes.find((x) => x.name === ZERO_ARCHIVE);
   if (target) target.specsSynced = true;
   const session = await manager.open({ repoId: h.repoId, change: ZERO_ARCHIVE, action: "archive" });
@@ -738,6 +740,7 @@ test("Zero-token Archive: Done change with complete subState and specsSynced mov
   const today = new Date().toISOString().slice(0, 10);
   const archivedMarker = await Bun.file(join(session.worktreePath, `openspec/changes/archive/${today}-${ZERO_ARCHIVE}/.openspec.yaml`)).text();
   expect(archivedMarker).toContain(`archive-branch: chore/archive-${ZERO_ARCHIVE}`);
+  expect(await Bun.file(mainMarker).exists()).toBe(false);
 
   // PR was created via gh pr create
   const calls = await gh.calls();
