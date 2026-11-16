@@ -177,6 +177,13 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             offered. Choose <strong>Custom session</strong> from the menu at any active stage, including while waiting on dependencies, to start without an opening prompt and write your own first instruction.
           </li>
           <li>
+            OpenSpec starters check workflow instructions in the session's own checkout. When a project workflow file is
+            available, the starter names its exact path; otherwise the dashboard uses an OpenSpec CLI fallback and supplies its
+            schema, task state and context. If neither is available, the launch explains the missing setup and points to
+            <strong> Project settings → Update OpenSpec setup</strong>. The dashboard never installs global skills or copies
+            untracked instructions from the main checkout.
+          </li>
+          <li>
             While the change has an open pull request, that pull request decides what is recommended:{" "}
             <strong>Resolve conflicts</strong> when it conflicts, <strong>Merge</strong> when it is ready (which opens the
             console of the session that shipped it, or the pull request on GitHub), <strong>Implement</strong> when its

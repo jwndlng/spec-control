@@ -1,12 +1,12 @@
 import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
 import { connect, createServer } from "node:net";
 import { randomBytes } from "node:crypto";
-import { chmod, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { defaultAgentSessions, defaultConfig, newRepoConfig, saveConfig } from "../src/server/config.ts";
 import type { AgentProfile } from "../src/shared/types.ts";
 import { useTempHome } from "./helpers.ts";
-import { tempGitRepo, waitFor } from "./sessionHelpers.ts";
+import { git, tempGitRepo, waitFor } from "./sessionHelpers.ts";
 
 setDefaultTimeout(45_000);
 const home = await useTempHome();
@@ -68,6 +68,11 @@ test("compiled server applies current custom commands on launch and resume and r
   if (buildCode !== 0) throw new Error(`bun run build failed with exit ${buildCode}`);
 
   repoPath = await tempGitRepo();
+  const skillPath = ".claude/skills/openspec-apply-change/SKILL.md";
+  await mkdir(join(repoPath, dirname(skillPath)), { recursive: true });
+  await writeFile(join(repoPath, skillPath), "Project implementation workflow for compiled runtime smoke.");
+  git(repoPath, "add", skillPath);
+  git(repoPath, "commit", "-q", "-m", "add project implementation workflow");
   const repo = newRepoConfig(repoPath, true);
   repo.agent = { enabled: true, permissionProfile: "less-friction", allowedCommands: ["bun run lint"] };
   const logPath = join(home.home, "fake-agent.jsonl");
@@ -97,9 +102,10 @@ test("compiled server applies current custom commands on launch and resume and r
   const opened = await fetch(`${base}/api/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repoId: repo.id, change: "upgrade-runtime", action: "implement" }) });
   expect(opened.status).toBe(201);
   const session = await opened.json() as { id: string };
-  await waitFor(async () => (await readFile(logPath, "utf8").catch(() => "")).includes("bun run lint"), "compiled fake-agent launch");
+  await waitFor(async () => (await readFile(logPath, "utf8").catch(() => "")).includes(skillPath), "compiled fake-agent launch with project workflow");
   const first = await readFile(logPath, "utf8");
   expect(first.split("RUN").length - 1).toBe(1);
+  expect(first).toContain(skillPath);
   expect(first).toContain("Bash(bun run lint)");
   await terminalRelays(port, session.id);
 

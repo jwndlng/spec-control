@@ -52,7 +52,7 @@ async function project(opts: { autoMergeDocs?: boolean; conventional?: boolean }
 
 async function started(manager: SessionManager, id: string, prompt: string) {
   const seen = await watch(manager, id);
-  await waitFor(() => seen.text().includes(`args=${JSON.stringify([prompt])}`), "the opening prompt");
+  await waitFor(() => seen.text().includes(`args=${JSON.stringify([prompt]).slice(0, -2)}`), "the opening prompt");
   return seen;
 }
 
