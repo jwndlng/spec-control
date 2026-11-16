@@ -2,3 +2,4 @@ schema: spec-driven
 created: 2026-11-16
 spec-control:
   branch: feat/link-to-project
+  archive-branch: chore/archive-link-to-project
