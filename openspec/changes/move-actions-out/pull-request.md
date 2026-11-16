@@ -1,15 +1,9 @@
 # Pull request summary
 
-## Problem
+The change Console now shows available pull request, change, and session actions by default. Empty groups stay hidden, Ship remains prominent, and existing action availability and behavior are preserved.
 
-Important change actions in the Console tab are hidden behind a collapsed “More actions” section.
+## Checks run
 
-## Intended outcome
-
-Show available pull request, change, and session actions by default, keep them grouped by category, omit empty groups, and retain Ship's prominent placement. Action availability and behavior stay the same.
-
-## Planned verification
-
-- Update `test/sessionPanelUi.test.ts` to cover visible groups, omitted empty groups, and Ship placement.
-- Run focused UI tests and `bun run check` for lint, typecheck, and the full test suite.
-- Confirm the What's new entry follows the documented schema and appears in the changelog loader.
+- `bun run build:ui` — passed; loaded the new What's new entry.
+- `bun test test/sessionPanelUi.test.ts` — 11 passed.
+- `bun run check` — passed: lint and typecheck completed; 2,427 tests passed. Biome reported existing warnings.
