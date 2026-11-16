@@ -43,6 +43,12 @@ test("Agent sessions Help explains checkout-local workflow resolution and setup 
     expect(text).toContain(phrase);
 });
 
+test("Agent sessions Help distinguishes local lifecycle stages from remote delivery", () => {
+  const text = walked.find((s) => s.id === "agent-sessions")?.text ?? "";
+  for (const phrase of ["delivery status", "do not prove that GitHub", "current action and worktree"])
+    expect(text).toContain(phrase);
+});
+
 test("the board section explains every column by its own name", () => {
   const board = walked.find((s) => s.id === "board");
   for (const [stage, column] of Object.entries(STAGE_COLUMN)) {

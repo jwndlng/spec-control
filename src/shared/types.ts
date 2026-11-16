@@ -475,8 +475,8 @@ export interface RepoAgentConfig {
   agentId?: string;
   /** Agent profiles selected for individual active changes. */
   changeAgents?: Record<string, string>;
-  /** Docs auto-merge: Ship and Archive leave a docs-only pull request open and Spec Control asks the agent to merge it once
-   *  it is ready (agent-merges-docs-prs). The name predates that and is kept for compatibility. Absent means off. */
+  /** Docs auto-merge applies to non-proposal documentation and Archive checkpoints. Proposal checkpoints follow their
+   *  standard delivery policy independently. The name predates that and is kept for compatibility. Absent means off. */
   autoMergeDocs?: boolean;
   permissionProfile?: AgentPermissionProfileId;
   /** Optional project-scoped literal command prefixes. Absence and an empty list both mean no extra allowances. */
@@ -606,6 +606,49 @@ export interface Config {
   setup?: "pending";
 }
 
+/** Durable checkpoint delivery state. Local lifecycle stage is derived separately from repository contents. */
+export type LifecycleDeliveryPhase = "proposal" | "implementation" | "archive";
+export type LifecycleDeliveryState = "pending" | "committing" | "pushing" | "opening-pr" | "waiting-to-merge" | "merged" | "blocked" | "unavailable";
+export type LifecycleDeliveryRecovery = "retry" | "open-pr" | "resume-agent" | "resolve-conflicts" | "confirm-complete";
+export interface LifecycleDeliveryRecord {
+  version: 1;
+  id: string;
+  projectId: string;
+  projectPath: string;
+  projectIncarnation: string;
+  change: string;
+  changeIncarnation: string;
+  phase: LifecycleDeliveryPhase;
+  revision: number;
+  actionId: string;
+  completionRevision: number;
+  sessionId: string;
+  worktreePath: string;
+  branch: string;
+  /** Hash of the worktree's exact HEAD, tracked diff, status and bounded untracked file contents. */
+  contentHash: string;
+  snapshotHash: string;
+  head?: string;
+  pullRequestNumber?: number;
+  pullRequestUrl?: string;
+  state: LifecycleDeliveryState;
+  /** The user explicitly accepted this archived checkpoint with unresolved tasks; this never marks tasks complete. */
+  acceptedUnresolvedTasks?: boolean;
+  blocker?: string;
+  recovery: LifecycleDeliveryRecovery[];
+  createdAt: string;
+  updatedAt: string;
+  retryAt?: string;
+  attempts: number;
+}
+export type ManagedActionPhase = "draft" | "implement" | "fastForward" | "archive";
+export interface ManagedCompletionReport {
+  kind: "phase-complete";
+  actionId: string;
+  phase: ManagedActionPhase;
+  revision: number;
+}
+
 /** What `GET /api/sessions` says about keep-awake (openspec/specs/keep-awake). */
 export interface KeepAwakeStatus {
   /** macOS with `/usr/bin/caffeinate`. */
@@ -686,6 +729,8 @@ export type ShipResult = Session & {
 export type ShipOperationStage = "preparing" | "committing" | "pushing" | "pull-request" | "refreshing" | "done" | "failed";
 export interface ShipOperationStatus {
   operationId: string;
+  /** Lifecycle checkpoint this operation is delivering, when Ship was started automatically. */
+  checkpointId?: string;
   state: "running" | "succeeded" | "failed" | "unknown";
   stage: ShipOperationStage;
   failedStage?: Exclude<ShipOperationStage, "done" | "failed">;
@@ -941,6 +986,12 @@ export interface ChangeSession extends SessionBase {
   repoId: string;
   change: string;
   action: SessionAction;
+  /** Server-issued identity that a phase-completion report must name. */
+  managedActionId?: string;
+  /** User explicitly confirmed this exact managed action's completion after checking its work. */
+  phaseCompletionConfirmedActionId?: string;
+  /** User explicitly accepted publishing this exact archive action with unresolved tasks left unchanged. */
+  unresolvedArchiveAcceptedActionId?: string;
   /** How a managed OpenSpec action was resolved in its actual checkout. Missing on older records and non-OpenSpec work. */
   workflowMode?: "skill" | "cli";
   /**
@@ -1013,6 +1064,12 @@ export interface MergeAsked {
   submitted: boolean;
   /** `dashboard`: sent on its own because a docs-only pull request was ready. `user`: the Merge action. */
   by: "dashboard" | "user";
+  /** Number of serialized automatic attempts at this exact head. */
+  attempts?: number;
+  /** Last actionable failure from an automatic attempt. */
+  failure?: string;
+  /** A timed-out mutation has an uncertain outcome and must be reconciled from a fresh GitHub list. */
+  outcomeUnknown?: boolean;
 }
 
 /** What ending a session because its auto-merge pull request merged came to (auto-merge-cleanup D4). */
@@ -1755,6 +1812,10 @@ export interface PullRequest {
   /** The signed-in user is among the requested reviewers. Team requests are not resolved and do not count. */
   reviewRequestedFromViewer: boolean;
   checks: "passing" | "failing" | "pending" | "none";
+  /** Check-run and legacy status context names reported for the current head. */
+  checkNames?: string[];
+  /** Required-check policy fetched for this PR's base and bound to its exact head commit. */
+  requiredChecks?: { headOid: string; state: "none" | "required" | "unknown"; contexts?: string[]; fetchedAt?: string };
   /**
    * Whether it merges cleanly into its base, as GitHub reports it; `unknown` while GitHub has not computed it. Absent
    * in caches written before it was read, which every reader treats as `unknown`.

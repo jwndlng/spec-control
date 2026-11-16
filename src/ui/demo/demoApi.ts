@@ -401,6 +401,8 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
 
   return {
     state: () => reply(snapshot()),
+    lifecycleDeliveries: () => reply([]),
+    retryLifecycleDelivery: () => failing(() => { throw new ApiError(503, "the demo does not persist lifecycle deliveries"); }),
     changeArtifacts: (repoId, changeName) =>
       failing(() => {
         const { change, dir } = findChange(repoId, changeName);
@@ -837,6 +839,8 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
     createProject: () => new Promise((_, reject) => setTimeout(() => reject(new ApiError(503, "the demo does not create folders")), latencyMs)),
     resumeSession: (id) => attempt(() => demoSessions.resume(id)),
     shipSession: (id, request) => attempt(() => demoSessions.ship(id, request)),
+    confirmPhaseComplete: () => failing(() => { throw new ApiError(503, "the demo does not persist lifecycle checkpoints"); }),
+    acceptUnresolvedArchive: () => failing(() => { throw new ApiError(503, "the demo does not publish lifecycle checkpoints"); }),
     finishChecks: (repoId, change) => failing(() => {
       const current = snapshot().repos.find((r) => r.id === repoId)?.changes.find((c) => c.name === change && !c.archived);
       if (!current || !mergedImplementation(current, buildPullRequests(sample.snapshot, now(), pullRequestsFetchedAt).repos)) throw new ApiError(409, "No linked merged implementation with unresolved tasks is known.");

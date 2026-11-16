@@ -221,9 +221,11 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           <li>
             Ship first reads tasks from the session checkout. Unfinished or unreadable tasks offer <strong>Finish tasks</strong>, <strong>Ship anyway</strong> and Cancel. For a verified, complete task list, <strong>Mark all complete and Ship</strong> records every remaining task as done and ships the branch.
             Finish tasks does not ship. Ship anyway keeps unresolved markers for PR-dependent checks and withholds docs auto-merge. Automatic merging of implementation and archive PRs waits until every task is marked complete; proposal PRs can still merge before implementation.
+            For an archived change with unresolved tasks, explicitly accept archive publication in Change details; the markers stay unresolved and the archive PR is never auto-merged.
             After a linked implementation PR merges, <strong>Finish checks</strong> on the card and Console tab asks the agent to verify actual evidence and prepare a follow-up PR; cached merge status never completes a task.
             Fast-forward includes the same completion instructions and automatically ships only when every task is marked complete.
             <strong>Ship</strong> commits, pushes and opens the pull request on the server, after the task review. <strong>Finish tasks</strong> and <strong>Finish checks</strong> send requests to the agent; they do not ship.
+            Managed Draft, Implement and Archive checkpoints are verified against the current action and worktree before delivery. Their delivery status and available retry appear in change details; the board's Ready, Done and Archived stages describe local repository content and do not prove that GitHub has a pull request.
             Draft artifacts prepares `openspec/changes/&lt;change&gt;/pull-request.md`, Implement updates it with delivered behavior and checks run, and Ship uses it as the body of a new pull request. Older changes without the file get a short fallback; an existing pull request is left alone.
             While Ship runs, its status reports the server-observed step. A failed Ship keeps verified commit or push progress and can be retried; after a reload, the status and pull request link are recovered from the session. A timed-out remote operation is marked unknown until retry reconciles its outcome.
             <strong>Resolve conflicts</strong> asks the agent to bring the branch up to date.
@@ -238,9 +240,8 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             request. Pull requests from forks are not supported, and the dashboard fetches nothing for it.
           </li>
           <li>
-            In a project with <strong>Docs auto-merge</strong> on, <strong>Draft artifacts</strong> works on a branch of its
-            own, <code>docs/&lt;change&gt;</code>, and asks the agent to open the proposal as a pull request of its own once
-            every artifact is written; the card labels it <strong>Proposal</strong>. Its console offers the next step as{" "}
+            <strong>Draft artifacts</strong> always works on a branch of its own, <code>docs/&lt;change&gt;</code>, and asks the agent to open the proposal as a pull request of its own once
+            every artifact is written; the card labels it <strong>Proposal</strong>. Proposal merging follows its standard policy regardless of Docs auto-merge; that setting applies to other documentation and archive checkpoints. Its console offers the next step as{" "}
             <strong>End proposal session and implement</strong>: that session ends — its worktree and branch are kept, and
             you are asked first only while the proposal is not pushed — and <strong>Implement</strong> starts on{" "}
             <code>feat/&lt;change&gt;</code>, from the proposal while that is not merged yet. Once the proposal's pull

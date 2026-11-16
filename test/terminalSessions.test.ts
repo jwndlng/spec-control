@@ -377,7 +377,7 @@ test("a change that lives only in a worktree on another branch is copied into th
   expect(h.snapshot.repos[0].changes.find((c) => c.name === "ledger-export")?.checkout?.path).toBe(await realpath(theirs));
 
   const s = await h.manager.open({ repoId: h.repoId, change: "ledger-export", action: "draft" });
-  expect([s.adopted, s.branch, s.worktreePath]).toEqual([undefined, "feat/ledger-export", join(worktreesDir(), h.repoId, "ledger-export")]);
+  expect([s.adopted, s.branch, s.worktreePath]).toEqual([undefined, "docs/ledger-export", join(worktreesDir(), h.repoId, "docs-ledger-export")]);
   expect(await readFile(join(s.worktreePath, "openspec", "changes", "ledger-export", "proposal.md"), "utf8")).toBe("# only here\n");
   expect(existsSync(join(h.repoPath, "openspec", "changes", "ledger-export"))).toBe(false); // the main checkout is left alone
 });

@@ -1,9 +1,9 @@
 // What became of the work in a session's worktree (design.md D1, D2). Read-only git, never a remote: `merged` is as
 // of the user's last fetch. Worktree directories are listed themselves, because they outlive session records.
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { CONFLICTABLE_WORK, type ChangeSession, type RepoConfig, type SessionAction, type SessionWorktree, type WorkConflicts, type WorkStatus } from "../../shared/types.ts";
-import { OPENSPEC_PATHS } from "../frameworks/registry.ts";
+import { documentationOnly } from "../../shared/documentation.ts";
 import { mergeScratchDir, worktreesDir } from "../paths.ts";
 import { baseRef, contentIsInBase } from "./base.ts";
 
@@ -61,11 +61,8 @@ async function isDirectory(path: string): Promise<boolean> {
   }
 }
 
-/** Where OpenSpec keeps its documents, as git prints repository-relative paths. Compared as written, no normalisation. */
-const OPENSPEC_DIR = `${OPENSPEC_PATHS.root}/`;
-
 /**
- * Whether Ship would hand over nothing but OpenSpec documents (auto-merge-docs design D3): every path the branch changed
+ * Whether Ship would hand over documentation only: every path the branch changed
  * since it forked from `base`, and every path the worktree's status reports — renames on both sides, untracked files
  * included, because Ship asks the agent to commit everything — lies under `openspec/`. Asked at the moment of Ship and
  * failing closed: an unknown base, a git error or no path at all is `false`.
@@ -91,7 +88,38 @@ export async function shipsOnlyOpenSpec(worktreePath: string, base: string | und
     paths.push(entry.slice(3));
     if (entry[0] === "R" || entry[0] === "C") paths.push(entries[++i] ?? "");
   }
-  return (allowEmpty || paths.length > 0) && paths.every((path) => path.startsWith(OPENSPEC_DIR));
+  const allPaths = [...new Set(paths)];
+  if (allPaths.length === 0) return allowEmpty;
+  const indexed = await git(worktreePath, ["ls-files", "--stage", "-z"]);
+  if (!indexed.ok) return false;
+  const modes = new Map<string, string>();
+  for (const item of indexed.out.split("\0").filter(Boolean)) {
+    const tab = item.indexOf("\t");
+    if (tab < 0) continue;
+    const mode = item.slice(0, tab).split(" ")[0];
+    modes.set(item.slice(tab + 1), mode);
+  }
+  let containsLinkOrSubmodule = false;
+  for (const path of allPaths) {
+    if (modes.get(path) === "120000" || modes.get(path) === "160000") {
+      containsLinkOrSubmodule = true;
+      break;
+    }
+    try {
+      const entry = await lstat(join(worktreePath, path));
+      if (entry.isSymbolicLink()) {
+        containsLinkOrSubmodule = true;
+        break;
+      }
+      if (entry.isDirectory() && await lstat(join(worktreePath, path, ".git")).then(() => true, () => false)) {
+        containsLinkOrSubmodule = true;
+        break;
+      }
+    } catch {
+      // Deleted entries are classified from the index mode above.
+    }
+  }
+  return documentationOnly({ paths: allPaths, complete: true, containsLinkOrSubmodule });
 }
 
 /**

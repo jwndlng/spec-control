@@ -1,12 +1,12 @@
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdir, readFile, realpath, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createFetchHandler, type AppState } from "../src/server/api.ts";
 import { defaultConfig, loadConfig } from "../src/server/config.ts";
 import { configPath, worktreesDir } from "../src/server/paths.ts";
 import { Scanner } from "../src/server/scanner.ts";
 import { resolveConflictsPrompt, shipPrompt } from "../src/server/sessions/agents.ts";
-import { changeOfWorktree, contentIsInBase, readWorkStatus } from "../src/server/sessions/workStatus.ts";
+import { changeOfWorktree, contentIsInBase, readWorkStatus, shipsOnlyOpenSpec } from "../src/server/sessions/workStatus.ts";
 import { ensureWorktree } from "../src/server/sessions/worktree.ts";
 import { CONVENTIONAL_COMMITS_SHIP_SENTENCE, DEFAULT_RESOLVE_CONFLICTS_PROMPT, DEFAULT_SHIP_PROMPT as BASE_SHIP_PROMPT, SHIP_COMPLETION_INSTRUCTION, type Session, type SessionWorktree } from "../src/shared/types.ts";
 
@@ -101,6 +101,43 @@ test("a squash merge is recognised by content, also after the remote branch was 
   git(repo, "commit", "-q", "-am", "later");
   git(repo, "push", "-q", "origin", "main");
   expect((await readWorkStatus(repo, wt)).work.state).toBe("unpushed"); // safe direction: never "merged" by mistake
+});
+
+test("local docs classification checks both rename paths, scripts, manifests, and symlinks", async () => {
+  const repo = await tempGitRepo();
+  const wt = await worktree(repo, "documentation-policy");
+  const base = git(repo, "rev-parse", "HEAD");
+  await mkdir(join(wt, "docs"), { recursive: true });
+  await writeFile(join(wt, "docs", "guide.md"), "guide\n");
+  git(wt, "add", "docs/guide.md");
+  git(wt, "commit", "-q", "-m", "docs");
+  expect(await shipsOnlyOpenSpec(wt, base)).toBe(true);
+
+  await writeFile(join(wt, "docs", "guide.sh"), await readFile(join(wt, "docs", "guide.md")));
+  git(wt, "rm", "-q", "docs/guide.md");
+  git(wt, "add", "docs/guide.sh");
+  git(wt, "commit", "-q", "-m", "rename document to script");
+  expect(await shipsOnlyOpenSpec(wt, base)).toBe(false);
+
+  await writeFile(join(wt, "docs", "package.json"), "{}\n");
+  git(wt, "add", "docs/package.json");
+  git(wt, "commit", "-q", "-m", "manifest");
+  expect(await shipsOnlyOpenSpec(wt, base)).toBe(false);
+
+  git(wt, "reset", "--hard", base);
+  await mkdir(join(wt, "docs"), { recursive: true });
+  await symlink("guide.md", join(wt, "docs", "link.md"));
+  expect(await shipsOnlyOpenSpec(wt, base)).toBe(false);
+
+  git(wt, "reset", "--hard", base);
+  const subrepo = await tempGitRepo();
+  await writeFile(join(subrepo, "README.md"), "submodule\n");
+  git(subrepo, "add", "README.md");
+  git(subrepo, "commit", "-q", "-m", "submodule content");
+  await mkdir(join(wt, "docs"), { recursive: true });
+  git(wt, "-c", "protocol.file.allow=always", "submodule", "add", "-q", subrepo, "docs/submodule");
+  git(wt, "commit", "-q", "-m", "docs submodule");
+  expect(await shipsOnlyOpenSpec(wt, base)).toBe(false);
 });
 
 test("without a remote the main checkout is the base; a missing directory is missing", async () => {

@@ -327,12 +327,11 @@ test("a git project with agent sessions offers auto-merge of docs-only pull requ
   expect(textOf(toggle)).toBe("Off");
   // The tooltip names both actions, which leave the pull request open; the merge is asked for once it is ready
   // (agent-merges-docs-prs), never through GitHub's auto-merge, and never for a pull request without checks.
-  expect(AUTO_MERGE_HINT).toContain("Ship and Archive open their pull request deterministically");
-  expect(AUTO_MERGE_HINT).toContain("Spec Control merges it automatically via the GitHub CLI");
-  expect(AUTO_MERGE_HINT).toContain("one without any checks is not merged this way");
+  expect(AUTO_MERGE_HINT).toContain("documentation-only Ship and Archive pull requests");
+  expect(AUTO_MERGE_HINT).toContain("standard proposal merge policy regardless of this setting");
+  expect(AUTO_MERGE_HINT).toContain("Implementation pull requests containing code remain for review");
   expect(AUTO_MERGE_HINT).not.toMatch(/enable auto-merge|GitHub's auto-merge/i);
   // …and what happens once it has merged (auto-merge-cleanup).
-  expect(AUTO_MERGE_HINT).toContain("ends its session and removes its worktree when that is safe");
   expect(click(toggle!)).toBe(true);
   expect(calls).toEqual(['agent a {"autoMergeDocs":true}']);
 

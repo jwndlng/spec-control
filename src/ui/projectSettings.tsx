@@ -68,7 +68,7 @@ export function AgentToggle({ repo, config, tracking }: { repo: RepoConfig; conf
 }
 
 export const AUTO_MERGE_HINT =
-  "Auto-merge docs-only pull requests: Ship and Archive open their pull request deterministically, and Draft artifacts opens the proposal as a pull request of its own on docs/<change>. Once a pull request whose changes GitHub reports as all under openspec/ is open, mergeable and its checks pass, Spec Control merges it automatically via the GitHub CLI; one without any checks is not merged this way, and any other pull request is left for review. Once such a pull request has merged, the dashboard ends its session and removes its worktree when that is safe.";
+  "Controls automatic merging for documentation-only Ship and Archive pull requests. Draft proposals use their own docs/<change> branch and follow the standard proposal merge policy regardless of this setting. Implementation pull requests containing code remain for review.";
 
 /**
  * On / Off for auto-merging docs-only pull requests (auto-merge-docs). Only where Ship exists: a git project whose agent

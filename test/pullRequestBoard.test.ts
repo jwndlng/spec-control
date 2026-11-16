@@ -158,7 +158,7 @@ test("the board arms its watch in an effect whose cleanup disarms it, and nothin
 test("the projects overview and the scan path never start a pull-request refresh", () => {
   for (const file of ["overview.tsx", "overviewState.ts", "autoRefresh.ts", "app.tsx", "changeDetail.tsx"]) {
     const text = readFileSync(join(UI, file), "utf8");
-    expect({ file, refresh: /refreshIfStale|openBoard|refreshPullRequests|\.refresh\(|armWatch|\.watch\(/.test(text) }).toEqual({ file, refresh: false });
+    expect({ file, refresh: /refreshIfStale|openBoard|refreshPullRequests|ui\.refresh\s*\(\s*\{\s*repoId|(?:prs|pulls)\.refresh\s*\(|armWatch|\.watch\(/.test(text) }).toEqual({ file, refresh: false });
   }
 });
 

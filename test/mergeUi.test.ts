@@ -50,6 +50,8 @@ test("while a Merge prompt for the current head is pending the panel says so; ty
     text: "The Merge prompt for #88 was typed but not sent. Press Enter in the terminal to send it.",
     tone: "warn",
   });
+  expect(mergeNotice(session({ mergeAsked: { ...asked, failure: "temporary failure", attempts: 1 } }), pr())).toMatchObject({ text: expect.stringContaining("temporary failure"), tone: "warn" });
+  expect(mergeNotice(session({ mergeAsked: { ...asked, outcomeUnknown: true } }), pr())).toMatchObject({ text: expect.stringContaining("outcome for #88 is unknown"), tone: "warn" });
   // Merged, closed or moved on: no longer pending.
   expect(mergeNotice(session({ mergeAsked: asked }), pr({ headOid: "c0ffee1234567000000000000000000000000089" }))).toBeUndefined();
   expect(mergeNotice(session({ mergeAsked: asked }), pr({ state: "merged" }))).toBeUndefined();
