@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { AGENT_PRESETS, defaultAgentSessions } from "../shared/agentDefaults.ts";
 import { MAX_LABEL_COLORS, MAX_LABEL_LENGTH, MAX_LABELS } from "../shared/labels.ts";
+import { normalizeCustomCommands } from "../shared/customCommands.ts";
 import { CHANGE_NAME_PATTERN, type Config, type PromptKey, type RepoConfig } from "../shared/types.ts";
 import { canonicalPath, configPath, dashboardHome, expandPath } from "./paths.ts";
 
@@ -240,7 +241,11 @@ const repoSchema = z.object({
   path: absolutePath,
   name: z.string().trim().min(1),
   enabled: z.boolean(),
-  agent: z.object({ enabled: z.boolean(), agentId: z.string().optional(), changeAgents: z.record(z.string().regex(CHANGE_NAME_PATTERN), z.string()).optional(), autoMergeDocs: z.boolean().optional(), permissionProfile: z.enum(["minimum", "less-friction", "full-automation"]).optional() }).optional(),
+  agent: z.object({ enabled: z.boolean(), agentId: z.string().optional(), changeAgents: z.record(z.string().regex(CHANGE_NAME_PATTERN), z.string()).optional(), autoMergeDocs: z.boolean().optional(), permissionProfile: z.enum(["minimum", "less-friction", "full-automation"]).optional(), allowedCommands: z.array(z.string()).optional().superRefine((value, ctx) => {
+    if (value === undefined) return;
+    const result = normalizeCustomCommands(value);
+    if (result.error) ctx.addIssue({ code: "custom", message: result.error });
+  }).transform((value) => value === undefined ? undefined : normalizeCustomCommands(value).commands) }).optional(),
   agentOverrides: z.record(z.string().regex(CHANGE_NAME_PATTERN), z.object({ agentId: z.string().optional(), permissionProfile: z.enum(["minimum", "less-friction", "full-automation"]).optional() })).optional(),
   labels: labelsSchema,
   hiddenLabels: labelsSchema,

@@ -11,8 +11,8 @@ import type { ChangeArtifacts } from "../src/shared/types.ts";
 import { FIXTURES, tempDir, treeFingerprint, useTempHome } from "./helpers.ts";
 
 let cleanup: () => Promise<void>;
-let server: ReturnType<typeof Bun.serve>;
 let base: string;
+let handler: ReturnType<typeof createFetchHandler>;
 let state: AppState;
 let scratch: string;
 
@@ -20,7 +20,7 @@ const demoOps = newRepoConfig(join(FIXTURES, "demo-ops"), true);
 const betaSoc = newRepoConfig(join(FIXTURES, "beta-soc"), true);
 const disabled = newRepoConfig(join(FIXTURES, "does-not-matter"), false);
 
-const get = (repoId: string, change: string, rest: string) => fetch(`${base}/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/${rest}`);
+const get = (repoId: string, change: string, rest: string) => handler(new Request(`${base}/api/repos/${encodeURIComponent(repoId)}/changes/${encodeURIComponent(change)}/${rest}`));
 const file = (repoId: string, change: string, path: string) => get(repoId, change, `file?path=${encodeURIComponent(path)}`);
 
 beforeAll(async () => {
@@ -30,18 +30,19 @@ beforeAll(async () => {
   const change = join(scratch, "openspec", "changes", "edge-cases");
   await mkdir(join(change, "specs"), { recursive: true });
   await writeFile(join(change, "proposal.md"), "## Why\n");
+  await writeFile(join(change, "tasks.md"), "## Tasks\n\n- [~] verify this\n- [ ] leave this open\n");
   await writeFile(join(scratch, "secrets.md"), "outside\n");
   await symlink(join(scratch, "secrets.md"), join(change, "leak.md"));
   await writeFile(join(change, "huge.md"), "x".repeat(MAX_ARTIFACT_BYTES + 1));
 
   state = { config: { ...defaultConfig(), repos: [demoOps, betaSoc, disabled, newRepoConfig(scratch, true)] }, scanner: undefined as unknown as Scanner };
   state.scanner = new Scanner(() => state.config, { persist: false });
-  server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: createFetchHandler({ state, indexHtml: "" }) });
-  base = `http://127.0.0.1:${server.port}`;
-});
+  await state.scanner.trigger().done;
+  base = "http://127.0.0.1:4711";
+  handler = createFetchHandler({ state, indexHtml: "" });
+}, 30_000);
 afterAll(async () => {
   state.scanner.stop();
-  server.stop(true);
   await rm(scratch, { recursive: true, force: true });
   await cleanup();
 });
@@ -84,7 +85,7 @@ test("400 for a missing, absolute or escaping path and for an invalid change nam
     expect([name, (await get(demoOps.id, name, "artifacts")).status]).toEqual([name, 400]);
     expect([name, (await file(demoOps.id, name, "proposal.md")).status]).toEqual([name, 400]);
   }
-  expect((await fetch(`${base}/api/repos/${demoOps.id}/changes/%E0%A4%A/artifacts`)).status).toBe(400); // undecodable
+  expect((await handler(new Request(`${base}/api/repos/${demoOps.id}/changes/%E0%A4%A/artifacts`))).status).toBe(400); // undecodable
 });
 
 test("404 for an unknown or disabled repository, an unknown change, a link out of the change and a non-file", async () => {
@@ -111,8 +112,28 @@ test("413 without content for an oversize file", async () => {
 });
 
 test("other methods are not routed here", async () => {
-  const res = await fetch(`${base}/api/repos/${demoOps.id}/changes/cloud-deployment/artifacts`, { method: "POST", headers: { "content-type": "application/json" } });
+  const res = await handler(new Request(`${base}/api/repos/${demoOps.id}/changes/cloud-deployment/artifacts`, { method: "POST", headers: { "content-type": "application/json" } }));
   expect(res.status).toBe(404);
+});
+
+test("task confirmation is same-origin, rejects stale and non-awaiting tasks, and writes only the selected marker", async () => {
+  const repoId = state.config.repos[3].id;
+  const url = `${base}/api/repos/${repoId}/changes/edge-cases/tasks/confirm`;
+  const tasks = join(scratch, "openspec", "changes", "edge-cases", "tasks.md");
+  const original = await Bun.file(tasks).text();
+  let triggers = 0;
+  const trigger = state.scanner.trigger.bind(state.scanner);
+  state.scanner.trigger = () => { triggers += 1; return trigger(); };
+  const post = (body: unknown, headers: Record<string, string> = { origin: base, "content-type": "application/json" }) => handler(new Request(url, { method: "POST", headers, body: JSON.stringify(body) }));
+  expect((await post({ expectedText: "stale", lineNumber: 3 })).status).toBe(409);
+  expect((await post({ expectedText: original, lineNumber: 4 })).status).toBe(409);
+  expect(await Bun.file(tasks).text()).toBe(original);
+  expect(triggers).toBe(0);
+  expect((await post({ expectedText: original, lineNumber: 3 }, { origin: "https://evil.example", "content-type": "application/json" })).status).toBe(403);
+  const success = await post({ expectedText: original, lineNumber: 3 });
+  expect(success.status).toBe(200);
+  expect(triggers).toBe(1);
+  expect(await Bun.file(tasks).text()).toBe("## Tasks\n\n- [x] verify this\n- [ ] leave this open\n");
 });
 
 test("archived changes answer from their archive directory", async () => {

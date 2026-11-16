@@ -37,7 +37,15 @@ export function toggleBranch(preview: CleanupPreview, selected: Selected, name: 
     const holder = preview.branches.find((b) => b.name === name)?.worktreePath;
     if (holder) worktrees.add(holder);
   } else branches.delete(name);
-  return { ...selected, worktrees, branches };
+  const needsPrune = on && preview.branches.some((b) => b.name === name && b.prunePath);
+  return { ...selected, worktrees, branches, prune: selected.prune || needsPrune };
+}
+
+/** A stale record must go before its branch can be deleted. */
+export function togglePrune(preview: CleanupPreview, selected: Selected, on: boolean): Selected {
+  const branches = new Set(selected.branches);
+  if (!on) for (const b of preview.branches) if (b.prunePath) branches.delete(b.name);
+  return { ...selected, prune: on, branches };
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;

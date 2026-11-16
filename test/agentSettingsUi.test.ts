@@ -246,7 +246,7 @@ test("the console agent is offered only with a choice to make, with the default 
 test("choosing a profile stores it; choosing the default agent stores no choice", () => {
   const chosen: (string | undefined)[] = [];
   const select = byTag(ConsoleAgentPicker({ settings: sessions(), onChange: (v) => chosen.push(v) }), "select")[0];
-  const pick = (value: string) => (select.props.onChange as (e: { currentTarget: { value: string } }) => void)({ currentTarget: { value } });
+  const pick = (value: string) => (select.props.onChange as (value: string) => void)(value);
   pick(ANTIGRAVITY_PROFILE.id);
   pick("");
   expect(chosen).toEqual([ANTIGRAVITY_PROFILE.id, undefined]);
@@ -277,7 +277,7 @@ test("agent permission controls show opt-ins, capability differences, protected 
   const source = await Bun.file(new URL("../src/ui/agentSettings.tsx", import.meta.url)).text();
   const body = source.slice(source.indexOf("export function AgentSettings"));
   expect(body).toContain("Default permission profile");
-  expect(body).toContain('option value="less-friction">Less friction (recommended)</option>');
+  expect(body).toContain('value: "less-friction", label: "Less friction (recommended)"');
   expect(body).toContain("Autonomous pull request merge");
   expect(body).toContain("Autonomous worktree and branch cleanup");
   expect(body).toContain("running tests, linters, and build scripts executes code from the repository");

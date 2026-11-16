@@ -57,6 +57,43 @@ test("worktrees: created from the default branch, existing branch reused, existi
   expect(await copyChangeIfMissing(repo, wt, "brand-new")).toBe(false);
 });
 
+test("a missing project workflow and CLI blocks launch with a setup diagnostic", async () => {
+  const h = await harness();
+  const manager = h.newManager({ workflowCommand: async () => ({ code: 127, stdout: "", stderr: "not found" }) });
+  track({ manager });
+  await expect(manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" })).rejects.toMatchObject({
+    status: 503,
+    message: expect.stringContaining("Update OpenSpec setup"),
+  });
+  expect(manager.list()).toHaveLength(0);
+  expect(git(h.repoPath, "status", "--porcelain")).toBe("");
+});
+
+test("a tracked project skill is resolved in the managed session checkout and named in its prompt", async () => {
+  const h = track(await harness());
+  const skillDir = join(h.repoPath, ".claude/skills/openspec-apply-change");
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(join(skillDir, "SKILL.md"), "Implement tasks from an OpenSpec change");
+  git(h.repoPath, "add", ".claude/skills/openspec-apply-change/SKILL.md");
+  git(h.repoPath, "commit", "-q", "-m", "add project workflow skill");
+  const session = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
+  expect("workflowMode" in session ? session.workflowMode : undefined).toBe("skill");
+  const terminal = await watch(h.manager, session.id);
+  await waitFor(() => terminal.text().includes(".claude/skills/openspec-apply-change/SKILL.md"), "explicit project skill path");
+  terminal.detach();
+});
+
+test("a main-only untracked .agents asset stays out of a fresh managed worktree", async () => {
+  const h = track(await harness());
+  const asset = join(h.repoPath, ".agents/skills/openspec-apply-change/SKILL.md");
+  await mkdir(join(h.repoPath, ".agents/skills/openspec-apply-change"), { recursive: true });
+  await writeFile(asset, "main-only native skill");
+  const session = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
+  expect("workflowMode" in session ? session.workflowMode : undefined).toBe("cli");
+  expect(existsSync(join(session.worktreePath, ".agents/skills/openspec-apply-change/SKILL.md"))).toBe(false);
+  expect(git(h.repoPath, "status", "--porcelain")).toBe("?? .agents/");
+});
+
 test("worktree removal: refused when dirty or holding commits that exist nowhere else, done when clean", async () => {
   const repo = await tempGitRepo();
   const wt = join(await realpath(await tempDir("osd-wt-")), "x");
@@ -86,11 +123,12 @@ test("a session is the agent in a terminal, in its own worktree: start, type, ex
   const h = track(await harness());
   process.env.ANTHROPIC_API_KEY = "must-not-reach-the-agent";
   const s = await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
+  expect("workflowMode" in s ? s.workflowMode : undefined).toBe("cli");
   expect(s).toMatchObject({ state: "running", agentName: "Fake Agent", branch: "feat/upgrade-runtime", resumable: true });
   expect(s.worktreePath).toBe(join(worktreesDir(), h.repoId, "upgrade-runtime"));
   const view = await watch(h.manager, s.id);
   await waitFor(() => view.text().includes("fake-agent ready"), "agent banner");
-  expect(view.text()).toContain('args=["implement upgrade-runtime"]');
+  expect(view.text()).toContain('args=["implement upgrade-runtime Read the complete context');
   expect(view.text()).toContain(`cwd=${await realpath(s.worktreePath)}`); // the process reports its resolved directory
   expect(view.text()).toContain("tty=true");
   expect(view.text()).toContain("key=false");
@@ -170,7 +208,7 @@ test("refusals", async () => {
   await expect(open(h, "no-such-change")).rejects.toMatchObject({ status: 404 });
   await expect(open(h, "x; rm -rf ~")).rejects.toMatchObject({ status: 400 });
   await expect(open(h, "add-health-endpoint")).rejects.toMatchObject({ status: 400 }); // proposal only
-  await expect(open(h, "upgrade-runtime", "archive")).rejects.toMatchObject({ status: 400 }); // not Done
+  await expect(open(h, "add-health-endpoint", "archive")).rejects.toMatchObject({ status: 400 }); // required tasks artifact missing
   await expect(open(h, "runbook-repo-field")).rejects.toMatchObject({ status: 404 }); // archived
   // The sub-state decides too: `validate` needs `Done` with an awaiting task, and `Done` has nothing left to implement.
   await expect(open(h, "upgrade-runtime", "validate")).rejects.toThrow(/"validate" is not available/);
@@ -483,7 +521,7 @@ test("a typed opening prompt is typed as one line; one that cannot be typed star
   const other = await manager.open({ repoId: h.repoId, change: "cache-api-calls", action: "implement" });
   const s = await manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
   const view = await watch(manager, s.id);
-  await waitFor(() => view.text().includes("you said: implement upgrade-runtime and run the tests ("), "the one-line prompt");
+  await waitFor(() => view.text().includes("you said: implement upgrade-runtime and run the tests Read"), "the one-line prompt");
 
   // Over 4096 characters even as one line: refused before anything is registered or started.
   h.config.agentSessions.agents[0].promptSuffixes = { implement: "x ".repeat(2100) };

@@ -5,6 +5,58 @@ Defines agent sessions: starting a user-configured agent CLI for a change from t
 
 ## Requirements
 
+### Requirement: Custom commands belong to one project
+A project SHALL support an optional list of custom command prefixes. The list SHALL apply to that project's change sessions and project console, including when a change selects another agent. It SHALL NOT apply to another project, the main console or an integration session. An absent or empty list SHALL preserve existing permissions. Command allowances SHALL NOT change workflow prompts or execute commands themselves.
+
+#### Scenario: Project and change scope
+- **WHEN** `demo-ops` allows `bun run lint` and a change selects an agent other than the project's default
+- **THEN** the change's effective policy includes that project allowance, and `alpha-infra`, the main console and integration sessions do not inherit it
+
+#### Scenario: Saving is configuration only
+- **WHEN** a project command list is saved
+- **THEN** no command runs, no workflow prompt changes and no tracked repository or global agent settings file is written
+
+### Requirement: Custom command prefixes use a bounded literal syntax
+A custom command prefix SHALL contain whitespace-separated literal tokens using only ASCII letters, digits and `_./:@%+=,-`. Entries SHALL be trimmed, internal spaces collapsed and duplicates removed in first-occurrence order. A list SHALL contain at most 50 entries, each at most 256 characters after normalization. Empty entries, control characters, shell syntax, wildcards, bypass flags and prefixes capable of overriding protected or gated operations SHALL be rejected.
+
+#### Scenario: Normalize literal prefixes
+- **WHEN** a list contains `  bun   run lint  `, `bun run lint` and `./scripts/check`
+- **THEN** it is stored as `bun run lint` and `./scripts/check` in that order
+
+#### Scenario: Reject executable shell syntax and oversized lists
+- **WHEN** an entry includes a newline, `;`, `&&`, a pipe, redirection, quoting, command substitution, a wildcard or a bypass flag, or the list exceeds its bounds
+- **THEN** validation refuses the entire update and leaves the previous configuration unchanged
+
+#### Scenario: Reject broad or protected prefixes
+- **WHEN** an entry is `git`, `gh pr`, `git push`, `git push --force`, `sudo`, `sh -c` or an interpreter or wrapper prefix that can authorize arbitrary commands
+- **THEN** validation refuses it rather than allowing it to cover protected commands or merge and cleanup operations
+
+### Requirement: Custom command allowances respect the effective profile and runtime
+Custom prefixes SHALL supplement existing allowances only under `less-friction` and `full-automation`. Matching SHALL respect token boundaries and allow the prefix itself and trailing arguments. Protected rules, merge/cleanup opt-ins and host policies SHALL take precedence. Unsupported runtimes SHALL report unapplied allowances without weakening approval or sandbox settings. Preview and launch SHALL use the same translation.
+
+#### Scenario: Claude receives an additional command allowance
+- **WHEN** Claude starts under `less-friction` with `bun run lint` configured
+- **THEN** its session permission list allows `bun run lint` and `bun run lint --fix`, keeps the existing defaults and restrictions, and does not allow `bun run lint-extra` through this entry
+
+#### Scenario: Minimum retains planning permissions
+- **WHEN** the effective profile is `minimum` and project commands are configured
+- **THEN** the commands remain saved but no custom allowance is injected, and the preview explains that they are inactive under this profile
+
+#### Scenario: Unsupported runtime reports the limitation
+- **WHEN** custom commands are configured for Codex, Antigravity without session-rule delivery, or an unrecognized agent
+- **THEN** the preview says these entries are not applied, and launch preserves that runtime's existing approval and sandbox configuration without writing global settings
+
+#### Scenario: Restrictions outrank custom allowances
+- **WHEN** an agent is launched with custom commands while merge and cleanup opt-ins are off
+- **THEN** the generated permissions retain protected-command restrictions and the merge and cleanup gates
+
+### Requirement: Command allowance edits take effect on the next agent launch
+A running agent SHALL retain its launch permissions when project commands change. Every later process start, including resume and restart of an existing session and project console launch, SHALL resolve the project's latest list. Existing permission-profile inheritance SHALL remain unchanged. The dashboard SHALL NOT restart an agent or submit terminal input as a side effect of saving the list.
+
+#### Scenario: Edit while a session is running
+- **WHEN** `bun run lint` is replaced with `bun run typecheck` while an agent runs
+- **THEN** the process is unchanged, and its next explicit resume or restart uses the updated project list with its applicable permission profile
+
 ### Requirement: Agent sessions are off until enabled, then apply to every tracked repository
 Agent sessions SHALL be available only when the global `agentSessions.enabled` setting is true. That switch SHALL be in the Agent sessions section of Settings. Once it is on, agent sessions apply to every tracked (enabled) repository by default. A repository MAY be excluded individually, and MAY be given an agent profile other than the default, with that repository's agent-session toggle and agent picker on the projects overview, which take effect at once. The Agent sessions section of Settings SHALL also hold the editor command of the `editor-launch` capability. It SHALL NOT list repositories; it SHALL say that agent sessions are switched on or off per project on the projects overview, and link there. An excluded or untracked repository MUST NOT show session starters and MUST be refused by the API. A fresh or migrated configuration MUST have the feature disabled. A repository entry without agent settings counts as included.
 
@@ -2013,27 +2065,65 @@ The preset Implement and Fast-forward prompts SHALL ask the agent to complete an
 - **THEN** the prompt asks the agent to complete the parts it can, mark the task `- [~]`, and state exactly what the person must do
 
 ### Requirement: Ship preflight exposes unfinished tasks
-Before Ship commits, pushes or opens a pull request, the dashboard SHALL read task state from the session's own checkout and show unresolved tasks. When any remain, it SHALL offer to ask the agent to finish them and SHALL require explicit confirmation to ship with unresolved tasks. It MUST NOT change task files itself.
+Before Ship commits, pushes or opens a pull request, the dashboard SHALL read task state from the session's own checkout and show unresolved tasks. When any remain, it SHALL offer to ask the agent to finish them and SHALL require explicit confirmation to ship with unresolved tasks. For a verified, untruncated task summary, it SHALL also offer the explicit **Mark all complete and Ship** choice. Only that user choice may mark remaining task markers complete; it MUST compare the complete task-file version shown in the preflight, and automatic shipping MUST NOT change task files.
 
 #### Scenario: Open tasks before shipping
-- **WHEN** Ship is activated and the session checkout has an open task
-- **THEN** the preflight names it, offers to ask the agent to complete it, and does not ship without an explicit choice to ship anyway
+- **WHEN** Ship is activated for an artifact-ready change with an open task
+- **THEN** Ship proceeds and reports the task as unresolved without requiring a task-specific override
 
 #### Scenario: Person needed before shipping
 - **WHEN** Ship is activated and a task is marked `- [~]`
-- **THEN** the preflight shows that task and asks the user to review it; the dashboard does not mark it complete
+- **THEN** the preflight shows that task and asks the user to review it; it may mark it complete only after the user chooses **Mark all complete and Ship**
+
+#### Scenario: Explicitly confirm all remaining tasks
+- **WHEN** the user chooses **Mark all complete and Ship** for a verified, untruncated preflight
+- **THEN** the dashboard marks remaining tasks complete only if the displayed task-file version still matches, then continues shipping
+
+#### Scenario: Stale or unverified task summary
+- **WHEN** the summary is truncated, unverified, or the task file changed after preflight
+- **THEN** the bulk confirmation choice is unavailable or returns a refreshed preflight without changing the file
 
 #### Scenario: A check requires a pull request
-- **WHEN** a task can only be verified after a PR is opened
-- **THEN** the user can explicitly ship despite that unfinished task, and the agent is asked to report the pending check and revisit it after evidence is available
+- **WHEN** a remaining check requires a pull request or its CI
+- **THEN** explicit Ship opens the pull request and reports the unresolved check without changing its marker
 
 #### Scenario: All tasks are complete
-- **WHEN** the session checkout has readable tasks and every task is checked
-- **THEN** deterministic Ship proceeds without an unfinished-task confirmation
+- **WHEN** every task is marked complete and required artifacts are ready
+- **THEN** Ship proceeds without task confirmation and reports the task summary
 
 #### Scenario: Task state is unavailable
-- **WHEN** tasks cannot be read or their state is unknown
-- **THEN** the preflight says it cannot verify completion and requires explicit confirmation before Ship
+- **WHEN** task files are missing, malformed, unreadable or truncated
+- **THEN** Ship reports that task state could not be verified and proceeds if the required artifacts are ready
+
+#### Scenario: Required artifacts are not ready
+- **WHEN** Ship is activated before the required artifacts are ready
+- **THEN** the existing artifact-readiness refusal remains in force
+
+### Requirement: Ship returns an actionable pull request result
+When Ship finds or creates a pull request, its result SHALL include the pull request URL and whether it was newly created or already existed. The UI SHALL present a direct link to that pull request and report any unresolved or unknown task state alongside the result. It SHALL offer the applicable existing agent action for reviewing PR feedback or resolving conflicts, without starting an agent automatically. A successful Ship SHALL NOT imply that the pull request is merged, that checks passed, or that unresolved tasks were completed.
+
+#### Scenario: Ship creates a pull request
+- **WHEN** Ship successfully creates a pull request
+- **THEN** its result gives the user a direct link and identifies the pull request as newly created
+
+#### Scenario: Ship finds an existing pull request
+- **WHEN** Ship finds a pull request for the session branch
+- **THEN** its result gives the user a direct link and identifies the existing pull request without changing its body
+
+#### Scenario: User follows up on pull request feedback
+- **WHEN** Ship has returned a pull request and the session can run the relevant agent action
+- **THEN** the UI lets the user open the pull request and explicitly ask the agent to review feedback or resolve conflicts
+
+#### Scenario: Pull request URL is unavailable
+- **WHEN** Ship cannot obtain a valid pull request URL
+- **THEN** it does not report a complete successful Ship result without a review destination
+
+### Requirement: Explicit Archive is not blocked by unfinished tasks
+For a change whose required artifacts are ready for Archive, unresolved or unknown task state SHALL NOT prevent an explicit Archive action. Archive SHALL preserve task state and SHALL NOT imply that outstanding work was completed. Automatic Archive SHALL continue to follow its separate eligibility requirements, including its task completion gate.
+
+#### Scenario: Ready change has unresolved tasks
+- **WHEN** Archive is explicitly activated for a change with required artifacts ready and one or more unresolved tasks
+- **THEN** Archive proceeds while preserving those task states
 
 ### Requirement: Finish tasks after a merged implementation
 For a change with unresolved tasks and a linked merged implementation PR, the dashboard SHALL offer **Finish checks** to ask an agent to verify and finish remaining tasks. It SHALL use the relevant session or a safe session worktree, and SHALL ask the agent to prepare a reviewable task update after verification.
@@ -2065,7 +2155,56 @@ Automatic implementation and archive Ship and docs-only Merge SHALL require a fr
 - **WHEN** Finish tasks or Finish checks is active and a refresh observes the session's previously merged pull request
 - **THEN** automatic shipping, merging and merged-PR cleanup remain suppressed until an explicit new workflow choice; the follow-up agent stays available
 
-## ADDED Requirements
+### Requirement: Draft and Implement maintain a pull request description
+
+The **Draft artifacts** prompt SHALL ask the agent to create `openspec/changes/<change>/pull-request.md` containing a
+concise summary of the problem, intended outcome and planned verification, based on the change artifacts. The
+**Implement** prompt SHALL ask the agent to update that file to describe the delivered behavior and checks actually
+performed, remove planned or unverified claims, and keep it concise for pull request reviewers. Neither prompt SHALL
+claim a check passed unless it was run and passed. The file SHALL be ordinary Markdown included in the change's own
+checkout.
+
+#### Scenario: Draft prepares a description
+
+- **WHEN** Draft artifacts completes the proposal for `rotate-keys`
+- **THEN** `openspec/changes/rotate-keys/pull-request.md` summarizes the problem, intended outcome and planned
+  verification for reviewers
+
+#### Scenario: Implement records delivered work
+
+- **WHEN** Implement completes code and runs its available checks for `rotate-keys`
+- **THEN** `pull-request.md` describes the delivered behavior and reports only checks that were actually performed
+
+### Requirement: Ship uses the prepared description for a new pull request
+
+When deterministic Ship creates a pull request, it SHALL read `openspec/changes/<change>/pull-request.md` from the
+session's own worktree, where `<change>` is the validated change name. If it is a readable regular file with non-empty
+content after trimming surrounding whitespace, Ship SHALL pass that trimmed Markdown as the pull request body. It
+MUST NOT read the artifact from the main checkout, another worktree, or a path outside the session worktree.
+
+If the file is absent, blank, unreadable, or not a regular file, Ship SHALL use a fixed non-empty fallback body that
+identifies the change and directs reviewers to its OpenSpec artifacts. This SHALL NOT prevent Ship from proceeding.
+When a pull request for the session's branch already exists, Ship SHALL leave its title and body unchanged.
+
+#### Scenario: New pull request uses the prepared description
+
+- **WHEN** Ship creates a pull request for `rotate-keys` and the session worktree's description contains Markdown
+- **THEN** `gh pr create` receives the trimmed Markdown as `--body`
+
+#### Scenario: Legacy change has no description artifact
+
+- **WHEN** Ship creates a pull request for a change whose worktree has no `pull-request.md`
+- **THEN** the pull request receives the fixed non-empty fallback body and Ship proceeds
+
+#### Scenario: Description artifact is empty or unsafe
+
+- **WHEN** the description is blank, unreadable, or not a regular file
+- **THEN** Ship uses the fallback and reads no file outside the session worktree
+
+#### Scenario: Pull request already exists
+
+- **WHEN** Ship finds an existing pull request for the session's branch
+- **THEN** it does not change that pull request's body
 
 ### Requirement: Predefined agent permission profiles and shared policy
 The dashboard SHALL support three predefined, opt-in agent permission profiles across all supported agent runtimes:
@@ -2200,3 +2339,26 @@ The dashboard SHALL explicitly inform users that validation checks, test runners
 #### Scenario: Security notice accompanies profile activation
 - **WHEN** a user inspects or selects the `less-friction` or `full-automation` permission profile
 - **THEN** the system displays a clear disclosure that running tests and build scripts executes repository code
+
+### Requirement: Managed actions have a verified OpenSpec workflow
+Before launching a managed OpenSpec action, the dashboard SHALL verify its workflow in the actual session checkout. It SHALL resolve readable project skill instructions or supply the supported OpenSpec CLI workflow as a fallback. Missing skill discovery SHALL NOT authorize improvised artifact editing or bypass blocked state, context, task tracking, or verification. Missing CLI and skill support SHALL produce an actionable setup blocker.
+
+#### Scenario: Fresh worktree lacks untracked skills
+- **WHEN** the main checkout has untracked agent skills that are absent from a fresh session worktree
+- **THEN** the dashboard does not claim those skills are available and uses a verified CLI fallback or reports the setup blocker
+
+#### Scenario: Skill exists outside runtime discovery
+- **WHEN** a readable repository OpenSpec skill exists in a project directory not automatically discovered by the selected runtime
+- **THEN** the action provides its resolved checkout-relative path explicitly instead of relying only on a skill name or another runtime's slash command
+
+#### Scenario: Apply falls back to CLI instructions
+- **WHEN** openspec-apply-change cannot be resolved but the installed CLI supports status and apply instructions
+- **THEN** the agent receives the selected change, status and instructions commands, resolved context files, task tracking rules, and blocked-state handling, rather than permission to invent a workflow
+
+#### Scenario: Workflow unavailable
+- **WHEN** neither a readable compatible skill nor the required CLI workflow is available
+- **THEN** launch is blocked with the missing capability and a project setup action; global agent settings are not changed automatically
+
+#### Scenario: Runtime parity
+- **WHEN** Codex or Antigravity starts the same managed action in equivalent fresh worktrees
+- **THEN** both receive the same workflow contract and action boundaries without requiring identical native skill-discovery behavior

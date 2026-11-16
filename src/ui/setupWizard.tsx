@@ -15,6 +15,7 @@ import { api } from "./api.ts";
 import { CommandSteps } from "./commandSteps.tsx";
 import { IconCheck, IconFolder, IconFolderGit, IconGitBranch, IconGitPullRequest, IconHelp, IconKanban, IconMonitor, IconPencil, IconRefresh, IconScan, IconSettings, IconTerminal } from "./icons.tsx";
 import { AgentSelect, AUTO_FETCH_TITLE, AUTO_MERGE_HINT, AutoFetchSelect, autoFetchLabel, KEEP_EACH, KEEP_EACH_LABEL, PR_TITLES_TITLE, PrTitlesSelect } from "./projectSettings.tsx";
+import { Select, dismissActiveSelect } from "./select.tsx";
 import {
   type AgentChoice,
   agentChoices,
@@ -579,18 +580,11 @@ export function AgentsStep({ view, ...on }: { view: AgentsView } & AgentsHandler
         </div>
       </fieldset>
       {view.defaultOptions.length > 0 ? (
-        <label class="field setup-default-agent">
+        <div class="field setup-default-agent">
           <span>Default agent</span>
-          <select class="input" value={view.defaultAgent} aria-label="Default agent" onChange={(e) => on.onDefault(e.currentTarget.value)}>
-            {view.defaultOptions.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name}
-                {o.available === false ? " (not found)" : ""}
-              </option>
-            ))}
-          </select>
+          <Select class="input" value={view.defaultAgent} aria-label="Default agent" onChange={on.onDefault} options={view.defaultOptions.map((option) => ({ value: option.id, label: `${option.name}${option.available === false ? " (not found)" : ""}` }))} />
           <span class="hint">Started by a card's session buttons unless a project chooses another one.</span>
-        </label>
+        </div>
       ) : (
         <p class="hint">Check at least one agent above, or add your own: the default agent is chosen among them.</p>
       )}
@@ -630,19 +624,11 @@ export function ConsoleStep({ view, onChoose }: { view: ConsoleView; onChoose: (
       </ul>
       {!view.sessionsOn && <p class="notice">The console is offered only while agent sessions are on. It becomes available once you switch them on, in the Agents step or in Settings.</p>}
       {view.agents.length >= 2 ? (
-        <label class="field">
+        <div class="field">
           <span>Console agent</span>
-          <select class="input" aria-label="Console agent" value={view.choice ?? ""} onChange={(e) => onChoose(e.currentTarget.value || undefined)}>
-            <option value="">Default agent ({view.defaultName})</option>
-            {view.agents.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-                {a.available === false ? " (not found)" : ""}
-              </option>
-            ))}
-          </select>
+          <Select class="input" aria-label="Console agent" value={view.choice ?? ""} onChange={(value) => onChoose(value || undefined)} options={[{ value: "", label: `Default agent (${view.defaultName})` }, ...view.agents.map((agent) => ({ value: agent.id, label: `${agent.name}${agent.available === false ? " (not found)" : ""}` }))]} />
           <span class="hint">With the default agent, the console follows it when you change the default later.</span>
-        </label>
+        </div>
       ) : (
         <p>
           The console runs <strong>{view.agents[0]?.name ?? view.defaultName}</strong>, your only agent. Add another one in the Agents step to choose.
@@ -705,11 +691,7 @@ export function SettingControl({
   if (setting === "autoFetch") return <AutoFetchSelect {...props} />;
   const [on, off] = setting === "agentSessions" ? ["enabled", "disabled"] : ["on", "off"];
   return (
-    <select class="input" aria-label={label} title={props.title} value={value} disabled={disabled} onChange={(e) => onChange(e.currentTarget.value)}>
-      {keep && <option value={KEEP_EACH}>{KEEP_EACH_LABEL}</option>}
-      <option value={on}>{settingValueLabel(setting, on)}</option>
-      <option value={off}>{settingValueLabel(setting, off)}</option>
-    </select>
+    <Select class="input" aria-label={label} title={props.title} value={value} disabled={disabled} onChange={onChange} options={[...(keep ? [{ value: KEEP_EACH, label: KEEP_EACH_LABEL }] : []), { value: on, label: settingValueLabel(setting, on) }, { value: off, label: settingValueLabel(setting, off) }]} />
   );
 }
 
@@ -1300,6 +1282,11 @@ export function SetupWizard({ config, snapshot, onSaved, onClose }: { config: Co
     const onKey = (e: KeyboardEvent) => {
       // The Add from GitHub dialog handles its own Escape.
       if (e.key !== "Escape" || busy || picking || githubOpen) return;
+      if (dismissActiveSelect()) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       e.stopPropagation();
       // Escape closes an open help overlay first, and does not end setup.
       if (help) {

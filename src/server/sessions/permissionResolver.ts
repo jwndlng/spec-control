@@ -5,5 +5,5 @@ export function resolvePermissionPolicy(config: Config, repoId: string, changeNa
   const profile: AgentPermissionProfileId = (changeName ? repo?.agentOverrides?.[changeName]?.permissionProfile : undefined)
     ?? repo?.agent?.permissionProfile ?? config.agentSessions.defaultPermissionProfile ?? "minimum";
   const full = profile === "full-automation";
-  return { profile, allowFileEdits: profile !== "minimum", allowValidation: profile !== "minimum", allowGitWrite: profile !== "minimum", allowPullRequests: profile !== "minimum", allowMerge: full && config.agentSessions.optInMerge === true, allowCleanup: full && config.agentSessions.optInCleanup === true, optInMerge: config.agentSessions.optInMerge === true, optInCleanup: config.agentSessions.optInCleanup === true };
+  return { profile, allowFileEdits: profile !== "minimum", allowValidation: profile !== "minimum", allowGitWrite: profile !== "minimum", allowPullRequests: profile !== "minimum", allowMerge: full && config.agentSessions.optInMerge === true, allowCleanup: full && config.agentSessions.optInCleanup === true, optInMerge: config.agentSessions.optInMerge === true, optInCleanup: config.agentSessions.optInCleanup === true, allowedCommands: repo?.agent?.allowedCommands ?? [] };
 }

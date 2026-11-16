@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { lstat, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { isChangeDirName } from "../shared/changeNames.ts";
-import type { DismissFile, DismissPreview, DismissResult, RepoConfig, RepoSnapshot } from "../shared/types.ts";
+import type { DeleteFilesPreview, DeleteFilesResult, DismissFile, RepoConfig, RepoSnapshot } from "../shared/types.ts";
 import { frameworkById, writablePaths } from "./frameworks/registry.ts";
 import { knownStatusPaths, subdirectory } from "./git.ts";
 import { gitWrite } from "./gitWrite.ts";
@@ -108,7 +108,7 @@ async function worktreeCopies(repo: RepoConfig, scanned: RepoSnapshot, name: str
   return linked.filter((_, i) => held[i]).map((w) => ({ path: w.path, branch: w.branch }));
 }
 
-async function inspect(repo: RepoConfig, scanned: RepoSnapshot, name: string): Promise<{ dir: string; preview: DismissPreview }> {
+async function inspect(repo: RepoConfig, scanned: RepoSnapshot, name: string): Promise<{ dir: string; preview: DeleteFilesPreview }> {
   const dir = await activeDir(repo, scanned, name);
   const entries = await walk(dir);
   const isGit = scanned.isGit;
@@ -136,7 +136,7 @@ async function inspect(repo: RepoConfig, scanned: RepoSnapshot, name: string): P
 }
 
 /** Read-only: what dismissing `name` would delete, and whether git could bring each file back. */
-export async function previewDismiss(repo: RepoConfig, scanned: RepoSnapshot, name: string): Promise<DismissPreview> {
+export async function previewDeleteFiles(repo: RepoConfig, scanned: RepoSnapshot, name: string): Promise<DeleteFilesPreview> {
   return (await inspect(repo, scanned, name)).preview;
 }
 
@@ -145,7 +145,7 @@ export async function previewDismiss(repo: RepoConfig, scanned: RepoSnapshot, na
  * session for the change is open, another dismissal of it runs, or the directory is no longer what `fingerprint` says.
  * Staging is best-effort: a repository without git, an untracked change or a git failure report `staged: false`.
  */
-export async function dismissChange(repo: RepoConfig, scanned: RepoSnapshot, name: string, fingerprint: string, hasOpenSession: () => boolean = () => false): Promise<DismissResult> {
+export async function deleteChangeFiles(repo: RepoConfig, scanned: RepoSnapshot, name: string, fingerprint: string, hasOpenSession: () => boolean = () => false): Promise<DeleteFilesResult> {
   if (!isChangeDirName(name)) throw new DismissError(400, "invalid change name");
   const k = key(repo.id, name);
   if (running.has(k)) throw new DismissError(409, `"${name}" is already being dismissed`);
@@ -159,6 +159,10 @@ export async function dismissChange(repo: RepoConfig, scanned: RepoSnapshot, nam
     running.delete(k);
   }
 }
+
+/** Compatibility exports for focused tests of the former deletion primitive; production routes use Delete change files. */
+export const previewDismiss = previewDeleteFiles;
+export const dismissChange = deleteChangeFiles;
 
 /** The dismissal's one write: the directory goes, then its removal is staged, best-effort. */
 async function deleteAndStage(repo: RepoConfig, scanned: RepoSnapshot, name: string): Promise<boolean> {

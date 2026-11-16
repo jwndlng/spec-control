@@ -37,6 +37,12 @@ test("Help covers the main topics, each section once", () => {
   for (const s of walked) expect([s.id, s.text.length > 100]).toEqual([s.id, true]);
 });
 
+test("Agent sessions Help explains checkout-local workflow resolution and setup failures", () => {
+  const text = walked.find((s) => s.id === "agent-sessions")?.text ?? "";
+  for (const phrase of ["session's own checkout", "OpenSpec CLI fallback", "Update OpenSpec setup", "untracked instructions"])
+    expect(text).toContain(phrase);
+});
+
 test("the board section explains every column by its own name", () => {
   const board = walked.find((s) => s.id === "board");
   for (const [stage, column] of Object.entries(STAGE_COLUMN)) {
@@ -94,4 +100,17 @@ test("Getting started introduces setup and how to run it again", () => {
   const start = walked.find((s) => s.id === "getting-started");
   expect(start?.text).toContain("Run setup again");
   expect(start?.text).toContain("setup");
+});
+
+test("the board Help documents shared dropdown keyboard, search and dismiss behavior", () => {
+  const board = walked.find((section) => section.id === "board");
+  for (const text of ["Arrow keys", "Home and End", "eight or more", "Escape closes without changing", "Tab closes", "never saves a setting"]) {
+    expect(board?.text).toContain(text);
+  }
+});
+
+test("Help explains running session filtering and composition", () => {
+  const board = walked.find((s) => s.id === "board")!.text;
+  for (const term of ["Show running", "waiting for input or quiet", "archive", "Clear filters", "Activity threshold and Hide merged"])
+    expect(board).toContain(term);
 });

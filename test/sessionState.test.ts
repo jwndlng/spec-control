@@ -58,7 +58,7 @@ test("a Ready card without a design shows Implement with Draft in the menu", () 
   const controls = cardSessionControls(config, [], card({ artifacts: artifacts("ready") }));
   expect(controls.main).toEqual({ kind: "start", action: "implement" });
   expect(controls.menu).toEqual([{ kind: "start", action: "draft" }, { kind: "start", action: "custom" }]);
-  // With the design written there is nothing else: no arrow part.
+  // With required artifacts ready, Archive still waits until the change reaches Done.
   expect(cardSessionControls(config, [], card()).menu).toEqual([{ kind: "start", action: "custom" }]);
 });
 
