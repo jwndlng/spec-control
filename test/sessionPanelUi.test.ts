@@ -59,8 +59,16 @@ test("the panel's header actions go through the guard and are disabled while one
   expect(header.match(/disabled=\{acting\}/g)).toHaveLength(3);
   expect(header).toContain("disabled={acting || ui.shippingIds.has(session.id)}");
   expect(header).toContain("disabled={!merge.enabled || acting}");
-  expect(header).toContain('<details class="console-more-actions">');
-  expect(header).toContain("<summary>More actions</summary>");
+  expect(header).not.toContain('<details class="console-more-actions">');
+  expect(header).not.toContain("More actions");
+  expect(header).toContain("{showPullRequestActions && (");
+  expect(header).toContain("{showChangeActions && (");
+  expect(header).toContain("{showSessionActions && (");
+  expect(panel).toContain("const showPullRequestActions = showFinishChecks || (!!canResolve && !!session && !inSplit(\"resolveConflicts\")) || (!!merge && !!session && !inSplit(\"merge\"));");
+  expect(panel).toContain("const showChangeActions = !!(session && card && receiving && sessionsEnabledFor(ui.config, card.repoId) && (split?.main || split?.menu.length));");
+  expect(panel).toContain("const showSessionActions = !!session;");
+  expect(header).toContain('<div class="console-ship-primary">');
+  expect(header.indexOf('<div class="console-ship-primary">')).toBeLessThan(header.indexOf("{showPullRequestActions && ("));
   expect(header).toContain("Commit this change, push its branch, and open or reuse a pull request. This does not merge it.");
   expect(header).toContain('aria-label="Pull request actions"');
   expect(header).toContain('aria-label="Change actions"');
