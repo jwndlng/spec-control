@@ -4,6 +4,7 @@
 // All of it is invented, like the rest of the sample (see sampleData.ts): every repository, change, branch and path
 // comes from the sample, and terminal output comes from the hand-written transcripts.
 import { blockedReason } from "../../shared/dependencies.ts";
+import { isPlanned } from "../../shared/columns.ts";
 import { availableActions, DEFAULT_EDITOR, isChangeless, isConsole, isIntegration, OPEN_SESSION_STATES, projectConsoleSessions, repoAgentEnabled, type ChangeSession, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleLike, type ProjectConsoleSession, type Session, type SessionAction, type AutoMergePromptResult, type PromptResult, type SessionWorktree, type ShipRequest, type ShipResult, SHIPPABLE_WORK, type StartResult, type Snapshot, type WorkStatus, type Worktree } from "../../shared/types.ts";
 import { sessionBranch } from "../../shared/sessionBranch.ts";
 import { ApiError, type TerminalConnection, type TerminalHandlers } from "../api.ts";
@@ -460,7 +461,7 @@ export function createDemoSessions({ now, getConfig, getSnapshot, integratable, 
         run(s, "implement");
         return { ...s.session, shipped: false, submitted: true, autoMerge: false, autoMergeInstructionIncluded: false };
       }
-      if (!change || !availableActions(change).includes("archive")) throw new ApiError(409, "Required change artifacts are not ready in this checkout.");
+      if (!change || !isPlanned(change.artifacts)) throw new ApiError(409, "Required change artifacts are not ready in this checkout.");
       const taskSummary = { verified: !!change.tasks?.total, reason: "Demo task state; no real checks run.", total: change.tasks?.total ?? 0, done: change.tasks?.done ?? 0, open: change.tasks && change.tasks.done + (change.tasks.awaiting ?? 0) < change.tasks.total ? ["Verify the implementation checks"] : [], awaiting: change.tasks?.awaitingTasks ?? [], truncated: false };
       run(s, "ship");
       const pullRequestUrl = "https://github.com/acme/demo-ops/pull/999";

@@ -94,7 +94,7 @@ test("prompt refusals: stage, unknown action, not running, feature off", async (
     return 0;
   };
   expect(await refused("draft")).toBe(400); // every artifact of the fixture's change is done
-  expect(await refused("archive")).toBe(0); // required artifacts are ready; tasks may remain open
+  expect(await refused("archive")).toBe(400); // required artifacts do not make an unfinished change archivable
   expect(await refused("ship")).toBe(400);
   expect(await refused("implement", "nope")).toBe(404);
 
