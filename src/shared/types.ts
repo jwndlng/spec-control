@@ -1204,7 +1204,7 @@ export function availableActions(change: Pick<ChangeSnapshot, "archived" | "arti
   if (change.stage === "done" && change.subState === "validate") actions.push("validate");
   const required = change.artifacts.some((a) => a.required !== undefined) ? change.artifacts.filter((a) => a.required) : change.artifacts;
   const artifacts = required.length ? required : change.artifacts;
-  if (artifacts.length > 0 && artifacts.every((a) => a.status === "done")) actions.push("archive");
+  if (change.stage === "done" && artifacts.length > 0 && artifacts.every((a) => a.status === "done")) actions.push("archive");
   actions.push("custom");
   return actions;
 }
