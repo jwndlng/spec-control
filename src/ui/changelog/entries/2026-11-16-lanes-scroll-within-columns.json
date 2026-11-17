@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-16-lanes-scroll-within-columns",
+  "date": "2026-11-16",
+  "title": "Lanes use the full board height",
+  "summary": "On a Lanes board, columns now fill the available height and overflowing cards scroll within each column. Stack continues to scroll with the page."
+}
