@@ -17,7 +17,6 @@ import {
 import type { PullRequestStep } from "../shared/nextStep.ts";
 import { linkedPullRequest, mergedImplementation } from "../shared/pullRequestLink.ts";
 import { api, type TerminalMessage } from "./api.ts";
-import { cdCommand } from "./format.ts";
 import { inPlaceReason } from "./inPlaceText.ts";
 import { NOT_SUBMITTED_NOTICE, shortcutHint, shortcutMessage, visibleShortcuts } from "./quickReplies.ts";
 import { usePullRequests } from "./pullRequests.tsx";
@@ -357,7 +356,7 @@ function dismissShipOperation(id: string): void {
   }
 }
 
-export function ConsolePanel({ session, worktree, of }: { session?: ChangeSession; worktree?: SessionWorktree; of?: { repoId: string; change: string } }) {
+export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline = false }: { session?: ChangeSession; worktree?: SessionWorktree; of?: { repoId: string; change: string }; lifecycleActionsInTimeline?: boolean }) {
   const ui = useSessionUi();
   const prs = usePullRequests();
   const [error, setError] = useState<string>();
@@ -431,7 +430,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
   const inSplit = (step: PullRequestStep) => split !== undefined && [split.main, ...split.menu].some((n) => n?.kind === "pullRequest" && n.step === step);
   const showFinishChecks = !!card && !!mergedImplementation(card, prs.data?.repos) && sessionsEnabledFor(ui.config, card.repoId);
   const showPullRequestActions = showFinishChecks || (!!canResolve && !!session && !inSplit("resolveConflicts")) || (!!merge && !!session && !inSplit("merge"));
-  const showChangeActions = !!(session && card && receiving && sessionsEnabledFor(ui.config, card.repoId) && (split?.main || split?.menu.length));
+  const showChangeActions = !lifecycleActionsInTimeline && !!(session && card && receiving && sessionsEnabledFor(ui.config, card.repoId) && (split?.main || split?.menu.length));
   const showSessionActions = !!session;
   // Nothing has ever run for this change: the tab says so and offers the openings, which is why it exists at all.
   const untouched = !session && !tree;
@@ -693,8 +692,8 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
             </section>
             )}
             {showSessionActions && (
-            <section class="console-action-group" aria-label="Session actions">
-              <span class="console-action-heading">Session</span>
+            <details class="console-action-group session-actions-menu" aria-label={`Session actions for ${session?.change ?? "selected session"}`}>
+              <summary class="console-action-heading">Session actions</summary>
               <div class="row console-secondary-actions">
                 {session && session.state !== "running" && session.resumable && (
                   <button
@@ -723,10 +722,9 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
                     Delete record
                   </button>
                 )}
-                {path && <Copy text={cdCommand(path)} label="Copy cd" />}
                 {path && openInEditor && <OpenInEditor folder={path} open={openInEditor} run={act} />}
               </div>
-            </section>
+            </details>
             )}
         </div>
         {(error ?? session?.error) && <div class="notice danger">{error ?? session?.error}</div>}
@@ -757,7 +755,7 @@ export function ConsolePanel({ session, worktree, of }: { session?: ChangeSessio
       ) : untouched ? (
         <div class="console-empty">
           <p class="detail-hint">No agent has worked on this change yet. Start one here and its terminal takes this tab.</p>
-          {card && (
+          {card && !lifecycleActionsInTimeline && (
             <div class="console-starters">
               <SessionControls card={card} place="console" pullRequest={linked} />
             </div>

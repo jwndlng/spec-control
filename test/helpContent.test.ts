@@ -49,6 +49,15 @@ test("Agent sessions Help distinguishes local lifecycle stages from remote deliv
     expect(text).toContain(phrase);
 });
 
+test("Agent sessions Help documents the responsive timeline, delivery examples and session menu", () => {
+  const section = walked.find((item) => item.id === "agent-sessions")?.text ?? "";
+  expect(section).toContain("Backlog, Drafts, Ready, Implementing, Done and Archived");
+  expect(section).toContain("idempotency-keys");
+  expect(section).toContain("deprecate-v1-auth");
+  expect(section).toContain("Session actions");
+  expect(section).toContain("copies the path itself");
+});
+
 test("the board section explains every column by its own name", () => {
   const board = walked.find((s) => s.id === "board");
   for (const [stage, column] of Object.entries(STAGE_COLUMN)) {

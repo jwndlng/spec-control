@@ -33,7 +33,36 @@ Backlog —— Drafts —— Ready —— Implementing —— Done —— Archiv
 Selected artifact content or console
 ```
 
-Large labeled phase nodes carry local progress; smaller artifact dots derive from the active schema and stay ordered within their phase. The diagram illustrates hierarchy, not fixed artifact names or dot spacing. At narrow widths use a compact current/next-phase summary with expandable full timeline and labeled milestones. Include a mockup review step in this session before final UI wiring.
+Concrete responsive mockup (before UI wiring):
+
+```text
+Wide (detail content >= 720 px)
+┌ Change title ─────────────────────────── [Session actions ▾] ┐
+│ Branch feat/example · /worktrees/example [Copy path] · PR #42 │
+├──────────────────────────────────────────────────────────────┤
+│ Backlog ── Drafts ── Ready ── Implementing ── Done ── Archived│
+│            ● Proposal ● Specs ○ Tasks                         │
+│                                      [Implement]              │
+│ Delivery: proposal merged · implementation PR #42 checks pending│
+├──────────────────────────────────────────────────────────────┤
+│ Proposal   Specs   Tasks   Console                            │
+└──────────────────────────────────────────────────────────────┘
+
+Narrow (detail content < 720 px)
+┌ Change title ─────────────── [Session ▾] ┐
+│ feat/example · /…/example [Copy]          │
+├──────────────────────────────────────────┤
+│ Current: Drafts  →  Next: Ready           │
+│ [Show full timeline ▾]                    │
+│ Proposal ✓ · Specs ✓ · Tasks missing      │
+│ Delivery: PR #42 · checks pending         │
+│ [Draft artifacts]                         │
+├──────────────────────────────────────────┤
+│ Proposal  Specs  Tasks  Console           │
+└──────────────────────────────────────────┘
+```
+
+Large labeled phase nodes carry local progress; smaller artifact milestones derive from the active schema and stay ordered within their phase. The narrow summary retains current/next phase, artifact state, persistence state, and the primary action without horizontal scrolling; the full ordered timeline is expandable. Labels distinguish local completion from remote persistence. Do not imply the changes are independent of schema requirements or invent missing validation results. Session maintenance stays in the labeled selected-session menu, separate from the one phase action. The mockup follows Backlog → Drafts → Ready → Implementing → Done → Archived and keeps pending delivery text visible at both widths.
 
 
 ## Risks / Trade-offs

@@ -10,7 +10,7 @@ import type { ChangeSnapshot, Config, DeleteFilesPreview, DeleteFilesResult, Dis
 import { parseGithubRepo } from "../../shared/github.ts";
 import { isProjectName } from "../../shared/types.ts";
 import { parseTaskLine } from "../../shared/taskLine.ts";
-import { ApiError, type Api, ConfigConflictError, labelLists, rememberRevision } from "../api.ts";
+import { ApiError, type Api, type LifecycleDeliveryView, ConfigConflictError, labelLists, rememberRevision } from "../api.ts";
 import { demoApply, demoBranchDeletePreview, demoDeleteBranch, demoPreview, newCleanupState, remainingWorktrees } from "./demoCleanup.ts";
 import { createDemoSessions } from "./demoSessions.ts";
 import { sampleArtifactFiles } from "./sampleArtifacts.ts";
@@ -401,7 +401,7 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
 
   return {
     state: () => reply(snapshot()),
-    lifecycleDeliveries: () => reply([]),
+    lifecycleDeliveries: (_repoId, changeName) => reply(demoLifecycleDeliveries(changeName, now())),
     retryLifecycleDelivery: () => failing(() => { throw new ApiError(503, "the demo does not persist lifecycle deliveries"); }),
     changeArtifacts: (repoId, changeName) =>
       failing(() => {
@@ -867,4 +867,21 @@ export function createDemoApi({ now = Date.now, latencyMs = 150, clock }: DemoAp
     promptSession: (id, action) => attempt(() => demoSessions.prompt(id, action)),
     openTerminal: (id, handlers) => demoSessions.terminal(id, handlers),
   };
+}
+
+function demoLifecycleDeliveries(changeName: string, now: number): LifecycleDeliveryView[] {
+  const updatedAt = new Date(now).toISOString();
+  if (changeName === "idempotency-keys") return [{
+    id: "demo-proposal-pending", phase: "proposal", revision: 1, state: "pending", pullRequestNumber: 42,
+    pullRequestUrl: "https://github.com/acme/api-platform/pull/42", recovery: [], attempts: 1, updatedAt,
+  }];
+  if (changeName === "deprecate-v1-auth") return [{
+    id: "demo-implementation-blocked", phase: "implementation", revision: 2, state: "blocked",
+    blocker: "GitHub has not confirmed the implementation checkpoint.", recovery: ["retry"], attempts: 2, updatedAt,
+  }];
+  if (changeName === "add-health-endpoint") return [{
+    id: "demo-archive-pending", phase: "archive", revision: 1, state: "pending", pullRequestNumber: 57,
+    pullRequestUrl: "https://github.com/acme/api-platform/pull/57", recovery: [], attempts: 1, updatedAt,
+  }];
+  return [];
 }

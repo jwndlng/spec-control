@@ -192,8 +192,29 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           </li>
           <li>
             The agent's terminal is the <strong>Console</strong> tab of the change's detail view. What it changes is decided by
-            its own permission prompts. A change has one running session at a time: while it runs, the card shows its badge
-            instead of the starters, and the console offers the next step — sent into that session, as a prompt.
+            its own permission prompts. A change has one running session at a time: while it runs, the timeline shows its
+            session badge instead of starters; use the timeline for the next lifecycle action. The Console tab holds the
+            terminal and selected session's maintenance actions.
+          </li>
+          <li>
+            Change details show Backlog, Drafts, Ready, Implementing, Done and Archived in a lifecycle timeline. Smaller
+            milestones follow the repository's schema and show local artifact and task progress; delivery text separately
+            reports proposal, implementation or archive persistence, including a pending pull request. The timeline offers
+            the next eligible lifecycle action. On a narrow screen, it starts with current and next phase and expands to the
+            full timeline. Use the selected session's <strong>Session actions</strong> menu to Resume, Clean up, Delete record
+            or Open in editor. The copy icon beside a worktree path copies the path itself.
+          </li>
+          <li>
+            In the demo, <strong>idempotency-keys</strong> shows a proposal waiting on PR #42, and <strong>deprecate-v1-auth</strong>
+            shows a blocked implementation delivery with its recovery option. These examples keep local task progress
+            separate from GitHub delivery state.
+            <figure class="help-lifecycle-figure" aria-labelledby="help-lifecycle-caption">
+              <ol aria-label="Lifecycle phases">
+                <li>Backlog</li><li>Drafts</li><li>Ready</li><li>Implementing</li><li>Done</li><li>Archived</li>
+              </ol>
+              <p role="status">Example delivery: Implementation · Blocked · GitHub has not confirmed the checkpoint.</p>
+              <figcaption id="help-lifecycle-caption">Local phase progress and remote delivery status are shown separately.</figcaption>
+            </figure>
           </li>
           <li>
             <strong>Permission profile for this change</strong> is one control above the artifact and Console tabs.
@@ -209,7 +230,8 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             <code>{"{model}"}</code>; otherwise the dashboard adds <code>--model</code> followed by the model name.
           </li>
           <li>
-            <strong>Open in editor</strong>, beside <strong>Copy cd</strong> in the Console tab and in Open work, opens the
+            <strong>Open in editor</strong> is in the selected session's <strong>Session actions</strong> menu. In Open work,
+            it remains beside <strong>Copy cd</strong>. It opens the
             folder the change's agent works in — its worktree, or the project folder for a session without one — in your
             editor. It runs VS Code's <code>code</code> unless you set another <strong>Editor command</strong> under{" "}
             <AppLink path="/settings" query="?section=agents">Settings → Agent sessions</AppLink>, one argument per line,
