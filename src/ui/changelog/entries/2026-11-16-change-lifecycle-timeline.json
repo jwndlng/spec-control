@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-16-change-lifecycle-timeline",
+  "date": "2026-11-16",
+  "title": "Follow a change through its lifecycle",
+  "summary": "Change details now show schema based artifact progress and delivery status in a lifecycle timeline, with the next eligible action at its phase. Session maintenance is grouped in Session actions, and the worktree path has a copy icon."
+}

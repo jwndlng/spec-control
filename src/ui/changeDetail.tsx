@@ -15,7 +15,7 @@ import { useSessionUi, WorkStatus } from "./sessions.tsx";
 import { isComplete } from "../shared/columns.ts";
 import { promptBody } from "./boardMarks.ts";
 import { BranchBadge } from "./checkout.tsx";
-import { IconCheck, IconFolder } from "./icons.tsx";
+import { IconCheck, IconCopy } from "./icons.tsx";
 import { SourceIssueLink } from "./importIssues.tsx";
 import { type DetailPr, DetailPullRequest, detailPullRequest, usePullRequests } from "./pullRequests.tsx";
 import { StaleCleanupDialog } from "./staleCleanup.tsx";
@@ -26,6 +26,9 @@ import { deletedFilesNotice, dismissedNotice, dismissOffer } from "./dismissStat
 import { checkoutHint, daysSince, leftoverHint, pendingArchiveHint, relTime, splitPathLabel } from "./format.ts";
 import { currentQuery, followInApp, href, hrefWithQuery, navigate, replaceQuery } from "./url.ts";
 import { dismissActiveSelect } from "./select.tsx";
+import { LifecycleTimeline, lifecycleTimelineModel } from "./lifecycleTimeline.tsx";
+import { SessionControls } from "./sessions.tsx";
+import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 
 export function artifactLabel(id: string): string {
   return id.replace(/[-_]+/g, " ").replace(/^./, (c) => c.toUpperCase());
@@ -380,16 +383,20 @@ export function WorktreePath({ change }: { change: Pick<ChangeSnapshot, "repoId"
   const { head, tail } = splitPathLabel(path);
   const label = done ? "Copied" : `Copy worktree path ${path}`;
   return (
-    <button type="button" class={`badge worktree-path mono truncate ${done ? "done" : ""}`} title={done ? "Copied" : `${path} — click to copy`} aria-label={label} onClick={() => navigator.clipboard.writeText(path).then(() => setDone(true), () => {})}>
-      <span aria-hidden="true">{done ? <IconCheck size={11} /> : <IconFolder size={11} />}</span>
-      <span class="text" aria-hidden="true">
+    <span class="worktree-path-wrap">
+      <span class="badge worktree-path mono truncate" title={path}>
+        <span class="text" aria-hidden="true">
         <span class="head">{head}</span>
         {tail && <span class="tail">{tail}</span>}
+        </span>
       </span>
+      <button type="button" class={`btn sm ghost copy-path-icon ${done ? "done" : ""}`} title={done ? "Copied" : `Copy worktree path ${path}`} aria-label={label} onClick={() => navigator.clipboard.writeText(path).then(() => setDone(true), () => {})}>
+        {done ? <IconCheck size={13} /> : <IconCopy size={13} />}
+      </button>
       <span class="visually-hidden" aria-live="polite">
         {done ? "Copied" : ""}
       </span>
-    </button>
+    </span>
   );
 }
 
@@ -846,7 +853,15 @@ export function ChangeDetail({
         onDeleteFiles={onDismissed ? () => setDeletingFiles(true) : undefined}
         pullRequest={detailPullRequest(change, pullRequests.data)}
       />
-      {(deliveries.length > 0 || deliveryError || (shownSession?.state === "running" && shownSession.managedActionId && ["draft", "implement", "fastForward", "archive"].includes(shownSession.action)) || (shownSession?.action === "archive" && shownSession.managedActionId && change.archived && change.tasks && change.tasks.total > change.tasks.done)) && <section class="notice lifecycle-delivery" aria-label="Lifecycle delivery">
+      <LifecycleTimeline model={lifecycleTimelineModel(change, change.artifacts, deliveries)}>
+        <SessionControls
+          card={change}
+          place="console"
+          pullRequest={linkedPullRequest(change, pullRequests.data?.repos)}
+          into={shownSession?.state === "running" ? shownSession : undefined}
+        />
+      </LifecycleTimeline>
+      {(deliveries.some((delivery) => Boolean(delivery.blocker) || ((delivery.state === "blocked" || delivery.state === "unavailable" || delivery.state === "pending") && delivery.recovery.includes("retry"))) || deliveryError || (shownSession?.state === "running" && shownSession.managedActionId && ["draft", "implement", "fastForward", "archive"].includes(shownSession.action)) || (shownSession?.action === "archive" && shownSession.managedActionId && change.archived && change.tasks && change.tasks.total > change.tasks.done)) && <section class="notice lifecycle-delivery" aria-label="Lifecycle delivery">
         {deliveries.map((delivery) => <p key={delivery.id}>
           <strong>{delivery.phase[0].toUpperCase() + delivery.phase.slice(1)} delivery · {delivery.state.replaceAll("-", " ")}</strong>
           {delivery.pullRequestUrl && <> · <a href={delivery.pullRequestUrl} target="_blank" rel="noopener noreferrer">PR #{delivery.pullRequestNumber ?? "open"}</a></>}
@@ -879,7 +894,7 @@ export function ChangeDetail({
         {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: delegated from the links inside, which are anchors — Enter on one fires this click too */}
         <section class="detail-content" onClick={followFileLink}>
           {onConsole ? (
-            <ConsolePanel session={shownSession} worktree={shownWorktree} of={{ repoId, change: changeName }} />
+            <ConsolePanel session={shownSession} worktree={shownWorktree} of={{ repoId, change: changeName }} lifecycleActionsInTimeline />
           ) : (
             <>
           {file && (

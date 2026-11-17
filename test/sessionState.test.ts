@@ -62,6 +62,14 @@ test("a Ready card without a design shows Implement with Draft in the menu", () 
   expect(cardSessionControls(config, [], card()).menu).toEqual([{ kind: "start", action: "custom" }]);
 });
 
+test("dependency blockers withhold fast-forward and Implement while leaving Draft available", () => {
+  const controls = cardSessionControls(config, [], card({ stage: "drafts", blocked: true }));
+  expect(controls.main).toEqual({ kind: "start", action: "draft" });
+  expect(controls.menu.map((item) => item.kind === "start" ? item.action : item.kind)).toEqual(["custom"]);
+  const disabled = { ...config, agentSessions: { ...config.agentSessions, enabled: false } };
+  expect(cardSessionControls(disabled, [], card()).starters).toEqual([]);
+});
+
 test("a card whose pull request's checks run shows the waiting label with its starters in the menu", () => {
   const controls = cardSessionControls(config, [session()], card({ stage: "done", subState: "validate", pullRequest: pr({ checks: "pending" }) }));
   expect(controls.main).toEqual({ kind: "waiting", reason: "checks running" });
