@@ -207,6 +207,8 @@ not required for implementing, such as a design.
 - **WHEN** a change in `Implementing` links an open pull request whose checks are running and it has no running session
 - **THEN** its Console tab's main part says it waits for the checks, and its menu offers **Implement**
 
+The lifecycle controls described in this requirement SHALL be placed in the timeline, and SHALL NOT be duplicated in the console toolbar. Existing eligibility, session reuse, and handoff behavior SHALL apply.
+
 ### Requirement: The console tab selects among the change's sessions
 A change MAY have more than one session record — at most one of them running (`agent-sessions`: "Session lifecycle and
 control"), the others ended, their output still readable and their worktrees possibly still holding work. When it has more than one, the Console tab SHALL list them with their action, branch and live
@@ -577,17 +579,17 @@ snapshot SHALL show no worktree badge. The badge MUST NOT extend beyond its cont
 be shortened before its last segment with an ellipsis so that its end — the worktree directory's own name — stays readable,
 and the full path SHALL be its tooltip.
 
-Activating the badge SHALL write the worktree's absolute path to the clipboard, and nothing else: no `cd`, no quoting,
+Activating the adjacent copy icon SHALL write the worktree's absolute path to the clipboard, and nothing else: no `cd`, no quoting,
 no whitespace. It SHALL then show for a short while that the path was copied, announced as `Copied`; when the clipboard
 refuses the write, it SHALL NOT claim success. Its accessible name SHALL say what it copies (`Copy worktree path
-<path>`). The badge SHALL be reachable with the keyboard, SHALL NOT open the Console tab, start a session or otherwise
+<path>`). The copy icon SHALL be reachable with the keyboard, SHALL NOT open the Console tab, start a session or otherwise
 act on the change, and is drawn as quietly as the branch badge. It is derived from the snapshot and the session
 worktree list the view already has: showing or copying it writes nothing to any repository, runs no git command and
 contacts no other host.
 
 #### Scenario: A change in a linked worktree
 - **WHEN** `audit-trail` of `demo-ops` is `Implementing` in a linked worktree at `/w/acme/demo-ops-audit-trail` on `feat/audit-trail`
-- **THEN** its detail header shows a worktree badge reading `/w/acme/demo-ops-audit-trail`, and activating it puts exactly `/w/acme/demo-ops-audit-trail` on the clipboard and briefly announces `Copied`
+- **THEN** its detail header shows a worktree badge reading `/w/acme/demo-ops-audit-trail`, and activating its adjacent copy icon puts exactly `/w/acme/demo-ops-audit-trail` on the clipboard and briefly announces `Copied`
 
 #### Scenario: A change with a session worktree
 - **WHEN** a change's data comes from the main checkout and an agent session worktree exists for it under the dashboard home
@@ -736,3 +738,46 @@ Successful Ship SHALL show a persistent confirmation with the verified created o
 #### Scenario: Lost response or reload
 - **WHEN** the response is lost or the user reloads during shipping
 - **THEN** the UI reconciles the known operation from server status before permitting a duplicate operation or announcing its result
+
+### Requirement: Detail presents a lifecycle timeline above the file tabs
+Change detail SHALL show an ordered timeline from Backlog through Drafts, Ready, Implementing, Done, and Archived above the file tabs. Phase nodes SHALL be larger than schema-derived artifact milestones. The current phase, completed steps, available next action, and pending persistence SHALL be distinct in text and appearance. Unknown or optional schema artifacts SHALL NOT fabricate completion.
+
+#### Scenario: Drafting progress
+- **WHEN** proposal and specs exist but required tasks are missing
+- **THEN** Drafts is current, completed artifact milestones are shown, and the missing milestone is labeled
+
+#### Scenario: Archive pending delivery
+- **WHEN** an archive exists locally but its PR is still open
+- **THEN** Archived is locally complete and its persistence is labeled pending with a PR link
+
+#### Scenario: Alternate schema and validation
+- **WHEN** the framework has different artifact names or a validation milestone
+- **THEN** milestones derive from that schema and validation state instead of a hardcoded proposal/design/specs sequence
+
+### Requirement: The timeline carries the next lifecycle action
+The timeline SHALL present the available Draft artifacts, Implement, or Archive action at its corresponding phase, using the existing server eligibility and session handoff rules. It SHALL expose one primary next action, explain unavailable actions, and route blocked delivery to its recovery action. The detail view SHALL NOT duplicate these lifecycle controls in its console toolbar.
+
+#### Scenario: Ready to implement
+- **WHEN** the change is Ready and implementation is available
+- **THEN** Implement is the timeline's primary action and launching it uses the existing agent selection and confirmed session handoff
+
+#### Scenario: Agent sessions disabled
+- **WHEN** agent sessions are disabled
+- **THEN** the timeline remains readable without presenting an enabled launch action
+
+### Requirement: Maintenance actions are progressively disclosed
+Resume, Clean up, Delete record, and Open in editor SHALL be available from a labeled session actions menu for the selected session when applicable. Their eligibility and confirmations SHALL be retained. The visible worktree path SHALL have an adjacent keyboard-accessible copy icon with success/failure feedback; detail SHALL NOT show a separate Copy cd text button.
+
+#### Scenario: Ended session
+- **WHEN** a resumable ended session is selected
+- **THEN** Resume is available in its actions menu without competing with the lifecycle action
+
+#### Scenario: Copy path
+- **WHEN** the user activates the icon beside a worktree path
+- **THEN** exactly the absolute path is copied, success is announced only after a successful clipboard write, and no command runs
+
+#### Scenario: Small screen and keyboard
+- **WHEN** detail is viewed at narrow width or navigated by keyboard
+- **THEN** timeline labels, artifact tabs, menus, and copy controls remain reachable with visible focus and no page-wide horizontal overflow
+
+## MODIFIED Requirements
