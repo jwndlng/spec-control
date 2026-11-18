@@ -574,12 +574,14 @@ export function SessionControls({
   pullRequest,
   into,
   steps,
+  timelineAction,
 }: {
   card: Pick<ChangeSnapshot, "repoId" | "name" | "archived" | "artifacts" | "stage" | "subState" | "blocked">;
   place: StarterPlace;
   pullRequest?: PullRequest;
   into?: ChangeSession;
   steps?: Partial<Record<PullRequestStep, ActionItem | ActionStatus>>;
+  timelineAction?: "draft" | "main";
 }) {
   const ui = useSessionUi();
   const [starting, setStarting] = useState<SessionAction>();
@@ -592,7 +594,16 @@ export function SessionControls({
   // step as ending it first (`consoleSteps`).
   const offered = into ? consoleSteps(ui.config, ui.sessions, card, into) : undefined;
   const endsProposal = (action: SessionAction) => offered?.endFirst.includes(action) === true;
-  const { main, menu } = into ? starterSplit(card, offered ? [...offered.into, ...offered.endFirst] : [], pullRequest) : controls;
+  const defaultSplit = into ? starterSplit(card, offered ? [...offered.into, ...offered.endFirst] : [], pullRequest) : controls;
+  const mainMenu = timelineAction === "main" && !into
+    ? starterSplit(card, controls.starters.filter((action) => action !== "draft"), pullRequest)
+    : defaultSplit;
+  const main = timelineAction === "draft"
+    ? controls.starters.includes("draft") ? { kind: "start", action: "draft" } as const : undefined
+    : mainMenu.main;
+  const menu = timelineAction === "draft" ? [] : timelineAction === "main" && !into
+    ? mainMenu.menu
+    : defaultSplit.menu;
   const agent = agentForChange(ui.config, card.repoId, card.name);
   const found = ui.agents.find((a) => a.id === agent?.id);
   const unavailable = !into && found && !found.available ? `${found.name} was not found on this machine — check its command in Settings` : undefined;
@@ -631,11 +642,13 @@ export function SessionControls({
     if (into) return steps?.[next.step];
     return pullRequestItem(next.step, pullRequest, target, (sessionId) => ui.openChangeConsole(card.repoId, card.name, sessionId), proposal);
   };
-  const mainPart = main ? item(main, true) : undefined;
-  const items = menu.map((m) => item(m, false)).filter((m): m is ActionItem => m !== undefined && !("status" in m));
+  const mainPart = timelineAction === "draft" && controls.starters.includes("draft")
+    ? starterItem("draft", true)
+    : main ? item(main, true) : undefined;
+  const items = timelineAction === "draft" ? [] : menu.map((m) => item(m, false)).filter((m): m is ActionItem => m !== undefined && !("status" in m));
   return (
     <>
-      {shown.map((session) => (
+      {timelineAction !== "draft" && shown.map((session) => (
         <Fragment key={session.id}>
           <SessionBadgeView badge={sessionBadge(session)} onClick={() => ui.openPanel(session.id)} />
           {place === "card" && canEndArchivedSession(card, session, pullRequest, ui.worktrees.find((w) => w.path === session.worktreePath)) && (

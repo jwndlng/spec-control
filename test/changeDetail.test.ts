@@ -69,11 +69,10 @@ test("header: repository link, change name, close control, warnings — and the 
   expect(classed(header, "detail-close").map((b) => b.props["aria-label"])).toEqual(["Close"]);
   const text = textOf(header);
   expect(text).toContain("could not read artifacts: unknown schema 'custom'");
-  // Column, tasks and the last update moved here from the card, and so did the branch.
-  for (const label of ["Implementing", "4/12", "updated"]) expect(text).toContain(label);
-  expect(classed(header, "meter")).toHaveLength(1);
-  // The detail view's task bar keeps its bare count; only the card names the unit.
-  expect(textOf(classed(classed(header, "meter")[0], "value")[0]).trim()).toBe("4/12");
+  // The column and last update stay in the facts row; task progress lives in the lifecycle timeline.
+  for (const label of ["Implementing", "updated"]) expect(text).toContain(label);
+  expect(classed(header, "meter")).toHaveLength(0);
+  expect(text).not.toContain("4/12");
   expect(elements(header).some((el) => String(el.props.title ?? "").includes("a branch or worktree matches this change"))).toBe(true);
   // Still not repeated: creation date and schema.
   for (const label of ["created", "2026-03-02", "spec-driven"]) expect(text).not.toContain(label);

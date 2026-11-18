@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-18-progress-in-timeline",
+  "date": "2026-11-18",
+  "title": "See phase progress in the timeline",
+  "summary": "Draft artifact progress now appears under Drafts, and task progress under Implementing. Optional Draft artifacts stays with Drafts while Implement remains under Ready."
+}
