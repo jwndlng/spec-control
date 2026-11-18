@@ -843,7 +843,9 @@ export function ChangeDetail({
     .filter((delivery) => delivery.phase === "implementation")
     .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
     .at(-1);
-  const timelineModel = lifecycleTimelineModel(change, change.artifacts, deliveries, checkpointPr);
+  const activeAction = shownSession?.state === "running" && !shownSession.waitingReportedAt ? shownSession.action : undefined;
+  const workingPhase = activeAction === "draft" ? "Drafts" : activeAction === "implement" || activeAction === "fastForward" ? "Implementing" : activeAction === "archive" ? "Archived" : undefined;
+  const timelineModel = lifecycleTimelineModel(change, change.artifacts, deliveries, change.archived ? undefined : checkpointPr, pullRequests.data?.repos.find((entry) => entry.repoId === repoId)?.pullRequests ?? [], workingPhase);
   const completionAction = shownSession?.state === "running" && shownSession.managedActionId && ["draft", "implement", "fastForward", "archive"].includes(shownSession.action)
     ? shownSession.action
     : undefined;
@@ -881,7 +883,12 @@ export function ChangeDetail({
           {implementationDelivery?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => void retryDelivery(implementationDelivery)}>{retryingDelivery === implementationDelivery.id ? "Retrying…" : "Retry delivery"}</button>}
           <ResolveConflicts change={change} compact />
         </>
-      }>
+      }
+        deliveryActions={{
+          proposal: deliveries.filter((delivery) => delivery.phase === "proposal").at(-1)?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => { const item = deliveries.filter((delivery) => delivery.phase === "proposal").at(-1); if (item) void retryDelivery(item); }}>{retryingDelivery ? "Retrying…" : "Retry delivery"}</button>,
+          archive: deliveries.filter((delivery) => delivery.phase === "archive").at(-1)?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => { const item = deliveries.filter((delivery) => delivery.phase === "archive").at(-1); if (item) void retryDelivery(item); }}>{retryingDelivery ? "Retrying…" : "Retry delivery"}</button>,
+        }}
+      >
         <SessionControls
           card={change}
           place="console"

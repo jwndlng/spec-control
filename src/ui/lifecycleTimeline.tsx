@@ -20,6 +20,8 @@ export interface LifecycleTimelineModel {
   localProgress?: string;
   persistence: { id: string; label: string; pullRequestNumber?: number; pullRequestUrl?: string }[];
   pullRequest: { state: LifecyclePullRequestState; label: string; number?: number; url?: string };
+  pullRequests: Record<LifecycleDeliveryView["phase"], { state: LifecyclePullRequestState; label: string; number?: number; url?: string; blocker?: string }>;
+  workingPhase?: LifecyclePhase;
 }
 
 const stagePhase: Record<ChangeSnapshot["stage"], LifecyclePhase> = {
@@ -36,6 +38,8 @@ export function lifecycleTimelineModel(
   artifacts: readonly Pick<ArtifactStatus, "id" | "status" | "required">[],
   deliveries: readonly LifecycleDeliveryView[],
   pr?: PullRequest,
+  prs: readonly PullRequest[] = [],
+  workingPhase?: LifecyclePhase,
 ): LifecycleTimelineModel {
   const current = change.archived ? "Archived" : stagePhase[change.stage];
   const currentIndex = LIFECYCLE_PHASES.indexOf(current);
@@ -51,35 +55,27 @@ export function lifecycleTimelineModel(
     pullRequestNumber: delivery.pullRequestNumber,
     pullRequestUrl: delivery.pullRequestUrl,
   }));
-  const implementation = latestDeliveries.get("implementation");
-  const prState: LifecyclePullRequestState = !pr
-    ? change.stage !== "done" && change.stage !== "archived"
-      ? "upcoming"
-      : implementation && ["pending", "committing", "pushing", "opening-pr"].includes(implementation.state)
-        ? "shipping"
-        : implementation?.recovery.includes("resolve-conflicts")
-          ? "conflicts"
-          : implementation && implementation.state === "blocked"
-          ? "failed"
-          : implementation?.state === "merged"
-            ? "merged"
-            : implementation?.state === "waiting-to-merge"
-              ? "checking"
-          : "unshipped"
-    : pr.state === "merged"
-      ? "merged"
-      : pr.state === "closed"
-        ? "closed"
-        : pr.mergeable === "conflicting"
-          ? "conflicts"
-          : pr.checks === "failing"
-            ? "failed"
-            : pr.checks === "pending" || pr.mergeable === "unknown" || !pr.mergeable
-              ? "checking"
-              : pr.mergeable === "mergeable" && (pr.checks === "passing" || pr.checks === "none")
-                ? "ready"
-                : "waiting";
-  const prLabel = ({ upcoming: "Not started", unshipped: "Not shipped", shipping: "Shipping", checking: "Checks running", ready: "Checks passed", conflicts: "Conflicts", failed: implementation?.state === "blocked" && !pr ? "Delivery blocked" : "Checks failed", merged: "Merged", closed: "Closed", waiting: "Waiting" } as const)[prState];
+  const stateFor = (phase: LifecycleDeliveryView["phase"], delivery: LifecycleDeliveryView | undefined, phasePr: PullRequest | undefined) => {
+    const started = phase === "proposal" ? currentIndex >= 1 : phase === "implementation" ? currentIndex >= 3 : currentIndex >= 5;
+    const state: LifecyclePullRequestState = phasePr?.state === "merged" || delivery?.state === "merged" ? "merged"
+      : !phasePr ? !started ? "upcoming"
+        : delivery && ["pending", "committing", "pushing", "opening-pr"].includes(delivery.state) ? "shipping"
+          : delivery?.recovery.includes("resolve-conflicts") ? "conflicts"
+            : delivery && ["blocked", "unavailable"].includes(delivery.state) ? "failed"
+              : delivery?.state === "waiting-to-merge" ? "checking" : "unshipped"
+        : phasePr.state === "closed" ? "closed"
+          : phasePr.mergeable === "conflicting" ? "conflicts"
+            : phasePr.checks === "failing" ? "failed"
+              : phasePr.checks === "pending" || phasePr.mergeable === "unknown" || !phasePr.mergeable ? "checking"
+                : phasePr.mergeable === "mergeable" && (phasePr.checks === "passing" || phasePr.checks === "none") ? "ready" : "waiting";
+    const label = ({ upcoming: "Not started", unshipped: "Not shipped", shipping: "Shipping", checking: "Checks running", ready: "Checks passed", conflicts: "Conflicts", failed: delivery?.blocker ? "Delivery blocked" : "Checks failed", merged: "Merged", closed: "Closed", waiting: "Waiting" } as const)[state];
+    return { state, label, ...(delivery?.blocker ? { blocker: delivery.blocker } : {}), ...(phasePr?.number ? { number: phasePr.number } : delivery?.pullRequestNumber ? { number: delivery.pullRequestNumber } : phase === "implementation" && pr?.number ? { number: pr.number } : {}), ...(phasePr?.url ? { url: phasePr.url } : delivery?.pullRequestUrl ? { url: delivery.pullRequestUrl } : phase === "implementation" && pr?.url ? { url: pr.url } : {}) };
+  };
+  const pullRequests = Object.fromEntries((['proposal', 'implementation', 'archive'] as const).map((phase) => {
+    const delivery = latestDeliveries.get(phase);
+    const phasePr = (delivery?.pullRequestNumber ? prs.find((candidate) => candidate.number === delivery.pullRequestNumber) : undefined) ?? (phase === "implementation" ? pr : undefined);
+    return [phase, stateFor(phase, delivery, phasePr)];
+  })) as LifecycleTimelineModel["pullRequests"];
   return {
     current,
     ...(change.subState === "validate" ? { actionPhase: "Done" as const } : nextPhase ? { actionPhase: nextPhase } : {}),
@@ -91,29 +87,37 @@ export function lifecycleTimelineModel(
     ...(change.subState === "validate" ? { validation: "Validation awaiting confirmation" } : {}),
     ...(change.tasks ? { localProgress: `${change.tasks.done}/${change.tasks.total} tasks complete${change.tasks.awaiting ? ` · ${change.tasks.awaiting} awaiting confirmation` : ""}` } : {}),
     persistence,
-    pullRequest: {
-      state: prState,
-      label: prLabel,
-      ...(pr?.number ? { number: pr.number } : implementation?.pullRequestNumber ? { number: implementation.pullRequestNumber } : {}),
-      ...(pr?.url ? { url: pr.url } : implementation?.pullRequestUrl ? { url: implementation.pullRequestUrl } : {}),
-    },
+    pullRequest: pullRequests.implementation,
+    pullRequests,
+    workingPhase,
   };
 }
 
-export function LifecycleTimeline({ model, children, draftChildren, deliveryChildren, completionPhase, completionChildren }: {
+export function LifecycleTimeline({ model, children, draftChildren, deliveryChildren, deliveryActions = {}, completionPhase, completionChildren }: {
   model: LifecycleTimelineModel;
   children?: ComponentChildren;
   draftChildren?: ComponentChildren;
   deliveryChildren?: ComponentChildren;
+  deliveryActions?: Partial<Record<LifecycleDeliveryView["phase"], ComponentChildren>>;
   completionPhase?: LifecyclePhase;
   completionChildren?: ComponentChildren;
 }) {
+  const renderPullRequest = (phase: LifecycleDeliveryView["phase"], label: string) => {
+    const item = model.pullRequests[phase];
+    return <li class={`lifecycle-pr-checkpoint timeline-node ${item.state}`} aria-label={`${label} pull request: ${item.label}`}>
+      <span class="lifecycle-pr-marker" aria-hidden="true">{item.state === "ready" || item.state === "merged" ? "✓" : ""}</span>
+      <span class="lifecycle-pr-label">{label} PR</span><span class="lifecycle-pr-state">{item.label}</span>
+      {item.blocker && <span class="lifecycle-pr-blocker" title={item.blocker}>{item.blocker}</span>}
+      {item.url && <a href={item.url} target="_blank" rel="noopener noreferrer">{item.number ? `#${item.number}` : "Open PR"}</a>}
+      {deliveryActions[phase] ?? (phase === "implementation" ? deliveryChildren : undefined)}
+    </li>;
+  };
   return (
     <section class="lifecycle-timeline" aria-label="Change lifecycle">
       <div class="lifecycle-timeline-wide">
         <ol class="lifecycle-phases">
           {model.phases.map((phase) => <Fragment key={phase.label}>
-            <li class={`lifecycle-phase ${phase.state}${phase.label === model.actionPhase || phase.label === model.draftActionPhase ? " actionable" : ""}${phase.label === "Drafts" && model.artifacts.length ? " has-artifacts" : ""}${phase.label === "Implementing" && model.taskProgress ? " has-progress" : ""}`} aria-current={phase.state === "current" ? "step" : undefined}>
+            <li class={`lifecycle-phase timeline-node ${phase.state}${phase.label === model.actionPhase || phase.label === model.draftActionPhase ? " actionable" : ""}${phase.label === "Drafts" && model.artifacts.length ? " has-artifacts" : ""}${phase.label === "Implementing" && model.taskProgress ? " has-progress" : ""}${phase.label === model.workingPhase ? " working" : ""}`} aria-current={phase.state === "current" ? "step" : undefined}>
               <span class="lifecycle-phase-marker" aria-hidden="true">{phase.state === "complete" ? "✓" : ""}</span>
               <span class="lifecycle-phase-label">{phase.label}</span>
               {phase.label === model.actionPhase && <section class="lifecycle-phase-action" aria-label={`Available action for ${phase.label}`}>{children}</section>}
@@ -128,13 +132,9 @@ export function LifecycleTimeline({ model, children, draftChildren, deliveryChil
               {phase.label === "Implementing" && model.taskProgress && <div class="lifecycle-phase-progress"><Meter {...model.taskProgress} showUnit /></div>}
               {phase.label === completionPhase && <section class="lifecycle-phase-completion" aria-label={`Completion check for ${phase.label}`}>{completionChildren}</section>}
             </li>
-            {phase.label === "Done" && <li class={`lifecycle-pr-checkpoint ${model.pullRequest.state}`} aria-label={`Pull request: ${model.pullRequest.label}`}>
-              <span class="lifecycle-pr-marker" aria-hidden="true">{model.pullRequest.state === "ready" || model.pullRequest.state === "merged" ? "✓" : ""}</span>
-              <span class="lifecycle-pr-label">Pull request</span>
-              <span class="lifecycle-pr-state">{model.pullRequest.label}</span>
-              {model.pullRequest.url && <a href={model.pullRequest.url} target="_blank" rel="noopener noreferrer">{model.pullRequest.number ? `#${model.pullRequest.number}` : "Open PR"}</a>}
-              {deliveryChildren}
-            </li>}
+            {phase.label === "Drafts" && renderPullRequest("proposal", "Drafts")}
+            {phase.label === "Implementing" && renderPullRequest("implementation", "Implementation")}
+            {phase.label === "Archived" && renderPullRequest("archive", "Archive")}
           </Fragment>)}
         </ol>
         {model.current === "Backlog" && <section class="lifecycle-fast-forward" aria-label="Fast-forward route from Backlog to Implementing">
