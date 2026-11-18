@@ -3,3 +3,4 @@
 - [x] 3. Add Ship and Resolve conflicts controls to the delivery checkpoint using the existing session provider, shippability checks, PR cache, and conflict eligibility.
 - [x] 4. Update the detail specification and add model tests for shipping, checking, ready, conflicting, and merged states.
 - [x] 5. Run the full repository check, production build, changed-file lint, OpenSpec validation, and diff checks.
+- [x] 6. Keep PR list and branch-policy freshness timestamps consistent; lock the timing regression test to an advancing clock and rerun checks.

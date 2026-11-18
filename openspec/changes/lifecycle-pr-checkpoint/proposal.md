@@ -31,6 +31,8 @@ Make the lifecycle stepper the primary guide through a change. Show the existing
 - `src/ui/sessions.tsx`
 - `src/ui/helpContent.tsx`
 - `src/ui/changelog/entries/2026-11-18-lifecycle-pr-checkpoint.json`
+- `src/server/pullRequests.ts`
 - `test/lifecycleTimeline.test.ts`
+- `test/pullRequests.test.ts`
 - `openspec/specs/change-detail/spec.md`
 - `openspec/changes/lifecycle-pr-checkpoint/**`

@@ -482,6 +482,8 @@ export class PullRequests {
       this.cache.set(github, { ...previous, error: failure });
       return;
     }
+    // The PR list and its exact-head branch policy are one refresh snapshot and share one freshness timestamp.
+    const fetchedAt = new Date(this.now()).toISOString();
     const cutoff = since.getTime();
     const openList = (open.items ?? []).filter((pr) => pr.state === "open").sort(newestFirst);
     if (withFiles) {
@@ -489,7 +491,6 @@ export class PullRequests {
       for (const base of new Set(openList.map((pr) => pr.base).filter(Boolean))) {
         policies.set(base, await this.requiredCheckPolicy(github, base));
       }
-      const fetchedAt = new Date(this.now()).toISOString();
       for (const pr of openList) {
         if (!pr.headOid) continue;
         const policy = policies.get(pr.base) ?? { state: "unknown" as const };
@@ -501,7 +502,7 @@ export class PullRequests {
       .filter((pr) => (endedAt(pr) ?? 0) >= cutoff)
       .sort(newestFirst);
     this.cache.set(github, {
-      fetchedAt: new Date(this.now()).toISOString(),
+      fetchedAt,
       pullRequests: [...openList, ...closedList],
       truncated: { open: open.truncated === true, closed: closed.truncated === true },
     });
