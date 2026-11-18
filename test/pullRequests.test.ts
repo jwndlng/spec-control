@@ -606,7 +606,8 @@ test("changed files are asked for on open PRs for docs merge or proposal deliver
     { id: "alpha", path: await repoAt("alpha-files", ALPHA), isGit: true, proposalDelivery: true },
     { id: "demo", path: await repoAt("demo-files", "https://github.com/acme/demo-ops.git"), isGit: true, autoMergeDocs: true },
   ];
-  const answer = await newStore().refresh(targets, { force: true });
+  let clock = Date.parse("2026-11-18T15:14:21.000Z");
+  const answer = await newStore({ now: () => clock++ }).refresh(targets, { force: true });
   const [alpha, demo] = answer.repos;
   // alpha-infra has docs auto-merge off; proposal delivery still needs an exact file classification.
   expect(alpha.pullRequests.map((pr) => [pr.number, pr.headOid, pr.docsOnly, pr.requiredChecks])).toEqual([[125, OID, true, { headOid: OID, state: "required", contexts: ["ci"], fetchedAt: alpha.fetchedAt }]]);

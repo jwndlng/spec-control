@@ -6,7 +6,7 @@ import type { ShipPreflight, ShipResult } from "../shared/types.ts";
 // card shows (starter buttons, or a badge that opens the session panel).
 import { createContext, Fragment, type ComponentChildren } from "preact";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { changeSessions, isConsole, isIntegration, isProjectConsole, type AgentAvailability, type ChangeSession, type ChangeSnapshot, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleSession, type PullRequest, type SessionAction, type SessionWorktree, type Snapshot, type EditorAvailability } from "../shared/types.ts";
+import { changeSessions, isConsole, isIntegration, isProjectConsole, SHIPPABLE_WORK, type AgentAvailability, type ChangeSession, type ChangeSnapshot, type Config, type ConsoleSession, type IntegrationSession, type ProjectConsoleSession, type PullRequest, type Session, type SessionAction, type SessionWorktree, type Snapshot, type EditorAvailability } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { EndProposalDialog } from "./endProposalDialog.tsx";
 import { FastForwardDialog, type FastForwardChoice } from "./fastForwardDialog.tsx";
@@ -92,6 +92,24 @@ const noop = async () => undefined;
 const Context = createContext<SessionUi>({ config: null, snapshot: null, sessions: [], consoles: [], consoleOpen: false, showConsole: () => {}, integrations: [], showIntegration: () => {}, projectConsoles: [], showProjectConsole: () => {}, agents: [], worktrees: [], focusTick: { tick: 0 }, reportUnsent: () => {}, reportAutoMerge: () => {}, requestEnd: () => {}, openPanel: () => {}, openChangeConsole: () => {}, start: noop, ship: noop, shippingIds: new Set(), refresh: noop, saveConfig: () => {} });
 
 export const useSessionUi = () => useContext(Context);
+
+/** Deterministic Ship action for a specific session and the worktree evidence it applies to. */
+export function ShipButton({ session, worktree }: { session: Session; worktree: SessionWorktree }) {
+  const ui = useSessionUi();
+  if (!SHIPPABLE_WORK.includes(worktree.work.state)) return null;
+  const shipping = ui.shippingIds.has(session.id);
+  return (
+    <button
+      type="button"
+      class="btn sm primary lifecycle-ship-button"
+      disabled={shipping}
+      title="Commit this change, push its branch, and open or reuse a pull request. This does not merge it."
+      onClick={() => void ui.ship(session.id)}
+    >
+      {shipping ? "Shipping…" : "⇪ Ship"}
+    </button>
+  );
+}
 
 /**
  * `consoleOpen` is owned by the app shell, which also has to make the page behind the console overlay inert; it is

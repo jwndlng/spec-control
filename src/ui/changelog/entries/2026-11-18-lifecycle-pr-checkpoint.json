@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-18-lifecycle-pr-checkpoint",
+  "date": "2026-11-18",
+  "title": "Ship and resolve conflicts from the timeline",
+  "summary": "Change details now put each lifecycle action under its step and add a pull-request checkpoint after Done. Ship, check status, and eligible conflict recovery are available there, while completion confirmation stays inside the phase being checked."
+}

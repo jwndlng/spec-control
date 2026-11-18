@@ -779,7 +779,7 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
  * said with its base and freshness. It goes to the change's session on the pull request's branch, or starts one on that
  * branch; the server decides which from its own lists, and nothing is fetched or queried for it.
  */
-export function ResolveConflicts({ change }: { change: ChangeSnapshot }) {
+export function ResolveConflicts({ change, compact = false }: { change: ChangeSnapshot; compact?: boolean }) {
   const ui = useSessionUi();
   const pullRequests = usePullRequests();
   const [error, setError] = useState<string>();
@@ -810,7 +810,7 @@ export function ResolveConflicts({ change }: { change: ChangeSnapshot }) {
   const where = action.sessionId ? "the change's session" : `a new session on ${github?.head ?? "the pull request's branch"}`;
   return (
     <>
-      {github && (
+      {!compact && github && (
         <span class="badge warning" title={action.lines.join(" ")}>
           ⚠ GitHub: conflicts with {github.base}
           {github.pushPending ? " · push pending" : ""}

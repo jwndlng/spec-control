@@ -1,0 +1,6 @@
+- [x] 1. Add a distinct pull-request checkpoint state to the lifecycle timeline model, derived from linked PR readiness and implementation delivery records; keep unknown and historical states explicit.
+- [x] 2. Render the timeline as a connected stepper with phase controls and compact completion confirmation under their relevant phases, plus a smaller delivery marker after Done; respect reduced motion and narrow layouts.
+- [x] 3. Add Ship and Resolve conflicts controls to the delivery checkpoint using the existing session provider, shippability checks, PR cache, and conflict eligibility.
+- [x] 4. Update the detail specification and add model tests for shipping, checking, ready, conflicting, and merged states.
+- [x] 5. Run the full repository check, production build, changed-file lint, OpenSpec validation, and diff checks.
+- [x] 6. Keep PR list and branch-policy freshness timestamps consistent; lock the timing regression test to an advancing clock and rerun checks.
