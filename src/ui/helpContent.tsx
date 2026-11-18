@@ -198,11 +198,12 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           </li>
           <li>
             Change details show Backlog, Drafts, Ready, Implementing, Done and Archived in a lifecycle timeline. Smaller
-            milestones follow the repository's schema and show local artifact and task progress; delivery text separately
-            reports proposal, implementation or archive persistence, including a pending pull request. The timeline offers
-            the next eligible lifecycle action. On a narrow screen, it starts with current and next phase and expands to the
-            full timeline. Use the selected session's <strong>Session actions</strong> menu to Resume, Clean up, Delete record
-            or Open in editor. The copy icon beside a worktree path copies the path itself.
+            milestones follow the repository's schema and show local artifact and task progress. Phase actions sit beneath
+            the step they advance, and a compact confirmation appears in a phase that needs completion evidence. A smaller
+            pull-request checkpoint follows Done: Ship appears there when work is ready, its marker shows shipping and check
+            status, and Resolve conflicts appears when available. Delivery status remains separate from local progress.
+            Use the selected session's <strong>Session actions</strong> menu to Resume, Clean up, Delete record or Open in
+            editor. The copy icon beside a worktree path copies the path itself.
           </li>
           <li>
             In the demo, <strong>idempotency-keys</strong> shows a proposal waiting on PR #42, and <strong>deprecate-v1-auth</strong>
