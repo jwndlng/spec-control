@@ -332,7 +332,6 @@ function ChangeFacts({ change, pullRequest, now = Date.now() }: { change: Change
         <span class="badge" title="The column this change is in">
           {change.column}
         </span>
-        {change.tasks && change.tasks.total > 0 && <Meter done={change.tasks.done} total={change.tasks.total} />}
         {change.implementModel && <span class="badge" title="Recorded model for Implement">Implement model: {change.implementModel}</span>}
         <span class="badge" title={change.lastActivityAt ? `last activity ${change.lastActivityAt}` : "no activity date"}>
           {change.archived ? `archived ${change.archived}` : `updated ${relTime(change.lastActivityAt, now)} ago`}
@@ -866,9 +865,15 @@ export function ChangeDetail({
       <LifecycleTimeline
         model={timelineModel}
         completionPhase={completionPhase}
+        draftChildren={timelineModel.draftActionPhase && shownSession?.state !== "running" && <SessionControls
+          card={change}
+          place="console"
+          pullRequest={linkedPullRequest(change, pullRequests.data?.repos)}
+          timelineAction="draft"
+        />}
         completionChildren={completionAction && <>
-          <span class="lifecycle-completion-status" role="status">{completionConfirmed ? "Checking completion…" : "Needs confirmation"}</span>
-          {!completionConfirmed && <button type="button" class="btn sm" title="The server verifies artifacts and tasks, then waits for a stable worktree snapshot." disabled={confirmingPhase} onClick={() => void confirmPhase()}>{confirmingPhase ? "Checking…" : "Confirm complete"}</button>}
+          <span class="lifecycle-completion-status" role="status">{completionConfirmed ? "Checking…" : "Awaiting confirmation"}</span>
+          {!completionConfirmed && <button type="button" class="btn sm" title="Verify this phase's artifacts and tasks." disabled={confirmingPhase} onClick={() => void confirmPhase()}>{confirmingPhase ? "Checking…" : "Confirm phase complete"}</button>}
         </>}
         deliveryChildren={
         <>
@@ -882,6 +887,7 @@ export function ChangeDetail({
           place="console"
           pullRequest={linkedPullRequest(change, pullRequests.data?.repos)}
           into={shownSession?.state === "running" ? shownSession : undefined}
+          timelineAction={timelineModel.draftActionPhase && shownSession?.state !== "running" ? "main" : undefined}
         />
       </LifecycleTimeline>
       {(deliveries.some((delivery) => Boolean(delivery.blocker) || ((delivery.state === "blocked" || delivery.state === "unavailable" || delivery.state === "pending") && delivery.recovery.includes("retry"))) || deliveryError || (shownSession?.action === "archive" && shownSession.managedActionId && change.archived && change.tasks && change.tasks.total > change.tasks.done)) && <section class="notice lifecycle-delivery" aria-label="Lifecycle delivery">

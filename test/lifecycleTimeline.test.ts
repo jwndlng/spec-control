@@ -67,6 +67,31 @@ describe("lifecycleTimelineModel", () => {
     expect(model.localProgress).toBe("2/4 tasks complete · 1 awaiting confirmation");
   });
 
+  test("places draft artifact and implementation task meters inside their timeline phases", () => {
+    const drafts = lifecycleTimelineModel(change({ stage: "drafts" }), [artifact("proposal", "done"), artifact("design", "ready")], []);
+    expect(drafts.artifactProgress).toEqual({ done: 1, total: 2 });
+    const draftView = mount(h(LifecycleTimeline, { model: drafts }));
+    expect(draftView.querySelector(".lifecycle-phase.current .meter")?.getAttribute("aria-label")).toBe("1 of 2 artifacts written");
+
+    const implementing = lifecycleTimelineModel(change({ stage: "implementing", tasks: { done: 2, awaiting: 1, total: 4 } }), [], []);
+    expect(implementing.taskProgress).toEqual({ done: 2, awaiting: 1, total: 4 });
+    const implementationView = mount(h(LifecycleTimeline, { model: implementing }));
+    expect(implementationView.querySelector(".lifecycle-phase.current .meter")?.getAttribute("aria-label")).toBe("2 of 4 tasks complete, 1 needs the user, 1 open");
+  });
+
+  test("keeps optional Draft artifacts under Drafts and Implement under Implementing", () => {
+    const model = lifecycleTimelineModel(change({ stage: "ready" }), [{ ...artifact("design", "ready"), required: false }], []);
+    expect(model.actionPhase).toBe("Implementing");
+    expect(model.draftActionPhase).toBe("Drafts");
+    const view = mount(h(LifecycleTimeline, {
+      model,
+      children: h("button", {}, "Implement"),
+      draftChildren: h("button", {}, "Draft artifacts"),
+    }));
+    expect(view.querySelector(".lifecycle-phase.next .lifecycle-phase-action")?.textContent).toContain("Implement");
+    expect(view.querySelector(".lifecycle-phase.complete .lifecycle-phase-action")?.textContent).toContain("Draft artifacts");
+  });
+
   test("labels pending pull-request delivery and archived local state separately", () => {
     const model = lifecycleTimelineModel(change({ stage: "archived", archived: "2026-11-16" }), [], [delivery({ phase: "archive", pullRequestNumber: 42 })]);
     expect(model.current).toBe("Archived");
