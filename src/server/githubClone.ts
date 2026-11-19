@@ -121,6 +121,8 @@ export interface CloneOptions {
   onProgress?: (progress: ParsedProgress) => void;
 }
 
+export type CloneRunner = typeof cloneInto;
+
 /**
  * `git clone --progress` of `repo` into the existing, empty `target`, its standard error read as it arrives. Its working
  * directory is the dashboard home, so git never starts inside a repository; `LC_ALL=C` keeps its reports untranslated.
@@ -219,16 +221,18 @@ export class GithubClones {
   private readonly progressIntervalMs: number;
   private readonly now: () => number;
   private readonly onChange?: (clone: GithubClone) => void;
+  private readonly clone: CloneRunner;
 
   constructor(
     private readonly context: CloneContext,
-    options: { timeoutMs?: number; maxRunning?: number; progressIntervalMs?: number; now?: () => number; onChange?: (clone: GithubClone) => void } = {},
+    options: { timeoutMs?: number; maxRunning?: number; progressIntervalMs?: number; now?: () => number; onChange?: (clone: GithubClone) => void; clone?: CloneRunner } = {},
   ) {
     this.timeoutMs = options.timeoutMs ?? CLONE_TIMEOUT_MS;
     this.maxRunning = options.maxRunning ?? MAX_RUNNING_CLONES;
     this.progressIntervalMs = options.progressIntervalMs ?? PROGRESS_INTERVAL_MS;
     this.now = options.now ?? Date.now;
     this.onChange = options.onChange;
+    this.clone = options.clone ?? cloneInto;
   }
 
   list(): GithubClone[] {
@@ -346,7 +350,7 @@ export class GithubClones {
     this.show(job, { phase: "connecting" });
     let result: CloneResult;
     try {
-      result = await cloneInto(job.repo, job.path, { timeoutMs: this.timeoutMs, signal: job.abort.signal, onProgress: (p) => this.report(job, p) });
+      result = await this.clone(job.repo, job.path, { timeoutMs: this.timeoutMs, signal: job.abort.signal, onProgress: (p) => this.report(job, p) });
     } finally {
       this.release();
       if (job.pendingTimer) clearTimeout(job.pendingTimer);
