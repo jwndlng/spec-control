@@ -67,11 +67,15 @@ describe("lifecycleTimelineModel", () => {
     expect(model.localProgress).toBe("2/4 tasks complete · 1 awaiting confirmation");
   });
 
-  test("places draft artifact and implementation task meters inside their timeline phases", () => {
+  test("places the segmented draft progress and implementation task meter inside their timeline phases", () => {
     const drafts = lifecycleTimelineModel(change({ stage: "drafts" }), [artifact("proposal", "done"), artifact("design", "ready")], []);
     expect(drafts.artifactProgress).toEqual({ done: 1, total: 2 });
     const draftView = mount(h(LifecycleTimeline, { model: drafts }));
-    expect(draftView.querySelector(".lifecycle-phase.current .meter")?.getAttribute("aria-label")).toBe("1 of 2 artifacts written");
+    expect(draftView.querySelectorAll(".lifecycle-artifact-segment")).toHaveLength(2);
+    expect(draftView.querySelector(".lifecycle-artifact-dot.done .lifecycle-artifact-segment")).not.toBeNull();
+    expect(draftView.querySelector(".lifecycle-artifact-dot.ready .lifecycle-artifact-segment")).not.toBeNull();
+    expect(draftView.querySelector(".lifecycle-phase.current")?.getAttribute("style")).toContain("grid-column: 2");
+    expect(draftView.querySelector('.lifecycle-pr-checkpoint[aria-label^="Drafts pull request"]')?.getAttribute("style")).toContain("grid-column: 3");
 
     const implementing = lifecycleTimelineModel(change({ stage: "implementing", tasks: { done: 2, awaiting: 1, total: 4 } }), [], []);
     expect(implementing.taskProgress).toEqual({ done: 2, awaiting: 1, total: 4 });
