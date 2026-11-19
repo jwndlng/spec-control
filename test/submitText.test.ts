@@ -141,9 +141,9 @@ for (const [name, text, max] of piecesCases) {
   });
 }
 
-test("pieces: the default bound is a quarter of a 1024-byte input queue", () => {
-  expect(PIECE_BYTES).toBe(256);
-  expect(submissionPieces("x".repeat(1200)).map(bytes)).toEqual([256, 256, 256, 256, 176]);
+test("pieces: the default bound stays small enough to avoid paste-sized terminal reads", () => {
+  expect(PIECE_BYTES).toBe(64);
+  expect(submissionPieces("x".repeat(1200)).map(bytes)).toEqual([...Array(18).fill(64), 48]);
 });
 
 test("a long text is written in pieces of at most the bound, in order, then Enter once", async () => {
@@ -159,20 +159,21 @@ test("a long text is written in pieces of at most the bound, in order, then Ente
   expect(t.writes.at(-1)).toBe("\r");
   expect(t.writes.filter((w) => w === "\r").length).toBe(1);
   expect(t.writes.slice(0, -1).join("")).toBe(text);
-  for (const piece of t.writes.slice(0, -1)) expect(bytes(piece)).toBeLessThanOrEqual(256);
+  for (const piece of t.writes.slice(0, -1)) expect(bytes(piece)).toBeLessThanOrEqual(PIECE_BYTES);
   expect(typed).toBe(text);
 });
 
 test("the echo wait starts after the last piece: an echo that only follows it still submits", async () => {
   const text = "x".repeat(1000);
+  const pieceCount = submissionPieces(text).length;
   let pieces = 0;
   const t = fakeTerminal((data, emit) => {
     if (data === "\r") return;
     // Echoed only once everything is typed, as an agent that redraws after a burst would.
-    if (++pieces === 4) setTimeout(() => emit(text), 80);
+    if (++pieces === pieceCount) setTimeout(() => emit(text), 80);
   });
   expect(await submitText(t.terminal, text, { ...FAST, piecePauseMs: 40 })).toEqual({ submitted: true });
-  expect(t.writes.length).toBe(5);
+  expect(t.writes.length).toBe(pieceCount + 1);
 });
 
 test("only sentences are valid submissions", () => {

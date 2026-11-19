@@ -129,7 +129,8 @@ test("a session is the agent in a terminal, in its own worktree: start, type, ex
   const view = await watch(h.manager, s.id);
   await waitFor(() => view.text().includes("fake-agent ready"), "agent banner");
   expect(view.text()).toContain('args=["implement upgrade-runtime Read the complete context');
-  expect(view.text()).toContain(`cwd=${await realpath(s.worktreePath)}`); // the process reports its resolved directory
+  const resolvedWorktree = await realpath(s.worktreePath);
+  await waitFor(() => view.text().includes(`cwd=${resolvedWorktree}`), "agent's resolved working directory");
   expect(view.text()).toContain("tty=true");
   expect(view.text()).toContain("key=false");
 
@@ -180,7 +181,8 @@ test("one open session per change; an Archive that opens one gets its own worktr
   expect(resumed.state).toBe("running");
   const view = await watch(h.manager, a.id);
   await waitFor(() => view.text().includes('args=["--resumed"]'), "resumed agent");
-  expect(view.text()).toContain(`cwd=${await realpath(a.worktreePath)}`);
+  const resumedWorktree = await realpath(a.worktreePath);
+  await waitFor(() => view.text().includes(`cwd=${resumedWorktree}`), "resumed agent's resolved working directory");
 });
 
 test("archive is offered once the delta is already in the main specs: the change stays Done", async () => {
