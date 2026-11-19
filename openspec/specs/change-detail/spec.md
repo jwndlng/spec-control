@@ -740,7 +740,23 @@ Successful Ship SHALL show a persistent confirmation with the verified created o
 - **THEN** the UI reconciles the known operation from server status before permitting a duplicate operation or announcing its result
 
 ### Requirement: Detail presents a lifecycle timeline above the file tabs
-Change detail SHALL show an ordered timeline from Backlog through Drafts, Ready, Implementing, Done, and Archived above the file tabs. Phase nodes SHALL be larger than schema-derived artifact milestones. The current phase, completed steps, available next action, and pending persistence SHALL be distinct in text and appearance. Unknown or optional schema artifacts SHALL NOT fabricate completion.
+Change detail SHALL show a modern, evenly spaced, centered timeline from Backlog through Drafts, Ready, Implementing, Done, and Archived above the file tabs. Every phase marker SHALL be centered on its connector line, and schema-derived draft artifact milestones SHALL be arranged horizontally beneath Drafts. The current phase, completed steps, available next action, and pending persistence SHALL be distinct in text and appearance. A phase marker SHALL pulse only while work in that phase is actively progressing; a phase that is ready or waiting SHALL remain still. Unknown or optional schema artifacts SHALL NOT fabricate completion.
+
+#### Scenario: Centered phase markers
+- **WHEN** the timeline is shown at a wide or narrow viewport
+- **THEN** each phase marker is centered on the connector between adjacent checkpoints and labels and actions are centered beneath their marker
+
+#### Scenario: Horizontal draft milestones
+- **WHEN** schema-derived artifact milestones are shown under Drafts
+- **THEN** their smaller markers and labels appear in a horizontal row that can wrap on narrow screens
+
+#### Scenario: Ready phase does not pulse
+- **WHEN** a change is Ready and no phase or delivery is actively progressing
+- **THEN** Ready is emphasized as the next phase without animation
+
+#### Scenario: Active phase pulses
+- **WHEN** an agent is actively working on a phase
+- **THEN** that phase's marker pulses, and a reduced-motion preference disables the animation
 
 #### Scenario: Drafting progress
 - **WHEN** proposal and specs exist but required tasks are missing
@@ -755,11 +771,19 @@ Change detail SHALL show an ordered timeline from Backlog through Drafts, Ready,
 - **THEN** milestones derive from that schema and validation state instead of a hardcoded proposal/design/specs sequence
 
 ### Requirement: The timeline carries the next lifecycle action
-The timeline SHALL present the available Draft artifacts, Implement, or Archive action at its corresponding phase, using the existing server eligibility and session handoff rules. It SHALL expose one primary next action, explain unavailable actions, and route blocked delivery to its recovery action. The detail view SHALL NOT duplicate these lifecycle controls in its console toolbar.
+The timeline SHALL present the available Draft artifacts, Implement, or Archive action at its corresponding phase, using the existing server eligibility and session handoff rules. It SHALL expose one primary next action, explain unavailable actions, and route blocked delivery to its recovery action. The detail view SHALL NOT duplicate these lifecycle controls in its console toolbar. Pull-request checkpoints SHALL appear after Drafts, Implementing, and Archived for proposal, implementation, and archive delivery, respectively, with each checkpoint showing its own delivery state, linked pull request, checks/readiness, conflicts, and merged state when available. A merged pull request SHALL be shown as complete and SHALL NOT make the local Done phase appear actively working.
 
 #### Scenario: Ready to implement
 - **WHEN** the change is Ready and implementation is available
 - **THEN** Implement is the timeline's primary action and launching it uses the existing agent selection and confirmed session handoff
+
+#### Scenario: Three phase-specific pull-request checkpoints
+- **WHEN** proposal, implementation, and archive deliveries each have a pull request
+- **THEN** their pull-request checkpoints appear after Drafts, Implementing, and Archived in that order, each linked to its own pull request
+
+#### Scenario: Delivery status and conflict
+- **WHEN** a phase delivery is checking, has passing checks, has conflicts, or is merged
+- **THEN** only its checkpoint shows the corresponding active, successful, conflict, or merged state, with text as well as color
 
 #### Scenario: Agent sessions disabled
 - **WHEN** agent sessions are disabled
@@ -817,3 +841,4 @@ Resume, Clean up, Delete record, and Open in editor SHALL be available from a la
 #### Scenario: Small screen and keyboard
 - **WHEN** detail is viewed at narrow width or navigated by keyboard
 - **THEN** timeline labels, artifact tabs, menus, and copy controls remain reachable with visible focus and no page-wide horizontal overflow
+
