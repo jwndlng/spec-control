@@ -4,7 +4,7 @@ import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createFetchHandler } from "../src/server/api.ts";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
-import { cloneFailureReason, GithubClones, parseProgressLine, ProgressParser } from "../src/server/githubClone.ts";
+import { cloneFailureReason, GithubClones, parseProgressLine, ProgressParser, type CloneRunner } from "../src/server/githubClone.ts";
 import { confirmIntegration } from "../src/server/integration.ts";
 import { NewFolderError } from "../src/server/newFolder.ts";
 import type { Scanner } from "../src/server/scanner.ts";
@@ -39,7 +39,7 @@ interface Harness {
   scans: number;
 }
 
-async function harness(options: { maxRunning?: number; timeoutMs?: number; repos?: Config["repos"]; onChange?: (clone: GithubClone) => void; track?: (path: string) => Promise<boolean> } = {}): Promise<Harness> {
+async function harness(options: { maxRunning?: number; timeoutMs?: number; repos?: Config["repos"]; onChange?: (clone: GithubClone) => void; track?: (path: string) => Promise<boolean>; clone?: CloneRunner } = {}): Promise<Harness> {
   const root = await tempDir("osd-clone-root-");
   const h = { config: { ...defaultConfig(), scanRoots: [root], repos: options.repos ?? [] }, root, scans: 0 } as Harness;
   const app = {
@@ -56,7 +56,7 @@ async function harness(options: { maxRunning?: number; timeoutMs?: number; repos
       },
     },
   };
-  h.clones = new GithubClones({ config: () => h.config, track: options.track ?? ((path) => confirmIntegration(app, path)) }, { maxRunning: options.maxRunning, timeoutMs: options.timeoutMs, onChange: options.onChange });
+  h.clones = new GithubClones({ config: () => h.config, track: options.track ?? ((path) => confirmIntegration(app, path)) }, { maxRunning: options.maxRunning, timeoutMs: options.timeoutMs, onChange: options.onChange, clone: options.clone });
   return h;
 }
 
@@ -298,9 +298,18 @@ test("the parser follows \\r updates across split chunks and keeps only the othe
 });
 
 test("a clone reports connecting, receiving and checkout before it is tracked", async () => {
-  process.env.GIT_PROGRESS_DELAY = "0";
   const seen: string[] = [];
-  const h = await harness({ onChange: (c) => seen.push(c.progress ? `${c.state}:${c.progress.phase}` : c.state) });
+  const h = await harness({
+    onChange: (c) => seen.push(c.progress ? `${c.state}:${c.progress.phase}` : c.state),
+    track: async () => true,
+    clone: async (_repo, target, options) => {
+      await mkdir(join(target, "openspec"), { recursive: true });
+      await writeFile(join(target, "openspec", "config.yaml"), "schema: spec-driven\n");
+      options?.onProgress?.({ phase: "receiving" });
+      options?.onProgress?.({ phase: "checkout" });
+      return { outcome: "cloned" };
+    },
+  });
   const clone = await h.clones.start({ repo: "acme/beta-soc", root: h.root, name: "beta-soc" });
   expect(clone.progress?.phase).toBe("connecting");
   await h.clones.settled(clone.id);
