@@ -50,7 +50,7 @@ function ObserveEnd() {
   ending = useSessionUi().endingId;
   return null;
 }
-async function setup(options: { archived?: boolean; session?: ChangeSession; pr?: PullRequest; worktrees?: SessionWorktree[]; enabled?: boolean; excluded?: boolean; place?: "card" | "console" } = {}) {
+async function setup(options: { archived?: boolean; session?: ChangeSession; pr?: PullRequest; worktrees?: SessionWorktree[]; enabled?: boolean; excluded?: boolean; place?: "card" | "console"; suppressSessionStatus?: boolean } = {}) {
   browser = new Window({ url: "http://localhost/board" });
   globalThis.window = browser as unknown as typeof window;
   globalThis.document = browser.document as unknown as Document;
@@ -60,10 +60,22 @@ async function setup(options: { archived?: boolean; session?: ChangeSession; pr?
   api.sessions = async () => ({ sessions: [options.session ?? running], agents: [], presets: [], worktrees: options.worktrees ?? [] });
   const settings = { ...config, repos: [{ ...repo, agent: { ...repo.agent, enabled: !options.excluded } }], agentSessions: { ...config.agentSessions, enabled: options.enabled !== false } };
   const change = { ...card, archived: options.archived === false ? undefined : "2026-11-04" };
-  await act(() => render(<SessionProvider config={settings}><SessionControls card={change} place={options.place ?? "card"} pullRequest={options.pr} /><ObserveEnd /></SessionProvider>, root!));
+  await act(() => render(<SessionProvider config={settings}><SessionControls card={change} place={options.place ?? "card"} pullRequest={options.pr} suppressSessionStatus={options.suppressSessionStatus} /><ObserveEnd /></SessionProvider>, root!));
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "End session");
 }
+
+test("timeline controls omit ended-session status", async () => {
+  const ended = { ...running, state: "exited" as const, exitCode: 1 };
+  await setup({ archived: false, session: ended, suppressSessionStatus: true });
+  expect(root?.textContent).not.toContain("ended");
+});
+
+test("console controls retain ended-session status", async () => {
+  const ended = { ...running, state: "exited" as const, exitCode: 1 };
+  await setup({ archived: false, session: ended, place: "console" });
+  expect(root?.textContent).toContain("ended (1)");
+});
 
 test("archived merged PR opens confirmation for the running session without ending it", async () => {
   const button = await setup({ pr: merged });

@@ -2,7 +2,7 @@
 // by its head branch"). Derived on display, never stored: the card, the detail header and the tests share this one rule
 // so they can never disagree. Pure and total — whatever an older cache wrote, it answers or returns undefined.
 import { proposalBranch, sessionBranch } from "./sessionBranch.ts";
-import type { ChangeSnapshot, PullRequest, RepoPullRequests } from "./types.ts";
+import type { ChangeSnapshot, LifecycleDeliveryPhase, PullRequest, RepoPullRequests } from "./types.ts";
 
 /** When a pull request last moved: merged or closed if it has, else opened; 0 when no date can be read. */
 function lastMoved(pr: Partial<PullRequest>): number {
@@ -91,6 +91,28 @@ export function linkedPullRequest(
   if (fromRecord) return fromRecord;
   const candidates = new Set(candidateBranches(change));
   return candidates.size ? bestOn(candidates, change, lists) : undefined;
+}
+
+/** The pull request for one lifecycle delivery, matched only to that phase's exact recorded or managed branch. */
+export function phasePullRequest(
+  change: Pick<ChangeSnapshot, "repoId" | "name" | "created" | "recorded">,
+  phase: LifecycleDeliveryPhase,
+  pullRequests: readonly PullRequest[] | undefined,
+): PullRequest | undefined {
+  if (!Array.isArray(pullRequests)) return undefined;
+  const managedBranch = phase === "proposal" ? proposalBranch(change.name)
+    : phase === "archive" ? sessionBranch("archive", change.name)
+      : sessionBranch("implement", change.name);
+  const recordedBranch = phase === "implementation" ? change.recorded?.branch
+    : phase === "archive" ? change.recorded?.archiveBranch
+      : undefined;
+  const branches = new Set([recordedBranch, managedBranch].filter((branch): branch is string => typeof branch === "string" && branch !== ""));
+  let best: PullRequest | undefined;
+  for (const pr of pullRequests) {
+    if (!pr || typeof pr.head !== "string" || !branches.has(pr.head) || settledBeforeCreated(pr, change.created)) continue;
+    best = best ? better(best, pr) : pr;
+  }
+  return best;
 }
 
 /** Only a linked implementation PR can offer recovery; cached merge status never verifies a task. */

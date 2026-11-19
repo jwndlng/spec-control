@@ -7,7 +7,7 @@ import { LifecycleTimeline, lifecycleTimelineModel } from "../src/ui/lifecycleTi
 import { createDemoApi } from "../src/ui/demo/demoApi.ts";
 
 const change = (overrides: Partial<ChangeSnapshot> = {}) => ({
-  stage: "drafts", artifacts: [], tasks: null, ...overrides,
+  repoId: "repo", name: "rotate-keys", created: "2026-11-01", stage: "drafts", artifacts: [], tasks: null, ...overrides,
 }) as ChangeSnapshot;
 const artifact = (id: string, status: ChangeArtifactEntry["status"]): ChangeArtifactEntry => ({ id, status, files: [] });
 const delivery = (overrides: Partial<LifecycleDeliveryView> = {}): LifecycleDeliveryView => ({
@@ -57,6 +57,25 @@ describe("lifecycleTimelineModel", () => {
     ]);
     expect(model.validation).toBeUndefined();
     expect(model.persistence).toEqual([]);
+  });
+
+  test("shows Ready complete when implementation is actively running from a Ready snapshot", () => {
+    const model = lifecycleTimelineModel(change({ stage: "ready" }), [], [], undefined, [], "Implementing");
+    expect(model.current).toBe("Ready");
+    expect(model.visualCurrent).toBe("Implementing");
+    expect(model.phases.find((phase) => phase.label === "Ready")?.state).toBe("complete");
+    expect(model.phases.find((phase) => phase.label === "Implementing")?.state).toBe("current");
+    const view = mount(h(LifecycleTimeline, { model }));
+    expect(view.querySelector('.lifecycle-phase[aria-current="step"] .lifecycle-phase-label')?.textContent).toBe("Implementing");
+    expect(view.querySelector('.lifecycle-phase.complete[style*="grid-column: 4"] .lifecycle-phase-label')?.textContent).toBe("Ready");
+  });
+
+  test("keeps an ended implementation attempt current without animating it", () => {
+    const model = lifecycleTimelineModel(change({ stage: "ready" }), [], [], undefined, [], undefined, "Implementing");
+    expect(model.phases.find((phase) => phase.label === "Ready")?.state).toBe("complete");
+    expect(model.phases.find((phase) => phase.label === "Implementing")?.state).toBe("current");
+    const view = mount(h(LifecycleTimeline, { model }));
+    expect(view.querySelector(".lifecycle-phase.working")).toBeNull();
   });
 
   test("shows validation and local progress only when snapshot evidence exists", () => {
@@ -130,6 +149,17 @@ describe("lifecycleTimelineModel", () => {
     ]);
   });
 
+  test("discovers implementation and archive PRs from their own branches", () => {
+    const implementation = pullRequest({ number: 51, head: "feat/rotate-keys", checks: "passing" });
+    const archive = pullRequest({ number: 52, head: "chore/archive-rotate-keys", checks: "pending" });
+    const model = lifecycleTimelineModel(
+      change({ stage: "archived", archived: "2026-11-18", recorded: { branch: "feat/rotate-keys", archiveBranch: "chore/archive-rotate-keys" } }),
+      [], [], archive, [implementation, archive],
+    );
+    expect(model.pullRequests.implementation).toMatchObject({ state: "ready", number: 51 });
+    expect(model.pullRequests.archive).toMatchObject({ state: "checking", number: 52 });
+  });
+
   test("does not animate a ready or done phase and only marks actively working phase", () => {
     const ready = lifecycleTimelineModel(change({ stage: "ready" }), [], [], undefined, [], undefined);
     const readyView = mount(h(LifecycleTimeline, { model: ready }));
@@ -151,6 +181,13 @@ describe("lifecycleTimelineModel", () => {
     }));
     expect(view.querySelector(".lifecycle-phase.actionable")?.textContent).toContain("Archive");
     expect(view.querySelector('.lifecycle-pr-checkpoint[aria-label^="Implementation pull request"]')?.textContent).toContain("Ship");
+
+    const archived = lifecycleTimelineModel(change({ stage: "archived", archived: "2026-11-19" }), [], []);
+    const archiveView = mount(h(LifecycleTimeline, {
+      model: archived,
+      deliveryActions: { archive: h("button", {}, "Ship archive") },
+    }));
+    expect(archiveView.querySelector('.lifecycle-pr-checkpoint[aria-label^="Archive pull request"]')?.textContent).toContain("Ship archive");
 
     const active = change({ stage: "implementing" });
     const confirmation = mount(h(LifecycleTimeline, {
