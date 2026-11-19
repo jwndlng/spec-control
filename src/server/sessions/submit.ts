@@ -94,9 +94,9 @@ export interface SubmitOptions {
 
 export const ECHO_TIMEOUT_MS = 2000;
 export const SETTLE_MS = 400;
-/** A quarter of the smallest pseudo-terminal input queue known (1024 bytes on macOS). */
-export const PIECE_BYTES = 256;
-export const PIECE_PAUSE_MS = 25;
+/** Small writes limit how much a busy terminal can coalesce into one paste-sized read. */
+export const PIECE_BYTES = 64;
+export const PIECE_PAUSE_MS = 15;
 
 /** `text` cut into pieces of at most `maxBytes` UTF-8 bytes, only between characters; joined, they are `text` again. */
 export function submissionPieces(text: string, maxBytes: number = PIECE_BYTES): string[] {
