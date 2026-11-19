@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-18-phase-based-lifecycle-progress",
+  "date": "2026-11-18",
+  "title": "Follow every step of a change",
+  "summary": "The change timeline now keeps its steps centered, shows draft artifacts in a row, and gives proposal, implementation, and archive pull requests their own status checkpoints. Active work and in-progress delivery are easier to spot."
+}
