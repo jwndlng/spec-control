@@ -29,6 +29,14 @@ const stagePhase: Record<ChangeSnapshot["stage"], LifecyclePhase> = {
   implementing: "Implementing", done: "Done", archived: "Archived",
 };
 
+const PHASE_TRACK_COLUMN: Record<LifecyclePhase, number> = {
+  Backlog: 1, Drafts: 2, Ready: 4, Implementing: 5, Done: 7, Archived: 8,
+};
+
+const DELIVERY_TRACK_COLUMN: Record<LifecycleDeliveryView["phase"], number> = {
+  proposal: 3, implementation: 6, archive: 9,
+};
+
 function humanize(value: string): string {
   return value.replaceAll("-", " ").replace(/^./, (letter) => letter.toUpperCase());
 }
@@ -104,7 +112,7 @@ export function LifecycleTimeline({ model, children, draftChildren, deliveryChil
 }) {
   const renderPullRequest = (phase: LifecycleDeliveryView["phase"], label: string) => {
     const item = model.pullRequests[phase];
-    return <li class={`lifecycle-pr-checkpoint timeline-node ${item.state}`} aria-label={`${label} pull request: ${item.label}`}>
+    return <li class={`lifecycle-pr-checkpoint timeline-node ${item.state}`} style={{ gridColumn: DELIVERY_TRACK_COLUMN[phase], gridRow: 1 }} aria-label={`${label} pull request: ${item.label}`}>
       <span class="lifecycle-pr-marker" aria-hidden="true">{item.state === "ready" || item.state === "merged" ? "✓" : ""}</span>
       <span class="lifecycle-pr-label">{label} PR</span><span class="lifecycle-pr-state">{item.label}</span>
       {item.blocker && <span class="lifecycle-pr-blocker" title={item.blocker}>{item.blocker}</span>}
@@ -115,20 +123,19 @@ export function LifecycleTimeline({ model, children, draftChildren, deliveryChil
   return (
     <section class="lifecycle-timeline" aria-label="Change lifecycle">
       <div class="lifecycle-timeline-wide">
-        <ol class="lifecycle-phases">
+        <ol class="lifecycle-phases" style={{ "--lifecycle-progress": `${Math.max(0, (PHASE_TRACK_COLUMN[model.current] - 1) / 9) * 100}%` }}>
           {model.phases.map((phase) => <Fragment key={phase.label}>
-            <li class={`lifecycle-phase timeline-node ${phase.state}${phase.label === model.actionPhase || phase.label === model.draftActionPhase ? " actionable" : ""}${phase.label === "Drafts" && model.artifacts.length ? " has-artifacts" : ""}${phase.label === "Implementing" && model.taskProgress ? " has-progress" : ""}${phase.label === model.workingPhase ? " working" : ""}`} aria-current={phase.state === "current" ? "step" : undefined}>
+            <li class={`lifecycle-phase timeline-node ${phase.state}${phase.label === model.actionPhase || phase.label === model.draftActionPhase ? " actionable" : ""}${phase.label === "Drafts" && model.artifacts.length ? " has-artifacts" : ""}${phase.label === "Implementing" && model.taskProgress ? " has-progress" : ""}${phase.label === model.workingPhase ? " working" : ""}`} style={{ gridColumn: PHASE_TRACK_COLUMN[phase.label], gridRow: 1 }} aria-current={phase.state === "current" ? "step" : undefined}>
               <span class="lifecycle-phase-marker" aria-hidden="true">{phase.state === "complete" ? "✓" : ""}</span>
               <span class="lifecycle-phase-label">{phase.label}</span>
               {phase.label === model.actionPhase && <section class="lifecycle-phase-action" aria-label={`Available action for ${phase.label}`}>{children}</section>}
               {phase.label === model.draftActionPhase && <section class="lifecycle-phase-action" aria-label="Draft action">{draftChildren}</section>}
-              {phase.label === "Drafts" && model.artifacts.length > 0 && <ol class="lifecycle-artifact-dots" aria-label="Draft artifact progress">
-                {model.artifacts.map((artifact) => <li key={artifact.id} class={`lifecycle-artifact-dot ${artifact.status}`} title={`${artifact.label}: ${artifact.status}`}>
-                  <span class="lifecycle-artifact-dot-marker" aria-hidden="true">{artifact.status === "done" ? "✓" : ""}</span>
-                  <span>{artifact.label}</span>
+              {phase.label === "Drafts" && model.artifacts.length > 0 && <ol class="lifecycle-artifact-segments" aria-label="Draft artifact progress">
+                {model.artifacts.map((artifact) => <li key={artifact.id} class={`lifecycle-artifact-dot ${artifact.status}`} aria-label={`${artifact.label}: ${artifact.status}`} title={`${artifact.label}: ${artifact.status}`}>
+                  <span class="lifecycle-artifact-segment" aria-hidden="true" />
+                  <span class="lifecycle-artifact-label">{artifact.label}</span>
                 </li>)}
               </ol>}
-              {phase.label === "Drafts" && model.artifactProgress && <div class="lifecycle-phase-progress"><Meter done={model.artifactProgress.done} total={model.artifactProgress.total} unit="artifacts" showUnit /></div>}
               {phase.label === "Implementing" && model.taskProgress && <div class="lifecycle-phase-progress"><Meter {...model.taskProgress} showUnit /></div>}
               {phase.label === completionPhase && <section class="lifecycle-phase-completion" aria-label={`Completion check for ${phase.label}`}>{completionChildren}</section>}
             </li>
