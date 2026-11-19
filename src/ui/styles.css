@@ -1922,8 +1922,8 @@ a.badge.needs-you:focus-visible { outline: 2px solid var(--brand); outline-offse
 .detail-permission-picker [role="status"] { color: var(--fg-subtle); }
 .detail-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 calc(var(--detail-pad) - 14px); background: var(--bg-section); border-bottom: 1px solid var(--border-light); }
 .lifecycle-timeline { padding: 14px var(--detail-pad); border-bottom: 1px solid var(--border-light); background: var(--bg-section); }
-.lifecycle-timeline-wide { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 12px; min-width: 0; width: 100%; overflow-x: auto; scrollbar-width: thin; }
-.lifecycle-phases { position: relative; display: grid; grid-template-columns: repeat(9, minmax(112px, 1fr)); align-items: start; gap: 0; width: max-content; min-width: 100%; margin: 0; padding: 0 0 4px; list-style: none; }
+.lifecycle-timeline-wide { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 12px; min-width: 0; width: 100%; overflow-x: clip; }
+.lifecycle-phases { position: relative; display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); align-items: start; gap: 0; width: 100%; min-width: 0; margin: 0; padding: 0 0 4px; list-style: none; }
 .lifecycle-phases::before, .lifecycle-phases::after { content: ""; position: absolute; z-index: 0; top: 11px; left: calc(100% / 18); height: 2px; pointer-events: none; }
 .lifecycle-phases::before { right: calc(100% / 18); background: color-mix(in srgb, var(--border-strong) 52%, transparent); }
 .lifecycle-phases::after { width: var(--lifecycle-progress, 0%); background: var(--success); }
@@ -1937,16 +1937,19 @@ a.badge.needs-you:focus-visible { outline: 2px solid var(--brand); outline-offse
 .lifecycle-phase.current .lifecycle-phase-marker { border-color: var(--brand); background: var(--brand); }
 .lifecycle-phase.working .lifecycle-phase-marker { animation: lifecycle-current-dot 1.5s ease-out infinite; }
 .lifecycle-phase.next .lifecycle-phase-marker { border-color: var(--brand); background: var(--brand-softer); }
-.lifecycle-phase-label { white-space: nowrap; }
+.lifecycle-phase-label { max-width: 100%; overflow-wrap: anywhere; line-height: 1.15; }
 .lifecycle-phase-progress { width: min(100%, 164px); }
-.lifecycle-phase-action { display: flex; justify-content: center; width: 100%; color: var(--fg-body); font-weight: 400; }
-.lifecycle-phase-action .split { margin: 0; }
+.lifecycle-phase-action { display: flex; justify-content: center; width: 100%; min-width: 0; color: var(--fg-body); font-weight: 400; }
+.lifecycle-phase-action .split { max-width: 100%; margin: 0; }
+.lifecycle-phase-action button { min-width: 0; max-width: 100%; padding-inline: 4px; font-size: 10px; line-height: 1.2; white-space: normal; text-align: center; }
+.lifecycle-phase-action .split-main { flex: 1 1 auto; }
+.lifecycle-phase-action .split-arrow { flex: none; }
 .lifecycle-phase-completion { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 5px; color: var(--fg-subtle); font-size: 10px; font-weight: 400; }
 .lifecycle-completion-status { white-space: nowrap; }
 .lifecycle-pr-checkpoint { position: relative; display: flex; grid-column: span 1; flex-direction: column; align-items: center; gap: 7px; min-width: 0; padding: 5px 2px 4px; color: var(--fg-subtle); font-size: 10px; text-align: center; }
 .lifecycle-pr-marker { position: relative; z-index: 1; display: grid; place-items: center; width: 14px; height: 14px; flex: none; border: 2px solid var(--border-strong); border-radius: 50%; background: var(--bg-section); color: var(--bg-section); font-size: 9px; line-height: 1; }
-.lifecycle-pr-label { color: var(--fg-heading); font-weight: 600; white-space: nowrap; }
-.lifecycle-pr-state { white-space: nowrap; }
+.lifecycle-pr-label { max-width: 100%; color: var(--fg-heading); font-weight: 600; line-height: 1.1; overflow-wrap: anywhere; }
+.lifecycle-pr-state { max-width: 100%; line-height: 1.15; overflow-wrap: anywhere; }
 .lifecycle-pr-checkpoint a { color: var(--brand); }
 .lifecycle-pr-checkpoint.ready, .lifecycle-pr-checkpoint.merged { color: var(--success); }
 .lifecycle-pr-checkpoint.ready .lifecycle-pr-marker, .lifecycle-pr-checkpoint.merged .lifecycle-pr-marker { border-color: var(--success); background: var(--success); }

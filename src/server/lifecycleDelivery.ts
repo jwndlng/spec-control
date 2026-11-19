@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ChangeSession, Config, LifecycleDeliveryRecord, LifecycleDeliveryPhase, Snapshot } from "../shared/types.ts";
-import { dashboardHome } from "./paths.ts";
+import { dashboardHome, gitExecutable } from "./paths.ts";
 
 export const LIFECYCLE_DELIVERY_FILE = "lifecycle-delivery.json";
 interface DiskState { version: 1; records: LifecycleDeliveryRecord[] }
@@ -159,9 +159,16 @@ const MANAGED_ACTIONS = new Set(["draft", "implement", "fastForward", "archive"]
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 
 async function gitOutput(cwd: string, args: string[]): Promise<string | undefined> {
-  const proc = Bun.spawn(["git", ...args], { cwd, stdin: "ignore", stdout: "pipe", stderr: "ignore", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" } });
-  const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-  return code === 0 && Buffer.byteLength(out) <= MAX_SNAPSHOT_BYTES ? out : undefined;
+  const executable = gitExecutable();
+  if (!executable) return undefined;
+  try {
+    const proc = Bun.spawn([executable, ...args], { cwd, stdin: "ignore", stdout: "pipe", stderr: "ignore", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" } });
+    const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    return code === 0 && Buffer.byteLength(out) <= MAX_SNAPSHOT_BYTES ? out : undefined;
+  } catch {
+    // Observation is best-effort; a missing Git executable or worktree must not log on every scan.
+    return undefined;
+  }
 }
 
 export async function lifecycleContentHash(worktreePath: string): Promise<string | undefined> {
