@@ -49,3 +49,9 @@ test("dropdown entrances stop under reduced motion and the popup stays internall
   expect(css).toContain(".select-popup { animation: none; }");
   expect(css).toContain(".select-options { min-height: 0; overflow: auto; overscroll-behavior: contain;");
 });
+
+test("lifecycle checkpoints use the available width without a horizontal scroll track", () => {
+  expect(block(".lifecycle-timeline-wide")).toContain("overflow-x: clip");
+  expect(block(".lifecycle-phases")).toContain("grid-template-columns: repeat(9, minmax(0, 1fr))");
+  expect(block(".lifecycle-phases")).toContain("width: 100%; min-width: 0");
+});

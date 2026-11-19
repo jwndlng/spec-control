@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { lifecycleProposalScope, LifecycleCoordinator, LifecycleDeliveryMonitor, readLifecycleDelivery, upsertLifecycleDelivery, writeLifecycleDelivery, type LifecycleEvidence } from "../src/server/lifecycleDelivery.ts";
+import { lifecycleContentHash, lifecycleProposalScope, LifecycleCoordinator, LifecycleDeliveryMonitor, readLifecycleDelivery, upsertLifecycleDelivery, writeLifecycleDelivery, type LifecycleEvidence } from "../src/server/lifecycleDelivery.ts";
 import type { ChangeSession, ChangeSnapshot, Config, LifecycleDeliveryRecord, ManagedCompletionReport, RepoSnapshot, Session, Snapshot } from "../src/shared/types.ts";
 import { defaultAgentSessions, defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import { git, tempGitRepo } from "./sessionHelpers.ts";
@@ -83,6 +83,17 @@ describe("lifecycle delivery persistence", () => {
 });
 
 describe("lifecycle completion observation", () => {
+  test("skips Git-backed observation quietly when Git is unavailable", async () => {
+    const originalPath = process.env.PATH;
+    try {
+      process.env.PATH = "";
+      expect(await lifecycleContentHash("/missing-worktree")).toBeUndefined();
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+    }
+  });
+
   const evidence = (overrides: Partial<LifecycleEvidence> = {}): LifecycleEvidence => ({
     sessionId: "session", actionId: "action", action: "draft", processRunning: true, completionReported: true,
     cleanExitFallback: false, historical: false, requiredArtifactsReady: true, tasksVerified: false,
