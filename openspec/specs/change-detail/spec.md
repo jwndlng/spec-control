@@ -740,7 +740,7 @@ Successful Ship SHALL show a persistent confirmation with the verified created o
 - **THEN** the UI reconciles the known operation from server status before permitting a duplicate operation or announcing its result
 
 ### Requirement: Detail presents a lifecycle timeline above the file tabs
-Change detail SHALL show an ordered timeline from Backlog through Drafts, Ready, Implementing, Done, and Archived above the file tabs. Phase nodes SHALL be larger than schema-derived artifact milestones. The current phase, completed steps, available next action, and pending persistence SHALL be distinct in text and appearance. Unknown or optional schema artifacts SHALL NOT fabricate completion. Draft artifact progress SHALL be shown under Drafts, and task progress SHALL be shown under Implementing. Progress controls and phase actions SHALL be centered within their checkpoints.
+Change detail SHALL show an ordered timeline from Backlog through Drafts, Ready, Implementing, Done, and Archived above the file tabs. Phase nodes SHALL be larger than schema-derived artifact milestones. The current phase, completed steps, available next action, and pending persistence SHALL be distinct in text and appearance. When a lifecycle action has advanced beyond the snapshot stage, the timeline SHALL show that phase as current and preceding phases as complete; it SHALL animate only while that phase is actively running. The timeline SHALL describe change phases and delivery state; it SHALL NOT include whether an agent session has ended. Unknown or optional schema artifacts SHALL NOT fabricate completion. Draft artifact progress SHALL be shown under Drafts, and task progress SHALL be shown under Implementing. Progress controls and phase actions SHALL be centered within their checkpoints.
 
 #### Scenario: Drafting progress
 - **WHEN** proposal and specs exist but required tasks are missing
@@ -749,6 +749,18 @@ Change detail SHALL show an ordered timeline from Backlog through Drafts, Ready,
 #### Scenario: Implementation progress
 - **WHEN** a change has tasks and is in `Implementing`
 - **THEN** its task progress bar is under Implementing, not in the detail header
+
+#### Scenario: Implementation advances the timeline
+- **WHEN** the snapshot stage is Ready and an implementation session has started
+- **THEN** Implementing is current and Ready is shown complete
+
+#### Scenario: Only active work animates
+- **WHEN** an implementation session has ended while the change still requires implementation
+- **THEN** Implementing remains current without animation and Ready remains complete
+
+#### Scenario: Ended session does not appear in phase progress
+- **WHEN** implementation is still required and the latest implementation session has ended
+- **THEN** the timeline shows the change's phase and implementation progress without an ended-session status
 
 #### Scenario: Archive pending delivery
 - **WHEN** an archive exists locally but its PR is still open
@@ -774,7 +786,7 @@ The timeline SHALL present the available Draft artifacts, Implement, or Archive 
 - **THEN** the timeline remains readable without presenting an enabled launch action
 
 ### Requirement: The lifecycle stepper guides local and remote progress
-The change detail timeline SHALL place the existing phase action under the phase it advances, preserving all current eligibility and session handoff rules. Completed phases SHALL show green completion markers, the current phase SHALL have a pulsing marker, and the available next phase SHALL be visually highlighted. A Done sub-state action such as Validate SHALL remain attached to Done. Backlog SHALL indicate the Fast-forward route to Implementing while retaining the existing Fast-forward action and confirmation.
+The change detail timeline SHALL place the existing phase action under the phase it advances, preserving all current eligibility and session handoff rules. Completed phases SHALL show green completion markers, the current actively running phase SHALL have a pulsing marker, and the available next phase SHALL be visually highlighted. A Done sub-state action such as Validate SHALL remain attached to Done. Backlog SHALL indicate the Fast-forward route to Implementing while retaining the existing Fast-forward action and confirmation.
 
 #### Scenario: Next local action
 - **WHEN** a change is Ready and Implement is available
@@ -793,7 +805,7 @@ The change detail timeline SHALL place the existing phase action under the phase
 - **THEN** its phase checkpoint shows a compact Confirm complete action, and confirming retains the server's artifact, task, and stable-worktree verification
 
 ### Requirement: The timeline shows a pull-request delivery checkpoint
-The timeline SHALL show a smaller pull-request checkpoint after Done. When Ship is available, it SHALL appear in that checkpoint and retain the existing shippability and confirmation behavior. The checkpoint SHALL link to a known pull request and distinguish its delivery status in both text and appearance: shipping or checks in progress SHALL pulse orange, a mergeable pull request with passing checks SHALL be green, and conflicts or failing checks SHALL be red. A merged pull request SHALL be green. When conflicts can be resolved under the existing eligibility rules, Resolve conflicts SHALL appear in the checkpoint and use the existing recovery behavior.
+The timeline SHALL show smaller pull-request checkpoints after Drafts, Implementing, and Archived for proposal, implementation, and archive delivery, respectively. When Ship is available, it SHALL appear in the matching checkpoint and retain the existing shippability and confirmation behavior. Each checkpoint SHALL link to a known pull request and distinguish its delivery status in both text and appearance: shipping or checks in progress SHALL pulse orange, a mergeable pull request with passing checks SHALL be green, and conflicts or failing checks SHALL be red. A merged pull request SHALL be green. When conflicts can be resolved under the existing eligibility rules, Resolve conflicts SHALL appear in the matching checkpoint and use the existing recovery behavior. Each lifecycle delivery checkpoint SHALL discover its pull request from its delivery record or that phase's exact recorded or managed head branch. Archive shipping controls and their in-progress status SHALL appear at the Archive PR checkpoint, not the Implementation PR checkpoint.
 
 #### Scenario: Ship a completed change
 - **WHEN** a Done change has shippable work and no linked pull request
@@ -810,6 +822,14 @@ The timeline SHALL show a smaller pull-request checkpoint after Done. When Ship 
 #### Scenario: Pull request conflicts
 - **WHEN** GitHub reports that the linked pull request conflicts with its base
 - **THEN** the checkpoint shows a red conflict marker and, when eligible, offers Resolve conflicts
+
+#### Scenario: Archive shipping appears at its own checkpoint
+- **WHEN** the user ships an archive PR
+- **THEN** the shipping control and in-progress status appear under Archive PR, not Implementation PR
+
+#### Scenario: Implementation and archive pull requests remain distinct
+- **WHEN** the same change has pull requests on its implementation and archive branches
+- **THEN** each pull request's checks and link appear at its matching phase checkpoint
 
 ### Requirement: Maintenance actions are progressively disclosed
 Resume, Clean up, Delete record, and Open in editor SHALL be available from a labeled session actions menu for the selected session when applicable. Their eligibility and confirmations SHALL be retained. The visible worktree path SHALL have an adjacent keyboard-accessible copy icon with success/failure feedback; detail SHALL NOT show a separate Copy cd text button.
