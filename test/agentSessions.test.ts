@@ -31,8 +31,17 @@ test("Antigravity receives supported mode and sandbox flags without an undocumen
   h.config.agentSessions.defaultPermissionProfile = "less-friction";
   const session = await h.manager.open({ repoId: h.repoId, change: IMPLEMENT, action: "implement" });
   const terminal = await watch(h.manager, session.id);
-  await waitFor(() => terminal.text().includes("--mode"), "Antigravity mode flag");
-  const args = JSON.parse(/args=(\[[^\n]+?\])/.exec(terminal.text())?.[1] ?? "[]") as string[];
+  let args: string[] = [];
+  await waitFor(() => {
+    const raw = /args=(\[[^\n]*\])/.exec(terminal.text())?.[1];
+    if (!raw) return false;
+    try {
+      args = JSON.parse(raw) as string[];
+      return true;
+    } catch {
+      return false;
+    }
+  }, "complete Antigravity launch arguments");
   expect(args).toContain("--sandbox");
   expect(args).not.toContain("--settings");
   await h.manager.submit(session.id, "exit");

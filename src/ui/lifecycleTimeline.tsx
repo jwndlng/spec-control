@@ -3,6 +3,8 @@ import { Fragment, type ComponentChildren } from "preact";
 import type { PullRequest } from "../shared/types.ts";
 import type { LifecycleDeliveryView } from "./api.ts";
 import { Meter } from "./kanban.tsx";
+import { phasePullRequest, isProposalPullRequest } from "../shared/pullRequestLink.ts";
+import { sessionBranch } from "../shared/sessionBranch.ts";
 
 export const LIFECYCLE_PHASES = ["Backlog", "Drafts", "Ready", "Implementing", "Done", "Archived"] as const;
 export type LifecyclePhase = (typeof LIFECYCLE_PHASES)[number];
@@ -10,6 +12,7 @@ export type LifecyclePullRequestState = "upcoming" | "unshipped" | "shipping" | 
 
 export interface LifecycleTimelineModel {
   current: LifecyclePhase;
+  visualCurrent: LifecyclePhase;
   actionPhase?: LifecyclePhase;
   draftActionPhase?: LifecyclePhase;
   phases: { label: LifecyclePhase; state: "complete" | "current" | "next" | "upcoming" }[];
@@ -42,15 +45,21 @@ function humanize(value: string): string {
 }
 
 export function lifecycleTimelineModel(
-  change: Pick<ChangeSnapshot, "stage" | "archived" | "subState" | "tasks">,
+  change: Pick<ChangeSnapshot, "repoId" | "name" | "created" | "recorded" | "stage" | "archived" | "subState" | "tasks">,
   artifacts: readonly Pick<ArtifactStatus, "id" | "status" | "required">[],
   deliveries: readonly LifecycleDeliveryView[],
   pr?: PullRequest,
   prs: readonly PullRequest[] = [],
   workingPhase?: LifecyclePhase,
+  progressPhase?: LifecyclePhase,
 ): LifecycleTimelineModel {
   const current = change.archived ? "Archived" : stagePhase[change.stage];
   const currentIndex = LIFECYCLE_PHASES.indexOf(current);
+  const workingIndex = workingPhase ? LIFECYCLE_PHASES.indexOf(workingPhase) : -1;
+  const progressIndex = progressPhase ? LIFECYCLE_PHASES.indexOf(progressPhase) : -1;
+  const visualIndex = Math.max(currentIndex, workingIndex, progressIndex);
+  const visualCurrent = LIFECYCLE_PHASES[visualIndex];
+  const visualCurrentIndex = LIFECYCLE_PHASES.indexOf(visualCurrent);
   const nextPhase = LIFECYCLE_PHASES[currentIndex + 1];
   const latestDeliveries = new Map<LifecycleDeliveryView["phase"], LifecycleDeliveryView>();
   for (const delivery of deliveries) {
@@ -64,7 +73,8 @@ export function lifecycleTimelineModel(
     pullRequestUrl: delivery.pullRequestUrl,
   }));
   const stateFor = (phase: LifecycleDeliveryView["phase"], delivery: LifecycleDeliveryView | undefined, phasePr: PullRequest | undefined) => {
-    const started = phase === "proposal" ? currentIndex >= 1 : phase === "implementation" ? currentIndex >= 3 : currentIndex >= 5;
+    const phaseStarted = phasePr !== undefined || delivery !== undefined;
+    const started = phaseStarted || (phase === "proposal" ? currentIndex >= 1 : phase === "implementation" ? currentIndex >= 3 : currentIndex >= 5);
     const state: LifecyclePullRequestState = phasePr?.state === "merged" || delivery?.state === "merged" ? "merged"
       : !phasePr ? !started ? "upcoming"
         : delivery && ["pending", "committing", "pushing", "opening-pr"].includes(delivery.state) ? "shipping"
@@ -81,14 +91,17 @@ export function lifecycleTimelineModel(
   };
   const pullRequests = Object.fromEntries((['proposal', 'implementation', 'archive'] as const).map((phase) => {
     const delivery = latestDeliveries.get(phase);
-    const phasePr = (delivery?.pullRequestNumber ? prs.find((candidate) => candidate.number === delivery.pullRequestNumber) : undefined) ?? (phase === "implementation" ? pr : undefined);
+    const recordedPr = phasePullRequest(change, phase, prs);
+    const genericImplementationPr = phase === "implementation" && pr && !isProposalPullRequest(change, pr) && pr.head !== sessionBranch("archive", change.name) && pr.head !== change.recorded?.archiveBranch ? pr : undefined;
+    const phasePr = (delivery?.pullRequestNumber ? prs.find((candidate) => candidate.number === delivery.pullRequestNumber) : undefined) ?? recordedPr ?? genericImplementationPr;
     return [phase, stateFor(phase, delivery, phasePr)];
   })) as LifecycleTimelineModel["pullRequests"];
   return {
     current,
+    visualCurrent,
     ...(change.subState === "validate" ? { actionPhase: "Done" as const } : nextPhase ? { actionPhase: nextPhase } : {}),
     ...(current === "Ready" && artifacts.some((artifact) => artifact.required === false && artifact.status !== "done") ? { draftActionPhase: "Drafts" as const } : {}),
-    phases: LIFECYCLE_PHASES.map((label, index) => ({ label, state: index < currentIndex ? "complete" : index === currentIndex ? "current" : index === currentIndex + 1 ? "next" : "upcoming" })),
+    phases: LIFECYCLE_PHASES.map((label, index) => ({ label, state: index < visualCurrentIndex ? "complete" : index === visualCurrentIndex ? "current" : index === visualCurrentIndex + 1 ? "next" : "upcoming" })),
     artifacts: artifacts.map(({ id, status }) => ({ id, label: humanize(id), status })),
     ...(current === "Drafts" && artifacts.length > 0 ? { artifactProgress: { done: artifacts.filter((artifact) => artifact.status === "done").length, total: artifacts.length } } : {}),
     ...(change.tasks && change.tasks.total > 0 && current !== "Backlog" && current !== "Drafts" ? { taskProgress: change.tasks } : {}),
@@ -123,7 +136,7 @@ export function LifecycleTimeline({ model, children, draftChildren, deliveryChil
   return (
     <section class="lifecycle-timeline" aria-label="Change lifecycle">
       <div class="lifecycle-timeline-wide">
-        <ol class="lifecycle-phases" style={{ "--lifecycle-progress": `${Math.max(0, (PHASE_TRACK_COLUMN[model.current] - 1) / 9) * 100}%` }}>
+        <ol class="lifecycle-phases" style={{ "--lifecycle-progress": `${Math.max(0, (PHASE_TRACK_COLUMN[model.visualCurrent] - 1) / 9) * 100}%` }}>
           {model.phases.map((phase) => <Fragment key={phase.label}>
             <li class={`lifecycle-phase timeline-node ${phase.state}${phase.label === model.actionPhase || phase.label === model.draftActionPhase ? " actionable" : ""}${phase.label === "Drafts" && model.artifacts.length ? " has-artifacts" : ""}${phase.label === "Implementing" && model.taskProgress ? " has-progress" : ""}${phase.label === model.workingPhase ? " working" : ""}`} style={{ gridColumn: PHASE_TRACK_COLUMN[phase.label], gridRow: 1 }} aria-current={phase.state === "current" ? "step" : undefined}>
               <span class="lifecycle-phase-marker" aria-hidden="true">{phase.state === "complete" ? "✓" : ""}</span>

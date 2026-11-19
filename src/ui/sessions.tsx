@@ -575,6 +575,7 @@ export function SessionControls({
   into,
   steps,
   timelineAction,
+  suppressSessionStatus = false,
 }: {
   card: Pick<ChangeSnapshot, "repoId" | "name" | "archived" | "artifacts" | "stage" | "subState" | "blocked">;
   place: StarterPlace;
@@ -582,6 +583,8 @@ export function SessionControls({
   into?: ChangeSession;
   steps?: Partial<Record<PullRequestStep, ActionItem | ActionStatus>>;
   timelineAction?: "draft" | "main";
+  /** A lifecycle timeline shows phase progress; session status belongs in the Console tab. */
+  suppressSessionStatus?: boolean;
 }) {
   const ui = useSessionUi();
   const [starting, setStarting] = useState<SessionAction>();
@@ -648,7 +651,7 @@ export function SessionControls({
   const items = timelineAction === "draft" ? [] : menu.map((m) => item(m, false)).filter((m): m is ActionItem => m !== undefined && !("status" in m));
   return (
     <>
-      {timelineAction !== "draft" && shown.map((session) => (
+      {timelineAction !== "draft" && !suppressSessionStatus && shown.map((session) => (
         <Fragment key={session.id}>
           <SessionBadgeView badge={sessionBadge(session)} onClick={() => ui.openPanel(session.id)} />
           {place === "card" && canEndArchivedSession(card, session, pullRequest, ui.worktrees.find((w) => w.path === session.worktreePath)) && (
