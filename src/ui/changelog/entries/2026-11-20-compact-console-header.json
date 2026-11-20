@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-20-compact-console-header",
+  "date": "2026-11-20",
+  "title": "Keep more room for the terminal",
+  "summary": "The Console now keeps session context in a compact header, with agent and permission controls behind a settings gear. Ship and its progress stay with the lifecycle timeline."
+}

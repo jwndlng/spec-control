@@ -194,7 +194,9 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             The agent's terminal is the <strong>Console</strong> tab of the change's detail view. What it changes is decided by
             its own permission prompts. A change has one running session at a time: while it runs, the timeline shows its
             session badge instead of starters; use the timeline for the next lifecycle action. The Console tab holds the
-            terminal and selected session's maintenance actions.
+            terminal and selected session's maintenance actions. Its compact header keeps the agent, project, branch and
+            session/work status at the left, with End session and Open in editor at the right; the terminal gets at least
+            80% of the panel height. Agent and permission settings stay behind the collapsed Console settings gear.
           </li>
           <li>
             Change details show Backlog, Drafts, Ready, Implementing, Done and Archived in a lifecycle timeline. Smaller
@@ -202,8 +204,8 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             the step they advance, and a compact confirmation appears in a phase that needs completion evidence. A smaller
             pull-request checkpoint follows Done: Ship appears there when work is ready, its marker shows shipping and check
             status, and Resolve conflicts appears when available. Delivery status remains separate from local progress.
-            The selected session's <strong>Session actions</strong> are visible in the Console tab: Resume, Clean up,
-            Delete record and Open in editor. The copy icon beside a worktree path copies the path itself.
+            The selected session's actions are directly available in the Console header, with an accessible actions label
+            and no visible heading. The copy icon beside a worktree path copies the path itself.
           </li>
           <li>
             In the demo, <strong>idempotency-keys</strong> shows a proposal waiting on PR #42, and <strong>deprecate-v1-auth</strong>
@@ -218,7 +220,8 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             </figure>
           </li>
           <li>
-            <strong>Permission profile for this change</strong> is in the Console tab beside the change agent setting.
+            <strong>Permission profile for this change</strong> is in the Console tab's collapsed Console settings gear,
+            alongside the change agent setting.
             Choose <strong>Inherit from project</strong> to use the project profile, then the global default, then Minimum;
             choosing a profile overrides only this change. Saving… and Saved announce progress; a refused save shows its
             reason and keeps the previous selection so you can retry. Changes apply on the next session start. When a running
@@ -231,7 +234,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             <code>{"{model}"}</code>; otherwise the dashboard adds <code>--model</code> followed by the model name.
           </li>
           <li>
-            <strong>Open in editor</strong> is in the selected session's visible <strong>Session actions</strong> group in the Console tab. In Open work,
+            <strong>Open in editor</strong> is at the top right of the Console header beside End session, without a visible heading. In Open work,
             it remains beside <strong>Copy cd</strong>. It opens the
             folder the change's agent works in — its worktree, or the project folder for a session without one — in your
             editor. It runs VS Code's <code>code</code> unless you set another <strong>Editor command</strong> under{" "}
@@ -317,7 +320,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             and runtimes without session command filtering show an unsupported notice.
           </li>
           <li>
-            With more than one agent profile, a change's Console tab lets you choose an agent for its next session.
+            With more than one agent profile, a change's Console settings gear lets you choose an agent for its next session.
             Choose Project agent to return to the project's choice. A running session keeps its original agent.
           </li>
         </ul>

@@ -50,6 +50,7 @@ const change: ChangeSnapshot = {
 };
 const repo: RepoSnapshot = { id: "r1", name: "forum-admin", path: "/w/acme/forum-admin", ok: true, scannedAt: "2026-03-10T12:00:00Z", isGit: true, worktrees: [], changes: [change] };
 const DIR = "/w/acme/forum-admin/openspec/changes/multi-tenant-sync";
+const styles = readFileSync(join(import.meta.dir, "..", "src", "ui", "styles.css"), "utf8");
 
 const artifacts: ChangeArtifactEntry[] = [
   { id: "proposal", status: "done", files: [{ path: "proposal.md", bytes: 10 }] },
@@ -92,6 +93,16 @@ test("header: repository link, change name, close control, warnings — and the 
 
   // A change that is gone from the snapshot has only its name: no facts row.
   expect(classed(DetailHeader({ repo, change: { name: "gone" }, onClose: noop }), "detail-facts")).toEqual([]);
+});
+
+test("dismiss and delete change files keep their visible outline at rest", () => {
+  const header = DetailHeader({ repo, change, onClose: noop, onDismiss: noop, onDeleteFiles: noop });
+  const actions = byTag(header, "button").filter((button) => ["Dismiss change", "Delete change files"].includes(textOf(button).trim()));
+  expect(actions.map((button) => textOf(button).trim())).toEqual(["Dismiss change", "Delete change files"]);
+  expect(String(actions[0].props.class)).toContain("dismiss-change");
+  expect(String(actions[1].props.class)).toContain("delete-change-files");
+  expect(styles).toMatch(/\.btn\.ghost\.dismiss-change\s*\{[^}]*border-color:\s*var\(--border-strong\)/);
+  expect(styles).toMatch(/\.btn\.ghost\.delete-change-files\s*\{[^}]*border-color:\s*var\(--border-strong\)/);
 });
 
 test("detail header labels a recorded implementation model only when present", () => {

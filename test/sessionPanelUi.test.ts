@@ -55,49 +55,64 @@ test("a failed request enables the actions again", async () => {
 test("the panel's header actions go through the guard and are disabled while one runs", () => {
   expect(panel).toContain("oneAtATime(");
   const header = panel.slice(panel.indexOf('<header class="session-head">'), panel.indexOf("</header>"));
-  // Ship also reads the provider's immediate in-flight flag; other actions use the local guard.
-  expect(header.match(/disabled=\{acting\}/g)).toHaveLength(3);
-  expect(header).toContain("disabled={acting || ui.shippingIds.has(session.id)}");
+  const consolePanel = panel.slice(panel.indexOf("export function ConsolePanel"), panel.indexOf("export function ShipOperationStatus"));
+  expect(header).toContain("disabled={acting}");
   expect(header).toContain("disabled={!merge.enabled || acting}");
-  expect(header).not.toContain('<details class="console-more-actions">');
-  expect(header).not.toContain("More actions");
+  expect(header).toContain('<details class="console-settings">');
+  expect(header).toContain('<summary aria-label="Console settings" title="Console settings">');
+  expect(header).not.toContain('<details class="console-settings" open');
+  expect(header).toContain('aria-label={`Session actions for ${session?.change ?? "selected session"}`}');
+  expect(header).not.toContain('<span class="console-action-heading">Session actions</span>');
+  expect(header).toContain("console-head-actions");
   expect(header).toContain("{showPullRequestActions && (");
   expect(header).toContain("{showChangeActions && (");
-  expect(header).toContain("{showSessionActions && (");
+  expect(consolePanel).toContain("{showSessionActions && (");
   expect(panel).toContain("const showPullRequestActions = showFinishChecks || (!!canResolve && !!session && !inSplit(\"resolveConflicts\")) || (!!merge && !!session && !inSplit(\"merge\"));");
   expect(panel).toContain("const showChangeActions = !lifecycleActionsInTimeline && !!(session && card && receiving && sessionsEnabledFor(ui.config, card.repoId) && (split?.main || split?.menu.length));");
   expect(panel).toContain("{card && !lifecycleActionsInTimeline && (");
   expect(panel).toContain("const showSessionActions = !!session;");
-  expect(header).toContain('<div class="console-ship-primary">');
-  expect(header.indexOf('<div class="console-ship-primary">')).toBeLessThan(header.indexOf("{showPullRequestActions && ("));
-  expect(header).toContain("Commit this change, push its branch, and open or reuse a pull request. This does not merge it.");
+  expect(consolePanel).not.toContain("⇪ Ship");
+  expect(consolePanel).not.toContain("Commit this change, push its branch, and open or reuse a pull request.");
+  expect(consolePanel).not.toContain("ship-operation-status");
   expect(header).toContain('aria-label="Pull request actions"');
   expect(header).toContain('aria-label="Change actions"');
-  expect(panel).toContain('<section class="console-action-group" aria-label={`Session actions for ${session?.change ?? "selected session"}`}>' );
   expect(panel).not.toContain("session-actions-menu");
   const sessionGroup = panel.slice(panel.indexOf('aria-label={`Session actions for'), panel.indexOf("</section>", panel.indexOf('aria-label={`Session actions for')));
   for (const action of ["▶ Resume", "Clean up", "Delete record", "<OpenInEditor"]) expect(sessionGroup).toContain(action);
-  expect(sessionGroup).toContain('<span class="console-action-heading">Session actions</span>');
-  // The same steps offered through the split button in the console.
-  expect(header).toContain("disabled: !merge.enabled || acting,");
-  expect(header).toContain("disabled: acting,");
+  expect(sessionGroup).not.toContain("console-action-heading");
+  // Operation progress and recovery render in the timeline delivery checkpoint.
+  expect(panel).toContain("export function ShipOperationStatus");
+  expect(panel).toContain("aria-live={operation.state === \"failed\" ? \"assertive\" : \"polite\"}");
+  expect(detailSource).toContain("<ShipOperationStatus session={shownSession} />");
+  expect(detailSource).toContain("ShipOperationStatus session={shownSession}");
   expect(panel).toContain("Ship outcome unknown:");
-  expect(panel).toContain('aria-live={shipOperation.state === "failed" ? "assertive" : "polite"}');
-  expect(panel).toContain("shipOperationDismissed(shipOperation.operationId)");
-  for (const call of ["ui.ship(session.id)", "api.resolveConflicts(session.id)", "api.mergeSession(session.id)", "api.resumeSession(session.id)", "api.deleteSession(session.id)"]) {
+  expect(panel).toContain("shipOperationDismissed(operation.operationId)");
+  for (const call of ["api.resolveConflicts(session.id)", "api.mergeSession(session.id)", "api.resumeSession(session.id)", "api.deleteSession(session.id)"]) {
     const at = header.indexOf(call);
-    expect(at).toBeGreaterThan(0);
-    expect(header.slice(Math.max(0, at - 120), at)).toContain("act(");
+    if (call.includes("api.resumeSession") || call.includes("api.deleteSession")) {
+      expect(consolePanel.indexOf(call)).toBeGreaterThan(0);
+      expect(consolePanel.slice(Math.max(0, consolePanel.indexOf(call) - 150), consolePanel.indexOf(call))).toContain("act(");
+    } else {
+      expect(header.indexOf(call)).toBeGreaterThan(0);
+      expect(header.slice(Math.max(0, header.indexOf(call) - 120), header.indexOf(call))).toContain("act(");
+    }
   }
 });
 
 test("the agent picker in the console pane renders when multiple agents exist, and displays running agent hint when different", () => {
   const picker = panel.slice(panel.indexOf('<div class="row change-agent-picker">'), panel.indexOf("{agentError &&"));
+  const disclosure = panel.slice(panel.indexOf('<details class="console-settings">'), panel.indexOf("{agentError &&"));
   expect(picker).toContain("<Select aria-label=\"Change agent\"");
   expect(picker).not.toContain("<select");
+  expect(disclosure).toContain("<ChangePermissionPicker");
+  expect(disclosure).not.toContain("open &&");
   expect(panel).toContain("ui.config.agentSessions.agents.length > 1");
   expect(panel).toContain("setChangeAgent(repoId, change, agentId || null)");
   expect(panel).toContain("This session uses {session.agentName}; the next session starts {nextAgent.name}.");
+  expect(panel).toContain('<div class="notice danger" role="status">');
+  const saveAgent = panel.slice(panel.indexOf("const chooseAgent = async"), panel.indexOf("const canResolve"));
+  expect(saveAgent).toContain("ui.saveConfig(await api.setChangeAgent");
+  expect(saveAgent).not.toContain("ui.start(");
 });
 
 test("the Console owns the change permission picker; project settings keep their own", () => {

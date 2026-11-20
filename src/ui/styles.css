@@ -1444,7 +1444,7 @@ p.add-github-root { display: block; }
 .notice .dismiss-files { margin-top: 6px; }
 .dismiss-actions { display: flex; align-items: center; gap: 8px; padding: 14px 24px 18px; border-top: 1px solid var(--border-light); }
 /* Quiet in the header: it only reads as destructive once hovered or focused. */
-.btn.ghost.dismiss-change { flex: none; margin-left: auto; }
+.btn.ghost.dismiss-change { flex: none; margin-left: auto; border-color: var(--border-strong); }
 .btn.ghost.dismiss-change:not(:disabled):hover, .btn.ghost.dismiss-change:focus-visible { color: var(--danger); border-color: var(--danger-border); background: var(--danger-bg); }
 .btn.ghost.dismiss-change:disabled { opacity: 0.55; cursor: not-allowed; }
 .app-notice { display: flex; align-items: center; gap: 8px; margin: 8px 16px 0; background: var(--bg-section); }
@@ -2057,22 +2057,30 @@ a.badge.needs-you:focus-visible { outline: 2px solid var(--brand); outline-offse
    `flex: 1`, which only resolves if this pane is a flex container. Without it the terminal collapses to its own content
    — and its host is absolutely positioned, so that is nothing — leaving a few pixels of blue frame. */
 .console-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-top: 2px solid var(--info); border-left: 1px solid var(--info-border); }
-.console-pane > .session-head { gap: 10px; padding: 14px var(--detail-pad, 20px); border-bottom-color: var(--info-border); background: var(--bg-section); }
+.console-pane > .session-head { flex: none; max-height: 20%; min-height: 0; overflow: auto; gap: 8px; padding: 8px var(--detail-pad, 20px); border-bottom-color: var(--info-border); background: var(--bg-section); }
+.console-head-layout { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px 12px; min-width: 0; }
+.console-head-context { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.console-session-facts { min-width: 0; flex-wrap: wrap; gap: 4px 8px; }
+.console-head-actions { align-self: start; justify-self: end; }
+.console-head-actions .console-secondary-actions { justify-content: flex-end; flex-wrap: wrap; }
+.console-settings { position: relative; flex: none; }
+.console-settings > summary { display: grid; width: 28px; height: 28px; place-items: center; list-style: none; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--fg-subtle); cursor: pointer; }
+.console-settings > summary::-webkit-details-marker { display: none; }
+.console-settings > summary:hover, .console-settings > summary:focus-visible, .console-settings[open] > summary { color: var(--fg-heading); background: var(--bg-surface); }
+.console-settings[open] > .console-change-settings { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: min(340px, calc(100vw - 48px)); max-height: min(60vh, 420px); overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); box-shadow: var(--shadow-lg); }
 .console-change-settings { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 20px; }
 .console-change-settings .detail-permission-picker { padding: 0; border: 0; background: transparent; }
 .console-change-settings .detail-permission-picker > span:first-child { color: var(--text-muted); font-size: 12px; }
-.console-ship-primary { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
-.console-ship-action { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
-.console-ship-action > span { color: var(--fg-subtle); font-size: 12px; }
-.console-ship-primary .ship-operation-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; }
-.console-action-groups { display: grid; gap: 10px; }
+.console-action-groups { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .console-action-group { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
 .console-action-heading { color: var(--fg-subtle); font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
 .console-action-group .row { gap: 6px; }
+.ship-operation-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; }
 /* The terminal is the part that scrolls, so it needs a bounded box: the detail content column does not scroll here. */
 .detail-content:has(.console-pane) { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
 .detail-content > .console-pane { flex: 1; min-height: 0; max-width: none; }
 .console-empty { padding: 28px var(--detail-pad, 20px); }
+.btn.ghost.delete-change-files { border-color: var(--border-strong); }
 
 /* ---- The main console: a top-bar control and an overlay holding one terminal that belongs to no change ---- */
 .console-btn { position: relative; }

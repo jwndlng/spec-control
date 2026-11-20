@@ -6,7 +6,6 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "preact/hooks";
 import {
-  SHIPPABLE_WORK,
   type ChangeSnapshot,
   type ChangeSession,
   type Session,
@@ -363,7 +362,6 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
   const [error, setError] = useState<string>();
   const inFlight = useRef(false);
   const [acting, setActing] = useState(false);
-  const [dismissedShipOperation, setDismissedShipOperation] = useState<string>();
   // An agent that was started again (Resume, Ship — from here or from the end-session dialog) gets a fresh terminal view.
   const generation = useTerminalGeneration(session);
 
@@ -374,7 +372,6 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
   // An in-place session runs in the repository folder, which is not a worktree: nothing git-derived applies to it.
   const tree = worktreeOfSession(session, ui.worktrees) ?? (session ? undefined : worktree);
   const work = tree && workBadge(tree, ui.sessions);
-  const shippable = session !== undefined && tree !== undefined && SHIPPABLE_WORK.includes(tree.work.state);
   // The badge sits beside the work badge, not instead of it: "pushed" and "no longer merges" are both true.
   // The change's pull request, from the lists the page already holds: GitHub's conflict counts here too.
   const card = repoId && change ? ui.snapshot?.repos.find((r) => r.id === repoId)?.changes.find((c) => c.name === change && !c.archived) : undefined;
@@ -400,19 +397,6 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
     card ? linkedPullRequest(card, prs.data?.repos) : undefined,
     prs.data?.repos.find((r) => r.repoId === repoId)?.fetchedAt,
   );
-  const shipOperation = session?.shipOperation;
-  const shipStageLabel =
-    shipOperation?.stage === "preparing"
-      ? "Preparing to ship"
-      : shipOperation?.stage === "committing"
-        ? "Committing changes"
-        : shipOperation?.stage === "pushing"
-          ? "Pushing branch"
-          : shipOperation?.stage === "pull-request"
-            ? "Opening or finding pull request"
-            : shipOperation?.stage === "refreshing"
-              ? "Refreshing pull request details"
-              : undefined;
   const merged = tree?.work.state === "merged";
   // Merge: the session's open pull request, from the lists the page already holds (agent-merges-docs-prs D7) — or the
   // proposal's, handed to the change's running session once the proposal session ended (one-console-per-change D3).
@@ -457,7 +441,11 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
   return (
     <section class="console-pane" aria-label={`Agent console ${change ?? ""}`}>
       <header class="session-head">
-        {card && repo && ui.config && <div class="console-change-settings">
+        <div class="console-head-layout">
+          <div class="console-head-context">
+        {card && repo && ui.config && <details class="console-settings">
+          <summary aria-label="Console settings" title="Console settings"><span aria-hidden="true">⚙</span><span class="visually-hidden">Console settings</span></summary>
+          <div class="console-change-settings">
           {ui.config.agentSessions.agents.length > 1 && <div class="row change-agent-picker">
             Agent{" "}
             <Select aria-label="Change agent"
@@ -477,7 +465,8 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
             />
           </div>}
           {ui.config.agentSessions.enabled && <ChangePermissionPicker key={`${repoId}/${change}`} repoId={repoId!} changeName={change!} />}
-        </div>}
+          </div>
+        </details>}
         {agentError && (
           <div class="notice danger" role="status">
             {agentError}
@@ -488,7 +477,7 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
             This session uses {session.agentName}; the next session starts {nextAgent.name}.
           </div>
         )}
-        <div class="row">
+        <div class="row console-session-facts">
           {session && <span class="hint">{session.agentName}</span>}
           {repo && <span class="hint">· {repo.name}</span>}
           {!session?.inPlace && (session?.branch ?? tree?.branch) && <span class="hint mono pane-branch">{session?.branch ?? tree?.branch}</span>}
@@ -513,91 +502,20 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
             </span>
           )}
         </div>
-        <div class="console-ship-primary">
-          {shippable && session && (
-            <div class="console-ship-action">
-              <button
-                type="button"
-                class="btn sm primary"
-                disabled={acting || ui.shippingIds.has(session.id)}
-                title="Commits, pushes and opens a pull request deterministically on the server without an agent"
-                onClick={() =>
-                  act(async () => {
-                    await ui.ship(session.id);
-                  })
-                }
-              >
-                {ui.shippingIds.has(session.id) ? "Shipping…" : "⇪ Ship"}
-              </button>
-              <span>Commit this change, push its branch, and open or reuse a pull request. This does not merge it.</span>
-            </div>
-          )}
-          {shipOperation && dismissedShipOperation !== shipOperation.operationId && !shipOperationDismissed(shipOperation.operationId) && (
-            <div
-              class="hint ship-operation-status"
-              role={shipOperation.state === "failed" ? "alert" : "status"}
-              aria-live={shipOperation.state === "failed" ? "assertive" : "polite"}
-            >
-              {shipOperation.state === "running" ? (
-                `${shipStageLabel ?? "Shipping"}${shipOperation.committed ? " · committed" : ""}${shipOperation.pushed ? " · pushed" : ""}`
-              ) : shipOperation.state === "failed" ? (
-                <>
-                  Ship failed during {shipOperation.failedStage ?? "preparation"}: {shipOperation.error ?? "unknown error"}
-                  {shipOperation.committed ? " · changes committed" : ""}
-                  {shipOperation.pushed ? " · branch pushed" : ""}
-                  {shipOperation.pullRequestUrl && (
-                    <>
-                      {" "}
-                      ·{" "}
-                      <a href={shipOperation.pullRequestUrl} target="_blank" rel="noopener noreferrer">
-                        verified pull request
-                      </a>
-                    </>
-                  )}
-                </>
-              ) : shipOperation.state === "unknown" ? (
-                <>
-                  Ship outcome unknown: {shipOperation.error ?? "the remote may have completed the request"}
-                  {shipOperation.committed ? " · changes committed" : ""}
-                  {shipOperation.pushed ? " · branch pushed" : shipOperation.pushUnknown ? " · push outcome unknown" : ""}
-                  {shipOperation.pullRequestUrl && (
-                    <>
-                      {" "}
-                      ·{" "}
-                      <a href={shipOperation.pullRequestUrl} target="_blank" rel="noopener noreferrer">
-                        verified pull request
-                      </a>
-                    </>
-                  )}
-                </>
-              ) : shipOperation.pullRequestUrl ? (
-                <>
-                  <a href={shipOperation.pullRequestUrl} target="_blank" rel="noopener noreferrer">
-                    {shipOperation.pullRequestState === "existing" ? "Open existing pull request" : "Open pull request"}
-                  </a>{" "}
-                  · shipped
-                </>
-              ) : (
-                "Ship finished, but a pull request was not verified."
-              )}
-              {(shipOperation.state === "failed" || shipOperation.state === "unknown") && session && (
-                <button type="button" class="btn sm ghost" disabled={ui.shippingIds.has(session.id)} onClick={() => void act(() => ui.ship(session.id))}>
-                  Retry Ship
-                </button>
-              )}
-              {shipOperation.state !== "running" && (
-                <button
-                  type="button"
-                  class="btn sm ghost"
-                  onClick={() => {
-                    dismissShipOperation(shipOperation.operationId);
-                    setDismissedShipOperation(shipOperation.operationId);
-                  }}
-                >
-                  Dismiss
-                </button>
-              )}
-            </div>
+          </div>
+          {showSessionActions && (
+            <section class="console-action-group console-head-actions" aria-label={`Session actions for ${session?.change ?? "selected session"}`}>
+              <div class="row console-secondary-actions">
+                {session && session.state !== "running" && session.resumable && (
+                  <button type="button" class="btn sm" disabled={acting} title="Start the agent again in the same worktree, continuing its latest conversation" onClick={() => act(() => api.resumeSession(session.id))}>▶ Resume</button>
+                )}
+                {session && <button type="button" class="btn sm" disabled={session.cleanup?.state === "pending"} onClick={() => ui.requestEnd(session.id)}>{session.state === "running" ? "End session" : session.cleanup?.state === "pending" ? "Cleaning up…" : "Clean up"}</button>}
+                {session && session.state !== "running" && (
+                  <button type="button" class="btn sm ghost" disabled={acting} title="Delete this session's record and stored output" onClick={() => act(() => api.deleteSession(session.id))}>Delete record</button>
+                )}
+                {path && openInEditor && <OpenInEditor folder={path} open={openInEditor} run={act} />}
+              </div>
+            </section>
           )}
         </div>
         <div class="console-action-groups">
@@ -693,41 +611,6 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
               </div>
             </section>
             )}
-            {showSessionActions && (
-            <section class="console-action-group" aria-label={`Session actions for ${session?.change ?? "selected session"}`}>
-              <span class="console-action-heading">Session actions</span>
-              <div class="row console-secondary-actions">
-                {session && session.state !== "running" && session.resumable && (
-                  <button
-                    type="button"
-                    class="btn sm"
-                    disabled={acting}
-                    title="Start the agent again in the same worktree, continuing its latest conversation"
-                    onClick={() => act(() => api.resumeSession(session.id))}
-                  >
-                    ▶ Resume
-                  </button>
-                )}
-                {session && (
-                  <button type="button" class="btn sm" disabled={session.cleanup?.state === "pending"} onClick={() => ui.requestEnd(session.id)}>
-                    {session.state === "running" ? "End session" : session.cleanup?.state === "pending" ? "Cleaning up…" : "Clean up"}
-                  </button>
-                )}
-                {session && session.state !== "running" && (
-                  <button
-                    type="button"
-                    class="btn sm ghost"
-                    disabled={acting}
-                    title="Delete this session's record and stored output"
-                    onClick={() => act(() => api.deleteSession(session.id))}
-                  >
-                    Delete record
-                  </button>
-                )}
-                {path && openInEditor && <OpenInEditor folder={path} open={openInEditor} run={act} />}
-              </div>
-            </section>
-            )}
         </div>
         {(error ?? session?.error) && <div class="notice danger">{error ?? session?.error}</div>}
         {session?.workflowMode === "cli" && <div class="notice" role="status">OpenSpec CLI fallback supplied this action's workflow instructions from the session checkout.</div>}
@@ -773,6 +656,30 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
         </div>
       )}
     </section>
+  );
+}
+
+/** Ship progress and recovery stay beside the lifecycle checkpoint that owns delivery. */
+export function ShipOperationStatus({ session }: { session: ChangeSession }) {
+  const ui = useSessionUi();
+  const [dismissed, setDismissed] = useState<string>();
+  const operation = session.shipOperation;
+  if (!operation || dismissed === operation.operationId || shipOperationDismissed(operation.operationId)) return null;
+  const stage = operation.stage === "preparing" ? "Preparing to ship"
+    : operation.stage === "committing" ? "Committing changes"
+      : operation.stage === "pushing" ? "Pushing branch"
+        : operation.stage === "pull-request" ? "Opening or finding pull request"
+          : operation.stage === "refreshing" ? "Refreshing pull request details" : "Shipping";
+  return (
+    <div class="hint ship-operation-status" role={operation.state === "failed" ? "alert" : "status"} aria-live={operation.state === "failed" ? "assertive" : "polite"}>
+      {operation.state === "running" ? `${stage}${operation.committed ? " · committed" : ""}${operation.pushed ? " · pushed" : ""}`
+        : operation.state === "failed" ? <>Ship failed during {operation.failedStage ?? "preparation"}: {operation.error ?? "unknown error"}{operation.committed ? " · changes committed" : ""}{operation.pushed ? " · branch pushed" : ""}{operation.pullRequestUrl && <> · <a href={operation.pullRequestUrl} target="_blank" rel="noopener noreferrer">verified pull request</a></>}</>
+          : operation.state === "unknown" ? <>Ship outcome unknown: {operation.error ?? "the remote may have completed the request"}{operation.committed ? " · changes committed" : ""}{operation.pushed ? " · branch pushed" : operation.pushUnknown ? " · push outcome unknown" : ""}{operation.pullRequestUrl && <> · <a href={operation.pullRequestUrl} target="_blank" rel="noopener noreferrer">verified pull request</a></>}</>
+            : operation.pullRequestUrl ? <><a href={operation.pullRequestUrl} target="_blank" rel="noopener noreferrer">{operation.pullRequestState === "existing" ? "Open existing pull request" : "Open pull request"}</a> · shipped</>
+              : "Ship finished, but a pull request was not verified."}
+      {(operation.state === "failed" || operation.state === "unknown") && <button type="button" class="btn sm ghost" disabled={ui.shippingIds.has(session.id)} onClick={() => void ui.ship(session.id)}>Retry Ship</button>}
+      {operation.state !== "running" && <button type="button" class="btn sm ghost" onClick={() => { dismissShipOperation(operation.operationId); setDismissed(operation.operationId); }}>Dismiss</button>}
+    </div>
   );
 }
 

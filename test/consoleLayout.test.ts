@@ -42,3 +42,17 @@ test("the console's terminal sits in an unbroken column of flex parents, so it h
   // The host is absolutely positioned, which is exactly why a collapsed chain shows no terminal instead of a short one.
   expect(rule(".session-terminal-host")).toMatch(/position:\s*absolute/);
 });
+
+test("the Console header leaves at least 80% of the panel to the terminal and wraps at narrow widths", () => {
+  expect(rule(".console-pane > .session-head")).toMatch(/max-height:\s*20%/);
+  expect(rule(".console-pane > .session-head")).toMatch(/overflow:\s*auto/);
+  expect(rule(".console-head-layout")).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/);
+  expect(rule(".console-head-context")).toMatch(/flex-wrap:\s*wrap/);
+  expect(rule(".console-session-facts")).toMatch(/flex-wrap:\s*wrap/);
+  expect(rule(".console-head-actions .console-secondary-actions")).toMatch(/flex-wrap:\s*wrap/);
+});
+
+test("dismiss and delete change controls have persistent borders at rest", () => {
+  expect(rule(".btn.ghost.dismiss-change")).toMatch(/border-color:\s*var\(--border-strong\)/);
+  expect(rule(".btn.ghost.delete-change-files")).toMatch(/border-color:\s*var\(--border-strong\)/);
+});
