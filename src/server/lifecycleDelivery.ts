@@ -259,6 +259,14 @@ export class LifecycleDeliveryMonitor {
     this.started = true;
     const sessions = this.deps.listSessions();
     for (const record of this.records) {
+      if (record.state === "blocked" && /there is nothing to ship \(merged\)/i.test(record.blocker ?? "")) {
+        record.state = "merged";
+        delete record.blocker;
+        record.recovery = [];
+        record.updatedAt = new Date((this.deps.now ?? Date.now)()).toISOString();
+        await upsertLifecycleDelivery(record, this.path);
+        continue;
+      }
       if (!["committing", "pushing", "opening-pr"].includes(record.state)) continue;
       const session = sessions.find((item) => item.id === record.sessionId);
       const operation = session && "shipOperation" in session ? session.shipOperation : undefined;
@@ -442,6 +450,13 @@ export class LifecycleDeliveryMonitor {
     } catch (error) {
       const now = (this.deps.now ?? Date.now)();
       const message = error instanceof Error ? error.message : String(error);
+      if (/there is nothing to ship \(merged\)/i.test(message)) {
+        const merged: LifecycleDeliveryRecord = { ...record, state: "merged", blocker: undefined, recovery: [], updatedAt: new Date(now).toISOString() };
+        delete merged.blocker;
+        await upsertLifecycleDelivery(merged, this.path);
+        Object.assign(record, merged);
+        return;
+      }
       const transient = /timed? out|temporar|network|connection|try again|rate limit|503|502|504/i.test(message);
       const retry = transient && record.attempts < 5;
       const blocked: LifecycleDeliveryRecord = {

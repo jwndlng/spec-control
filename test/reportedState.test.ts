@@ -115,12 +115,15 @@ test("the user can confirm a missing phase report, and later terminal input inva
   const confirmed = await handler(new Request(endpoint, { method: "POST", headers: { origin: "http://127.0.0.1", "content-type": "application/json" }, body: JSON.stringify({ actionId }) }));
   expect(confirmed.status).toBe(200);
   expect(manager.managedCompletion(s.id)).toEqual({ kind: "phase-complete", actionId, phase: "implement", revision: 1 });
+  await manager.confirmPhaseComplete(s.id, actionId);
+  expect(manager.managedCompletion(s.id)).toEqual({ kind: "phase-complete", actionId, phase: "implement", revision: 2 });
   await expect(manager.confirmPhaseComplete(s.id, "stale-action-id-123456")).rejects.toMatchObject({ status: 409 });
   const before = view.text();
   manager.write(s.id, "continue work\r");
   await waitFor(() => view.text() !== before, "the user input");
   expect((manager.get(s.id) as import("../src/shared/types.ts").ChangeSession).managedActionId).not.toBe(actionId);
   expect(manager.managedCompletion(s.id)).toBeUndefined();
+  expect((manager.get(s.id) as import("../src/shared/types.ts").ChangeSession).phaseCompletionConfirmedRevision).toBeUndefined();
 });
 
 test("managed completion reports are bounded JSON tied to a server-issued action", async () => {

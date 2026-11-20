@@ -52,6 +52,27 @@ describe("lifecycle delivery persistence", () => {
     }
   });
 
+  test("migrates blocked retries that already report merged work to terminal merged state", async () => {
+    const home = await mkdtemp(join(tmpdir(), "lifecycle-delivery-"));
+    try {
+      const path = join(home, "state.json");
+      const blocked: LifecycleDeliveryRecord = { ...record("merged-retry"), state: "blocked", blocker: "there is nothing to ship (merged)", recovery: ["retry"] };
+      await writeLifecycleDelivery([blocked], path);
+      const monitor = new LifecycleDeliveryMonitor({
+        getConfig: () => defaultConfig(),
+        getSnapshot: () => ({ repos: [], generatedAt: "2026-11-16T00:00:00.000Z" }),
+        listSessions: () => [],
+        completion: () => undefined,
+        readReports: async () => undefined,
+      }, path);
+      await monitor.init();
+      expect(monitor.list()).toMatchObject([{ state: "merged", recovery: [] }]);
+      expect(await readLifecycleDelivery(path)).toMatchObject([{ state: "merged", recovery: [] }]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   test("recovers an interrupted delivery only when the session has the matching uncertain Ship operation", async () => {
     const home = await mkdtemp(join(tmpdir(), "lifecycle-delivery-"));
     try {

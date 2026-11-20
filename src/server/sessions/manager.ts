@@ -341,7 +341,7 @@ export class SessionManager {
     const session = this.get(id);
     const report = this.live.get(id)?.completionReport;
     if (!isChangeless(session) && session.managedActionId && session.phaseCompletionConfirmedActionId === session.managedActionId) {
-      return { kind: "phase-complete", actionId: session.managedActionId, phase: session.action as import("../../shared/types.ts").ManagedActionPhase, revision: 1 };
+      return { kind: "phase-complete", actionId: session.managedActionId, phase: session.action as import("../../shared/types.ts").ManagedActionPhase, revision: session.phaseCompletionConfirmedRevision ?? 1 };
     }
     return !isChangeless(session) && report !== undefined && report.actionId === session.managedActionId && report.phase === session.action ? report : undefined;
   }
@@ -354,6 +354,9 @@ export class SessionManager {
       if (!session.managedActionId || session.managedActionId !== expectedActionId) throw new SessionError(409, "the managed action changed; refresh before confirming completion");
       if (!["draft", "implement", "fastForward", "archive"].includes(session.action)) throw new SessionError(409, "this session action has no lifecycle checkpoint");
       if (session.state !== "running" || !this.live.get(id)?.proc) throw new SessionError(409, "only a currently running managed action can be confirmed");
+      session.phaseCompletionConfirmedRevision = session.phaseCompletionConfirmedActionId === session.managedActionId
+        ? (session.phaseCompletionConfirmedRevision ?? 1) + 1
+        : 1;
       session.phaseCompletionConfirmedActionId = session.managedActionId;
       await this.touch(session);
       this.deps.triggerScan?.();
@@ -1591,6 +1594,7 @@ export class SessionManager {
     let nextPrompt = openingPrompt(agent, action, session.change, { implementModelCandidates}) as string;
     session.managedActionId = randomUUID();
     delete session.phaseCompletionConfirmedActionId;
+    delete session.phaseCompletionConfirmedRevision;
     delete session.unresolvedArchiveAcceptedActionId;
     const framework = this.deps.getSnapshot().repos.find((r) => r.id === session.repoId)?.framework;
     if (framework === "openspec" && ["draft", "implement", "validate", "archive", "fastForward"].includes(action)) {
@@ -2095,6 +2099,7 @@ export class SessionManager {
       if (!isChangeless(session) && session.managedActionId && (session.phaseCompletionConfirmedActionId === session.managedActionId || session.unresolvedArchiveAcceptedActionId === session.managedActionId || live.completionReport?.actionId === session.managedActionId)) {
         session.managedActionId = randomUUID();
         delete session.phaseCompletionConfirmedActionId;
+        delete session.phaseCompletionConfirmedRevision;
         delete session.unresolvedArchiveAcceptedActionId;
         live.completionReport = undefined;
         this.touchLater(session);

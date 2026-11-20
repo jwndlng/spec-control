@@ -240,6 +240,13 @@ export function consoleSession(sessions: ChangeSession[], wanted: string | undef
   return sessions.find((s) => s.id === wanted) ?? sessions[0];
 }
 
+/** The newest session for one lifecycle action, independent of which session the Console tab currently displays. */
+export function lifecycleSession(sessions: readonly ChangeSession[], action: ChangeSession["action"]): ChangeSession | undefined {
+  return sessions
+    .filter((session) => session.action === action)
+    .sort((a, b) => activityAt(b).localeCompare(activityAt(a)))[0];
+}
+
 /**
  * Whether a change has a console with something in it: a session record, or a worktree — which counts even without one
  * and outlives the change itself, and is why a change the snapshot no longer carries is shown rather than reported as
