@@ -3,7 +3,7 @@
 // task and dismissing the change, each after its own user action and server-side recheck.
 import type { ComponentChildren, RefObject } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { AgentPermissionProfileId, ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, DeleteFilesPreview, DeleteFilesResult, DismissPreview, DismissResult, RepoSnapshot, Snapshot, TaskProgress } from "../shared/types.ts";
+import type { ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, DeleteFilesPreview, DeleteFilesResult, DismissPreview, DismissResult, RepoSnapshot, Snapshot, TaskProgress } from "../shared/types.ts";
 import { parseTaskLine } from "../shared/taskLine.ts";
 import { ApiError, api, type LifecycleDeliveryView } from "./api.ts";
 import { CopyButton, CopyRefButton, Meter } from "./kanban.tsx";
@@ -20,7 +20,6 @@ import { SourceIssueLink } from "./importIssues.tsx";
 import { type DetailPr, DetailPullRequest, detailPullRequest, usePullRequests } from "./pullRequests.tsx";
 import { StaleCleanupDialog } from "./staleCleanup.tsx";
 import { DeleteFilesDialog, DismissDialog } from "./dismissChange.tsx";
-import { ChangePermissionPicker } from "./changePermissionPicker.tsx";
 import { duplicateNotice, staleHint, staleReason } from "./staleState.ts";
 import { deletedFilesNotice, dismissedNotice, dismissOffer } from "./dismissState.ts";
 import { checkoutHint, daysSince, leftoverHint, pendingArchiveHint, relTime, splitPathLabel } from "./format.ts";
@@ -923,7 +922,6 @@ export function ChangeDetail({
         </p>}
         {deliveryError && <p role="alert">Could not read lifecycle delivery status: {deliveryError}</p>}
       </section>}
-      {!change.archived && ui.config?.agentSessions.enabled && <ChangePermissionPicker key={`${repoId}/${changeName}`} repoId={repoId} changeName={changeName} />}
       <StaleNotice repo={repo} change={change} />
       {(listing || hasConsole) && (
         <ArtifactTabs artifacts={listing?.artifacts ?? []} selected={selection.artifactId} onSelect={(id) => setQuery({ artifact: id, file: undefined })} console={hasConsole} />

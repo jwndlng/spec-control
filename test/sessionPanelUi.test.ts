@@ -99,10 +99,11 @@ test("the agent picker in the console pane renders when multiple agents exist, a
   expect(panel).toContain("This session uses {session.agentName}; the next session starts {nextAgent.name}.");
 });
 
-test("change detail owns the single permission picker; project settings keep their own", () => {
-  expect(panel).not.toContain("setChangePermissionProfile");
-  expect(panel).not.toContain("change-permission-picker");
-  expect(detailSource).toContain('<ChangePermissionPicker key={`${repoId}/${changeName}`}');
+test("the Console owns the change permission picker; project settings keep their own", () => {
+  expect(panel).toContain('<ChangePermissionPicker key={`${repoId}/${change}`}');
+  expect(panel).toContain('<div class="console-change-settings">');
+  expect(panel.indexOf('<ChangePermissionPicker key={`${repoId}/${change}`}')).toBeGreaterThan(panel.indexOf('<div class="row change-agent-picker">'));
+  expect(detailSource).not.toContain("ChangePermissionPicker");
   expect(projectSettingsSource).toContain("PermissionProfilePicker({ repo, config, tracking })");
   expect(projectSettingsSource).toContain('aria-label={`Permission profile for ${repo.name}`}');
 });

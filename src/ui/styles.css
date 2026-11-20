@@ -2060,6 +2060,9 @@ a.badge.needs-you:focus-visible { outline: 2px solid var(--brand); outline-offse
    — and its host is absolutely positioned, so that is nothing — leaving a few pixels of blue frame. */
 .console-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-top: 2px solid var(--info); border-left: 1px solid var(--info-border); }
 .console-pane > .session-head { gap: 10px; padding: 14px var(--detail-pad, 20px); border-bottom-color: var(--info-border); background: var(--bg-section); }
+.console-change-settings { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 20px; }
+.console-change-settings .detail-permission-picker { padding: 0; border: 0; background: transparent; }
+.console-change-settings .detail-permission-picker > span:first-child { color: var(--text-muted); font-size: 12px; }
 .console-ship-primary { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .console-ship-action { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 .console-ship-action > span { color: var(--fg-subtle); font-size: 12px; }

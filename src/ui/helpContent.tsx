@@ -218,7 +218,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             </figure>
           </li>
           <li>
-            <strong>Permission profile for this change</strong> is one control above the artifact and Console tabs.
+            <strong>Permission profile for this change</strong> is in the Console tab beside the change agent setting.
             Choose <strong>Inherit from project</strong> to use the project profile, then the global default, then Minimum;
             choosing a profile overrides only this change. Saving… and Saved announce progress; a refused save shows its
             reason and keeps the previous selection so you can retry. Changes apply on the next session start. When a running

@@ -23,7 +23,11 @@ afterEach(async () => {
   Object.assign(api, originalApi);
   Object.assign(globalThis, originalDom);
 });
-const configForTest = (): Config => ({ ...defaultConfig(), agentSessions: { ...defaultConfig().agentSessions, enabled: true }, repos: [{ id: "demo", name: "Demo", path: "/w/acme/demo", enabled: true, agentOverrides: { one: { agentId: "other" } } }] });
+const configForTest = (): Config => {
+  const config = defaultConfig();
+  const agent = config.agentSessions.agents[0];
+  return { ...config, agentSessions: { ...config.agentSessions, enabled: true, agents: [...config.agentSessions.agents, { ...agent, id: "other", name: "Other" }] }, repos: [{ id: "demo", name: "Demo", path: "/w/acme/demo", enabled: true, agentOverrides: { one: { agentId: "other" } } }] };
+};
 const record = (profile?: ChangeSession["permissionProfile"]): ChangeSession => ({ id: "running", state: "running", agentId: "fake", agentName: "Fake", repoId: "demo", change: "one", action: "implement", worktreePath: "/w/acme/demo", createdAt: "2026-11-10", updatedAt: "2026-11-10", resumable: false, permissionProfile: profile });
 async function setup(config = configForTest(), records: ChangeSession[] = [], detail = false, worktrees: SessionWorktree[] = []) {
   browser = new Window({ url: "http://localhost/" });
@@ -48,7 +52,7 @@ async function setup(config = configForTest(), records: ChangeSession[] = [], de
   }
   await act(async () => { render(<Harness />, root); });
   const choose = async (value: string) => {
-    const trigger = root.querySelector<HTMLButtonElement>(".shared-select")!;
+    const trigger = root.querySelector<HTMLButtonElement>('[aria-label="Permission profile for this change"]')!;
     await act(() => trigger.click());
     const values = ["", "minimum", "less-friction", "full-automation"];
     const option = document.querySelectorAll<HTMLElement>("[role=option]")[values.indexOf(value)];
@@ -56,8 +60,8 @@ async function setup(config = configForTest(), records: ChangeSession[] = [], de
   };
   return { choose, config: async (next: Config) => act(() => setConfig(next)), navigate: async (name: string) => act(() => setName(name)), snapshot: async (next: Snapshot) => act(() => setSnapshot(next)), initialSnapshot: snapshot };
 }
-const selection = () => root.querySelector<HTMLButtonElement>(".shared-select")!;
-const selectedLabel = () => root.querySelector(".shared-select-label")?.textContent;
+const selection = () => root.querySelector<HTMLButtonElement>('[aria-label="Permission profile for this change"]')!;
+const selectedLabel = () => root.querySelector('.detail-permission-picker .shared-select-label')?.textContent;
 const text = () => root.textContent!;
 
 test("inheritance resolves project, global and Minimum and preserves explicit equal choice", async () => {
@@ -141,23 +145,26 @@ test("detail retains one accessible picker and pending feedback across tabs; ine
   let finish!: (config: Config) => void;
   api.setChangePermissionProfile = () => new Promise<Config>((resolve) => { finish = resolve; });
   const view = await setup(configForTest(), [], true);
-  expect(root.querySelectorAll('[aria-label="Permission profile for this change"]')).toHaveLength(1);
-  await view.choose("less-friction");
   const tab = () => [...root.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Console")!;
   await act(() => tab().click());
   expect(root.querySelectorAll('[aria-label="Permission profile for this change"]')).toHaveLength(1);
+  expect(root.querySelector(".console-change-settings [aria-label=\"Change agent\"]")).not.toBeNull();
+  expect(root.querySelector(".console-change-settings [aria-label=\"Permission profile for this change\"]")).not.toBeNull();
+  await view.choose("less-friction");
   expect(text()).toContain("Saving…");
   const saved = configForTest(); saved.repos[0].agentOverrides!.one.permissionProfile = "less-friction";
   await act(async () => { finish(saved); await Bun.sleep(0); });
   expect(selectedLabel()).toBe("Less friction");
   const proposal = [...root.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim().startsWith("Proposal"))!;
   await act(() => proposal.click());
+  expect(root.querySelectorAll('[aria-label="Permission profile for this change"]')).toHaveLength(0);
+  await act(() => tab().click());
   expect(selectedLabel()).toBe("Less friction");
   const archived = structuredClone(view.initialSnapshot);
   archived.repos[0].changes[0].archived = "2026-11-10";
   await view.snapshot(archived);
   await act(() => tab().click());
-  expect(root.querySelectorAll("select")).toHaveLength(0);
+  expect(root.querySelectorAll('[aria-label="Permission profile for this change"]')).toHaveLength(0);
   await view.navigate("missing");
   expect(root.querySelectorAll("select")).toHaveLength(0);
   await view.navigate("one");
