@@ -90,9 +90,17 @@ test("Check now joins a check already running", async () => {
   let open: () => void = () => undefined;
   gate = new Promise((resolve) => (open = resolve));
   const before = requests;
-  const a = send("/api/update/check", "POST");
-  const b = send("/api/update/check", "POST");
-  await Bun.sleep(20);
+  const handler = createFetchHandler({ state, indexHtml: "" });
+  const check = () =>
+    handler(
+      new Request("http://127.0.0.1/api/update/check", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  const a = check();
+  const b = check();
+  expect(requests).toBe(before + 1);
   open();
   expect((await a).status).toBe(200);
   expect((await b).status).toBe(200);
