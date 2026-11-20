@@ -46,11 +46,11 @@ The route SHALL work in both routing modes the UI supports (path routing on the 
 - **THEN** the same detail view is shown
 
 ### Requirement: Detail header shows the change's state
-The detail view SHALL show, above the artifacts: the change name in monospace, the repository name linking to that repository's board, a close control, and every warning the snapshot carries for the change. Below them it SHALL show the change's state and whereabouts that the card on the board leaves out: its column; its task progress as a bar with `done/total` when tasks exist; the relative age of its last activity, or its archive date when archived; how long it has been complete when it is in `Done` or `Synced`; its branch badge when `branchMatch` is set, whose tooltip names the worktree the data comes from and lists the other checkouts holding a copy with their branch and column; for an archive found only in a linked worktree, a badge naming the branch that holds it and stating that the main checkout does not have it yet, with a tooltip listing the checkouts still holding an active copy and how to resolve it; when agent sessions apply and a session worktree exists for the change, the work-status badge (uncommitted files, commits not pushed, `pushed` or `merged`, highlighted as stale by the same rules as before), which opens the change's Console tab; the text of its `prompt.md`, without the heading the create form writes, as plain text that scrolls when long; when the change declares dependencies, a *Depends on* list giving each dependency's name and its state in words (`met`, `waiting`, `missing`, `cycle`), headed by whether the change is blocked; and when other active changes depend on it, a *Required by* list of their names. Every name in either list that is a change in the snapshot SHALL link to that change's detail view; a `missing` name SHALL be shown as text, not a link. Status SHALL be conveyed by text as well as colour. All of these SHALL come from the existing snapshot; the detail view MUST NOT introduce facts about a change that the snapshot does not carry, and it SHALL NOT show the change's creation date or schema. For a change that is gone from the snapshot but whose worktree remains, the header SHALL show only its name, the repository and the close control.
+The detail view SHALL show, above the artifacts: the change name in monospace, the repository name linking to that repository's board, a close control, and every warning the snapshot carries for the change. Below them it SHALL show its column; the relative age of its last activity, or its archive date when archived; how long it has been complete when it is in `Done` or `Synced`; its branch badge when `branchMatch` is set, whose tooltip names the worktree the data comes from and lists the other checkouts holding a copy with their branch and column; for an archive found only in a linked worktree, a badge naming the branch that holds it and stating that the main checkout does not have it yet, with a tooltip listing the checkouts still holding an active copy and how to resolve it; when agent sessions apply and a session worktree exists for the change, the work-status badge (uncommitted files, commits not pushed, `pushed` or `merged`, highlighted as stale by the same rules as before), which opens the change's Console tab; the text of its `prompt.md`, without the heading the create form writes, as plain text that scrolls when long; when the change declares dependencies, a *Depends on* list giving each dependency's name and its state in words (`met`, `waiting`, `missing`, `cycle`), headed by whether the change is blocked; and when other active changes depend on it, a *Required by* list of their names. Every name in either list that is a change in the snapshot SHALL link to that change's detail view; a `missing` name SHALL be shown as text, not a link. Status SHALL be conveyed by text as well as colour. All of these SHALL come from the existing snapshot; the detail view MUST NOT introduce facts about a change that the snapshot does not carry, and it SHALL NOT show the change's creation date or schema. Local artifact and task progress SHALL NOT appear as a bar in the header; it SHALL appear in the lifecycle timeline under its corresponding phase. For a change that is gone from the snapshot but whose worktree remains, the header SHALL show only its name, the repository and the close control.
 
 #### Scenario: Header content
 - **WHEN** a change `cloud-deployment` of repository `demo-ops` is in `Implementing` with `tasks 4/12`, created `2026-03-02`, last activity 3 days ago and `branchMatch: feat/cloud-deployment`
-- **THEN** the header shows `cloud-deployment`, `demo-ops` as a link to that repository's board, a close control, `Implementing`, a progress bar with `4/12`, `updated 3d ago` and the branch badge `feat/cloud-deployment`, and shows neither the creation date nor the schema
+- **THEN** the header shows `cloud-deployment`, `demo-ops` as a link to that repository's board, a close control, `Implementing`, `updated 3d ago` and the branch badge `feat/cloud-deployment`, and shows neither the creation date, the schema, nor a progress bar
 
 #### Scenario: Worktree and other checkouts
 - **WHEN** `audit-trail` is `Implementing` in a worktree on `feat/audit-trail` and `Drafts` in the main checkout
@@ -82,7 +82,7 @@ The detail view SHALL show, above the artifacts: the change name in monospace, t
 
 #### Scenario: Required by
 - **WHEN** the detail view is open for `add-billing-api`, and `add-billing-ui` and `add-billing-docs` depend on it
-- **THEN** the header lists `add-billing-docs` and `add-billing-ui` under *Required by*, each linking to its detail view
+- **THEN** the header lists `add-billing-docs` and `add-billing-ui` under *Required by*, each linking to their detail view
 
 #### Scenario: Missing dependency
 - **WHEN** a change depends on `add-billing-scheme` and no such change exists
@@ -740,11 +740,27 @@ Successful Ship SHALL show a persistent confirmation with the verified created o
 - **THEN** the UI reconciles the known operation from server status before permitting a duplicate operation or announcing its result
 
 ### Requirement: Detail presents a lifecycle timeline above the file tabs
-Change detail SHALL show an ordered timeline from Backlog through Drafts, Ready, Implementing, Done, and Archived above the file tabs. Phase nodes SHALL be larger than schema-derived artifact milestones. The current phase, completed steps, available next action, and pending persistence SHALL be distinct in text and appearance. Unknown or optional schema artifacts SHALL NOT fabricate completion.
+Change detail SHALL show an ordered timeline from Backlog through Drafts, Ready, Implementing, Done, and Archived above the file tabs. Phase nodes SHALL be larger than schema-derived artifact milestones. The current phase, completed steps, available next action, and pending persistence SHALL be distinct in text and appearance. When a lifecycle action has advanced beyond the snapshot stage, the timeline SHALL show that phase as current and preceding phases as complete; it SHALL animate only while that phase is actively running. The timeline SHALL describe change phases and delivery state; it SHALL NOT include whether an agent session has ended. Unknown or optional schema artifacts SHALL NOT fabricate completion. Draft artifact progress SHALL be shown under Drafts, and task progress SHALL be shown under Implementing. Progress controls and phase actions SHALL be centered within their checkpoints.
 
 #### Scenario: Drafting progress
 - **WHEN** proposal and specs exist but required tasks are missing
-- **THEN** Drafts is current, completed artifact milestones are shown, and the missing milestone is labeled
+- **THEN** Drafts is current, completed artifact milestones are shown, the missing milestone is labeled, and the artifact progress bar is under Drafts
+
+#### Scenario: Implementation progress
+- **WHEN** a change has tasks and is in `Implementing`
+- **THEN** its task progress bar is under Implementing, not in the detail header
+
+#### Scenario: Implementation advances the timeline
+- **WHEN** the snapshot stage is Ready and an implementation session has started
+- **THEN** Implementing is current and Ready is shown complete
+
+#### Scenario: Only active work animates
+- **WHEN** an implementation session has ended while the change still requires implementation
+- **THEN** Implementing remains current without animation and Ready remains complete
+
+#### Scenario: Ended session does not appear in phase progress
+- **WHEN** implementation is still required and the latest implementation session has ended
+- **THEN** the timeline shows the change's phase and implementation progress without an ended-session status
 
 #### Scenario: Archive pending delivery
 - **WHEN** an archive exists locally but its PR is still open
@@ -755,15 +771,65 @@ Change detail SHALL show an ordered timeline from Backlog through Drafts, Ready,
 - **THEN** milestones derive from that schema and validation state instead of a hardcoded proposal/design/specs sequence
 
 ### Requirement: The timeline carries the next lifecycle action
-The timeline SHALL present the available Draft artifacts, Implement, or Archive action at its corresponding phase, using the existing server eligibility and session handoff rules. It SHALL expose one primary next action, explain unavailable actions, and route blocked delivery to its recovery action. The detail view SHALL NOT duplicate these lifecycle controls in its console toolbar.
+The timeline SHALL present the available Draft artifacts, Implement, or Archive action at its corresponding phase, using the existing server eligibility and session handoff rules. It SHALL expose one primary next action, explain unavailable actions, and route blocked delivery to its recovery action. The detail view SHALL NOT duplicate these lifecycle controls in its console toolbar. Pull-request checkpoints SHALL appear after Drafts, Implementing, and Archived for proposal, implementation, and archive delivery, respectively, with each checkpoint showing its own delivery state, linked pull request, checks/readiness, conflicts, and merged state when available. A merged pull request SHALL be shown as complete and SHALL NOT make the local Done phase appear actively working.
 
 #### Scenario: Ready to implement
 - **WHEN** the change is Ready and implementation is available
 - **THEN** Implement is the timeline's primary action and launching it uses the existing agent selection and confirmed session handoff
 
+#### Scenario: Optional design remains to draft
+- **WHEN** the change is Ready but still has an unfinished optional design artifact
+- **THEN** Draft artifacts is placed in the Drafts checkpoint while Implement remains available under Implementing
+
 #### Scenario: Agent sessions disabled
 - **WHEN** agent sessions are disabled
 - **THEN** the timeline remains readable without presenting an enabled launch action
+
+### Requirement: The lifecycle stepper guides local and remote progress
+The change detail timeline SHALL place the existing phase action under the phase it advances, preserving all current eligibility and session handoff rules. Completed phases SHALL show green completion markers, the current actively running phase SHALL have a pulsing marker, and the available next phase SHALL be visually highlighted. A Done sub-state action such as Validate SHALL remain attached to Done. Backlog SHALL indicate the Fast-forward route to Implementing while retaining the existing Fast-forward action and confirmation.
+
+#### Scenario: Next local action
+- **WHEN** a change is Ready and Implement is available
+- **THEN** the Implement control appears beneath Implementing in the timeline and uses the existing session start behavior
+
+#### Scenario: Validation within Done
+- **WHEN** a Done change awaits task validation
+- **THEN** Validate appears beneath Done and Archive remains governed by the existing available actions
+
+#### Scenario: Reduced motion
+- **WHEN** the user requests reduced motion
+- **THEN** current and in-progress markers do not pulse
+
+#### Scenario: Completion confirmation needed
+- **WHEN** a running managed session has not reported completion for Draft, Implement, Fast-forward, or Archive
+- **THEN** its phase checkpoint shows a compact Confirm complete action, and confirming retains the server's artifact, task, and stable-worktree verification
+
+### Requirement: The timeline shows a pull-request delivery checkpoint
+The timeline SHALL show smaller pull-request checkpoints after Drafts, Implementing, and Archived for proposal, implementation, and archive delivery, respectively. When Ship is available, it SHALL appear in the matching checkpoint and retain the existing shippability and confirmation behavior. Each checkpoint SHALL link to a known pull request and distinguish its delivery status in both text and appearance: shipping or checks in progress SHALL pulse orange, a mergeable pull request with passing checks SHALL be green, and conflicts or failing checks SHALL be red. A merged pull request SHALL be green. When conflicts can be resolved under the existing eligibility rules, Resolve conflicts SHALL appear in the matching checkpoint and use the existing recovery behavior. Each lifecycle delivery checkpoint SHALL discover its pull request from its delivery record or that phase's exact recorded or managed head branch. Archive shipping controls and their in-progress status SHALL appear at the Archive PR checkpoint, not the Implementation PR checkpoint.
+
+#### Scenario: Ship a completed change
+- **WHEN** a Done change has shippable work and no linked pull request
+- **THEN** Ship appears beneath the pull-request checkpoint and starts the existing deterministic Ship flow
+
+#### Scenario: Checks are running
+- **WHEN** the linked pull request's checks are pending or mergeability is still unknown
+- **THEN** the checkpoint says it is checking and shows an orange pulsing marker
+
+#### Scenario: Pull request is ready
+- **WHEN** the linked open pull request is mergeable and its checks pass or none are required
+- **THEN** the checkpoint says checks passed and shows a green marker
+
+#### Scenario: Pull request conflicts
+- **WHEN** GitHub reports that the linked pull request conflicts with its base
+- **THEN** the checkpoint shows a red conflict marker and, when eligible, offers Resolve conflicts
+
+#### Scenario: Archive shipping appears at its own checkpoint
+- **WHEN** the user ships an archive PR
+- **THEN** the shipping control and in-progress status appear under Archive PR, not Implementation PR
+
+#### Scenario: Implementation and archive pull requests remain distinct
+- **WHEN** the same change has pull requests on its implementation and archive branches
+- **THEN** each pull request's checks and link appear at its matching phase checkpoint
 
 ### Requirement: Maintenance actions are progressively disclosed
 Resume, Clean up, Delete record, and Open in editor SHALL be available from a labeled session actions menu for the selected session when applicable. Their eligibility and confirmations SHALL be retained. The visible worktree path SHALL have an adjacent keyboard-accessible copy icon with success/failure feedback; detail SHALL NOT show a separate Copy cd text button.

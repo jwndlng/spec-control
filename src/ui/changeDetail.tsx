@@ -843,9 +843,16 @@ export function ChangeDetail({
     .filter((delivery) => delivery.phase === "implementation")
     .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
     .at(-1);
-  const activeAction = shownSession?.state === "running" && !shownSession.waitingReportedAt ? shownSession.action : undefined;
+  const activeSession = sessions.find((session) => session.repoId === repoId && session.change === changeName && session.state === "running");
+  const activeAction = activeSession && !activeSession.waitingReportedAt ? activeSession.action : undefined;
   const workingPhase = activeAction === "draft" ? "Drafts" : activeAction === "implement" || activeAction === "fastForward" ? "Implementing" : activeAction === "archive" ? "Archived" : undefined;
-  const timelineModel = lifecycleTimelineModel(change, change.artifacts, deliveries, change.archived ? undefined : checkpointPr, pullRequests.data?.repos.find((entry) => entry.repoId === repoId)?.pullRequests ?? [], workingPhase);
+  const relevantSessions = sessions
+    .filter((session) => session.repoId === repoId && session.change === changeName && ["draft", "implement", "fastForward", "validate", "archive"].includes(session.action))
+    .filter((session) => !change.created || Date.parse(session.createdAt) >= Date.parse(change.created))
+    .sort((a, b) => (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt));
+  const latestLifecycleAction = relevantSessions[0]?.action;
+  const progressPhase = latestLifecycleAction === "draft" ? "Drafts" : latestLifecycleAction === "implement" || latestLifecycleAction === "fastForward" ? "Implementing" : latestLifecycleAction === "validate" ? "Done" : latestLifecycleAction === "archive" ? "Archived" : undefined;
+  const timelineModel = lifecycleTimelineModel(change, change.artifacts, deliveries, change.archived ? undefined : checkpointPr, pullRequests.data?.repos.find((entry) => entry.repoId === repoId)?.pullRequests ?? [], workingPhase, progressPhase);
   const completionAction = shownSession?.state === "running" && shownSession.managedActionId && ["draft", "implement", "fastForward", "archive"].includes(shownSession.action)
     ? shownSession.action
     : undefined;
@@ -870,6 +877,7 @@ export function ChangeDetail({
         draftChildren={timelineModel.draftActionPhase && shownSession?.state !== "running" && <SessionControls
           card={change}
           place="console"
+          suppressSessionStatus
           pullRequest={linkedPullRequest(change, pullRequests.data?.repos)}
           timelineAction="draft"
         />}
@@ -879,19 +887,23 @@ export function ChangeDetail({
         </>}
         deliveryChildren={
         <>
-          {timelineModel.pullRequest.state === "unshipped" && shownSession && shownWorktree && <ShipButton session={shownSession} worktree={shownWorktree} />}
+          {shownSession?.action !== "archive" && timelineModel.pullRequests.implementation.state === "unshipped" && shownSession && shownWorktree && <ShipButton session={shownSession} worktree={shownWorktree} />}
           {implementationDelivery?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => void retryDelivery(implementationDelivery)}>{retryingDelivery === implementationDelivery.id ? "Retrying…" : "Retry delivery"}</button>}
           <ResolveConflicts change={change} compact />
         </>
       }
         deliveryActions={{
           proposal: deliveries.filter((delivery) => delivery.phase === "proposal").at(-1)?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => { const item = deliveries.filter((delivery) => delivery.phase === "proposal").at(-1); if (item) void retryDelivery(item); }}>{retryingDelivery ? "Retrying…" : "Retry delivery"}</button>,
-          archive: deliveries.filter((delivery) => delivery.phase === "archive").at(-1)?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => { const item = deliveries.filter((delivery) => delivery.phase === "archive").at(-1); if (item) void retryDelivery(item); }}>{retryingDelivery ? "Retrying…" : "Retry delivery"}</button>,
+          archive: <>
+            {timelineModel.pullRequests.archive.state === "unshipped" && shownSession?.action === "archive" && shownWorktree && <ShipButton session={shownSession} worktree={shownWorktree} />}
+            {deliveries.filter((delivery) => delivery.phase === "archive").at(-1)?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => { const item = deliveries.filter((delivery) => delivery.phase === "archive").at(-1); if (item) void retryDelivery(item); }}>{retryingDelivery ? "Retrying…" : "Retry delivery"}</button>}
+          </>,
         }}
       >
         <SessionControls
           card={change}
           place="console"
+          suppressSessionStatus
           pullRequest={linkedPullRequest(change, pullRequests.data?.repos)}
           into={shownSession?.state === "running" ? shownSession : undefined}
           timelineAction={timelineModel.draftActionPhase && shownSession?.state !== "running" ? "main" : undefined}
