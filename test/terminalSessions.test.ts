@@ -597,7 +597,7 @@ test("bookkeeping nobody waits for cannot take the dashboard down, and shutdown 
     await new Promise((r) => setTimeout(r, 150));
     expect(unhandled).toEqual([]);
   } finally {
-    await rm(dir, { force: true });
+    await rm(dir, { recursive: true, force: true });
     process.off("unhandledRejection", onUnhandled);
   }
 
