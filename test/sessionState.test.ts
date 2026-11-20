@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
 import type { ChangeSession, ChangeSnapshot, PullRequest, SessionWorktree } from "../src/shared/types.ts";
-import { canEndArchivedSession, cardSessionControls, cleanupNotice, continueArchiveAvailable, consoleSteps, endConfirmable, endProposalConfirmation, handedOverProposal, mergeControl, mergeNotice, pullRequestSession, sessionBadge, sessionsForChange } from "../src/ui/sessionState.ts";
+import { canEndArchivedSession, cardSessionControls, cleanupNotice, continueArchiveAvailable, consoleSteps, endConfirmable, endProposalConfirmation, handedOverProposal, lifecycleSession, mergeControl, mergeNotice, pullRequestSession, sessionBadge, sessionsForChange } from "../src/ui/sessionState.ts";
 import { fakeProfile } from "./sessionHelpers.ts";
 
 // The split button a card shows (kanban-board: "A change's actions are one split button"), as the pure rule the card
@@ -43,6 +43,12 @@ const session = (patch: Partial<ChangeSession> = {}): ChangeSession => ({
   updatedAt: "2026-10-01T09:30:00Z",
   resumable: true,
   ...patch,
+});
+
+test("Archive Ship resolves its archive session independently of the selected Console session", () => {
+  const archive = session({ id: "archive", action: "archive", updatedAt: "2026-10-01T09:10:00Z" });
+  const selected = session({ id: "selected", action: "implement", updatedAt: "2026-10-01T09:30:00Z" });
+  expect(lifecycleSession([archive, selected], "archive")?.id).toBe("archive");
 });
 
 test("a pending archive can be continued even without a pull request or session", () => {

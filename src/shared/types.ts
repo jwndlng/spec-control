@@ -990,6 +990,8 @@ export interface ChangeSession extends SessionBase {
   managedActionId?: string;
   /** User explicitly confirmed this exact managed action's completion after checking its work. */
   phaseCompletionConfirmedActionId?: string;
+  /** Monotonic confirmation revision for this managed action; older session records default to revision 1. */
+  phaseCompletionConfirmedRevision?: number;
   /** User explicitly accepted publishing this exact archive action with unresolved tasks left unchanged. */
   unresolvedArchiveAcceptedActionId?: string;
   /** How a managed OpenSpec action was resolved in its actual checkout. Missing on older records and non-OpenSpec work. */

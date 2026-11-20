@@ -27,6 +27,28 @@ export interface LifecycleTimelineModel {
   workingPhase?: LifecyclePhase;
 }
 
+/** The newest delivery record per phase; older retries are history, not separate current status rows. */
+export function latestLifecycleDeliveries(deliveries: readonly LifecycleDeliveryView[]): LifecycleDeliveryView[] {
+  const latest = new Map<LifecycleDeliveryView["phase"], LifecycleDeliveryView>();
+  for (const delivery of deliveries) {
+    const previous = latest.get(delivery.phase);
+    if (!previous || delivery.updatedAt.localeCompare(previous.updatedAt) > 0) latest.set(delivery.phase, delivery);
+  }
+  return [...latest.values()];
+}
+
+/** Current, actionable delivery rows; merged checkpoints are already represented by their green phase marker. */
+export function visibleLifecycleDeliveries(
+  deliveries: readonly LifecycleDeliveryView[],
+  pullRequests: LifecycleTimelineModel["pullRequests"],
+): LifecycleDeliveryView[] {
+  return latestLifecycleDeliveries(deliveries).filter((delivery) =>
+    delivery.state !== "merged" &&
+    !/there is nothing to ship \(merged\)/i.test(delivery.blocker ?? "") &&
+    pullRequests[delivery.phase].state !== "merged"
+  );
+}
+
 const stagePhase: Record<ChangeSnapshot["stage"], LifecyclePhase> = {
   backlog: "Backlog", drafts: "Drafts", unknown: "Backlog", ready: "Ready",
   implementing: "Implementing", done: "Done", archived: "Archived",
@@ -64,11 +86,7 @@ export function lifecycleTimelineModel(
   const actionPhase = change.subState === "validate" ? "Done" as const
     : nextPhase === "Archived" && visualCurrent === "Archived" ? undefined
       : nextPhase;
-  const latestDeliveries = new Map<LifecycleDeliveryView["phase"], LifecycleDeliveryView>();
-  for (const delivery of deliveries) {
-    const previous = latestDeliveries.get(delivery.phase);
-    if (!previous || delivery.updatedAt.localeCompare(previous.updatedAt) > 0) latestDeliveries.set(delivery.phase, delivery);
-  }
+  const latestDeliveries = new Map(latestLifecycleDeliveries(deliveries).map((delivery) => [delivery.phase, delivery]));
   const persistence = [...latestDeliveries.values()].map((delivery) => ({
     id: delivery.id,
     label: `${humanize(delivery.phase)} delivery: ${humanize(delivery.state)}${delivery.blocker ? ` · ${delivery.blocker}` : ""}`,
@@ -76,10 +94,11 @@ export function lifecycleTimelineModel(
     pullRequestUrl: delivery.pullRequestUrl,
   }));
   const stateFor = (phase: LifecycleDeliveryView["phase"], delivery: LifecycleDeliveryView | undefined, phasePr: PullRequest | undefined) => {
+    const alreadyMerged = phasePr?.state === "merged" || delivery?.state === "merged" || /there is nothing to ship \(merged\)/i.test(delivery?.blocker ?? "");
     const phaseStarted = phasePr !== undefined || delivery !== undefined;
     const started = phaseStarted || (phase === "proposal" ? currentIndex >= 1 : phase === "implementation" ? currentIndex >= 3 : currentIndex >= 5);
     const skipped = phase === "proposal" && visualCurrentIndex >= LIFECYCLE_PHASES.indexOf("Implementing") && !phasePr && !delivery;
-    const state: LifecyclePullRequestState = phasePr?.state === "merged" || delivery?.state === "merged" ? "merged"
+    const state: LifecyclePullRequestState = alreadyMerged ? "merged"
       : skipped ? "skipped"
         : !phasePr ? !started ? "upcoming"
         : delivery && ["pending", "committing", "pushing", "opening-pr"].includes(delivery.state) ? "shipping"
@@ -92,7 +111,7 @@ export function lifecycleTimelineModel(
               : phasePr.checks === "pending" || phasePr.mergeable === "unknown" || !phasePr.mergeable ? "checking"
                 : phasePr.mergeable === "mergeable" && (phasePr.checks === "passing" || phasePr.checks === "none") ? "ready" : "waiting";
     const label = ({ upcoming: "Not started", unshipped: "Not shipped", skipped: "Skipped", shipping: "Shipping", checking: "Checks running", ready: "Checks passed", conflicts: "Conflicts", failed: delivery?.blocker ? "Delivery blocked" : "Checks failed", merged: "Merged", closed: "Closed", waiting: "Waiting" } as const)[state];
-    return { state, label, ...(delivery?.blocker ? { blocker: delivery.blocker } : {}), ...(phasePr?.number ? { number: phasePr.number } : delivery?.pullRequestNumber ? { number: delivery.pullRequestNumber } : {}), ...(phasePr?.url ? { url: phasePr.url } : delivery?.pullRequestUrl ? { url: delivery.pullRequestUrl } : {}) };
+    return { state, label, ...(!alreadyMerged && delivery?.blocker ? { blocker: delivery.blocker } : {}), ...(phasePr?.number ? { number: phasePr.number } : delivery?.pullRequestNumber ? { number: delivery.pullRequestNumber } : {}), ...(phasePr?.url ? { url: phasePr.url } : delivery?.pullRequestUrl ? { url: delivery.pullRequestUrl } : {}) };
   };
   const pullRequests = Object.fromEntries((['proposal', 'implementation', 'archive'] as const).map((phase) => {
     const delivery = latestDeliveries.get(phase);
@@ -134,7 +153,7 @@ export function LifecycleTimeline({ model, children, draftChildren, deliveryChil
       <span class="lifecycle-pr-marker" aria-hidden="true">{item.state === "ready" || item.state === "merged" ? "✓" : ""}</span>
       <span class="lifecycle-pr-label">{label} PR</span><span class="lifecycle-pr-state">{item.label}</span>
       {item.blocker && <span class="lifecycle-pr-blocker" title={item.blocker}>{item.blocker}</span>}
-      {item.url && <a href={item.url} target="_blank" rel="noopener noreferrer">{item.number ? `#${item.number}` : "Open PR"}</a>}
+      {item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer">{item.number ? `#${item.number}` : "Open PR"}</a> : item.number && <span>#{item.number}</span>}
       {deliveryActions[phase] ?? (phase === "implementation" ? deliveryChildren : undefined)}
     </li>;
   };
@@ -168,7 +187,6 @@ export function LifecycleTimeline({ model, children, draftChildren, deliveryChil
       </div>
       <div class="lifecycle-status" aria-live="polite">
         {model.validation && <span>{model.validation}</span>}
-        {model.persistence.map((item) => <span key={item.id}>{item.label}{item.pullRequestUrl && item.pullRequestNumber && <> · <a href={item.pullRequestUrl} target="_blank" rel="noopener noreferrer">PR #{item.pullRequestNumber}</a></>}</span>)}
       </div>
       {!model.actionPhase && <div class="lifecycle-timeline-action">{children}</div>}
     </section>
