@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-20-skipped-drafts-pr",
+  "date": "2026-11-20",
+  "title": "See when Drafts delivery was skipped",
+  "summary": "If implementation starts without a Drafts pull request, the lifecycle timeline now marks that delivery step as Skipped. Existing pull requests and recorded delivery attempts keep their own status."
+}

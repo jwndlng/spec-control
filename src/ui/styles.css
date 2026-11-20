@@ -1959,6 +1959,8 @@ a.badge.needs-you:focus-visible { outline: 2px solid var(--brand); outline-offse
 .lifecycle-pr-checkpoint.checking .lifecycle-pr-marker, .lifecycle-pr-checkpoint.shipping .lifecycle-pr-marker { border-color: var(--warning); background: var(--warning); animation: lifecycle-delivery-pulse 1.5s ease-out infinite; }
 .lifecycle-pr-blocker { max-width: 112px; overflow: hidden; color: var(--danger); font-size: 9px; text-overflow: ellipsis; }
 .lifecycle-pr-checkpoint.upcoming .lifecycle-pr-marker { opacity: .55; }
+.lifecycle-pr-checkpoint.skipped { color: var(--fg-subtle); }
+.lifecycle-pr-checkpoint.skipped .lifecycle-pr-marker { border-style: dashed; }
 .lifecycle-ship-button { white-space: nowrap; }
 .lifecycle-fast-forward { grid-column: 1 / -1; display: flex; align-items: center; gap: 7px; color: var(--fg-subtle); font-size: 10px; }
 .lifecycle-fast-forward-line { color: var(--brand); font-size: 17px; line-height: 1; }

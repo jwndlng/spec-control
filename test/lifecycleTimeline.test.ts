@@ -149,6 +149,31 @@ describe("lifecycleTimelineModel", () => {
     ]);
   });
 
+  test("marks an unattempted Drafts PR as skipped after implementation starts", () => {
+    const beforeImplementation = lifecycleTimelineModel(change({ stage: "ready" }), [], []);
+    expect(beforeImplementation.pullRequests.proposal).toMatchObject({ state: "unshipped", label: "Not shipped" });
+
+    const implementing = lifecycleTimelineModel(change({ stage: "implementing" }), [], []);
+    expect(implementing.pullRequests.proposal).toMatchObject({ state: "skipped", label: "Skipped" });
+    expect(mount(h(LifecycleTimeline, { model: implementing })).querySelector('.lifecycle-pr-checkpoint[aria-label^="Drafts pull request"]')?.textContent).toContain("Skipped");
+  });
+
+  test("preserves Drafts PR and delivery statuses after implementation starts", () => {
+    const proposalPr = pullRequest({ number: 17, head: "docs/rotate-keys", checks: "pending" });
+    const withPr = lifecycleTimelineModel(change({ stage: "implementing" }), [], [], undefined, [proposalPr]);
+    expect(withPr.pullRequests.proposal).toMatchObject({ state: "checking", number: 17 });
+
+    const attempted = lifecycleTimelineModel(change({ stage: "implementing" }), [], [delivery({ phase: "proposal", state: "blocked", blocker: "push rejected" })]);
+    expect(attempted.pullRequests.proposal).toMatchObject({ state: "failed", label: "Delivery blocked", blocker: "push rejected" });
+  });
+
+  test("does not offer Archive again after lifecycle progress already reached Archived", () => {
+    const model = lifecycleTimelineModel(change({ stage: "done" }), [], [], undefined, [], undefined, "Archived");
+    expect(model.phases.at(-1)).toMatchObject({ label: "Archived", state: "current" });
+    expect(model.actionPhase).toBeUndefined();
+    expect(mount(h(LifecycleTimeline, { model, children: h("button", {}, "End proposal session and archive") })).querySelector(".lifecycle-phase.current .lifecycle-phase-action")).toBeNull();
+  });
+
   test("discovers implementation and archive PRs from their own branches", () => {
     const implementation = pullRequest({ number: 51, head: "feat/rotate-keys", checks: "passing" });
     const archive = pullRequest({ number: 52, head: "chore/archive-rotate-keys", checks: "pending" });
