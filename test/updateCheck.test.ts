@@ -115,6 +115,15 @@ async function settle() {
   for (let i = 0; i < 5; i++) await Bun.sleep(2);
 }
 
+/** Wait until a fired check has finished persisting and armed its next fake timer. */
+async function waitForPending(time: ReturnType<typeof fakeTime>, ms: number) {
+  for (let i = 0; i < 100; i++) {
+    if (time.pending().includes(ms)) return;
+    await Bun.sleep(5);
+  }
+  throw new Error(`expected a timer due in ${ms}ms, got ${time.pending().join(", ") || "none"}`);
+}
+
 function harness(opts: { version?: string; answer?: () => string | undefined; config?: Partial<Config>; start?: number } = {}) {
   const time = fakeTime(opts.start);
   const state = { config: { ...defaultConfig(), ...opts.config } as Config };
@@ -176,8 +185,10 @@ test("a failure counts as a check, keeps the last tag learned, and is retried on
   const h = harness({ answer: () => answer });
   h.checker.plan();
   await h.time.advance(START_DELAY_MS);
+  await waitForPending(h.time, CHECK_INTERVAL_MS);
   answer = "throw";
   await h.time.advance(CHECK_INTERVAL_MS);
+  await waitForPending(h.time, CHECK_INTERVAL_MS);
   expect(h.requests()).toBe(2);
   expect(h.checker.status()).toMatchObject({ outcome: "failed", latest: "v0.12.0", available: true });
   await h.time.advance(CHECK_INTERVAL_MS - 1);
