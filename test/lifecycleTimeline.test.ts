@@ -149,6 +149,27 @@ describe("lifecycleTimelineModel", () => {
     ]);
   });
 
+  test("does not show a recorded proposal branch again as the Implementation PR", () => {
+    const proposalPr = pullRequest({ number: 17, head: "docs/rotate-keys", checks: "passing" });
+    const model = lifecycleTimelineModel(
+      change({ stage: "implementing", recorded: { branch: "docs/rotate-keys" } }),
+      [], [], proposalPr, [proposalPr],
+    );
+    expect(model.pullRequests.proposal).toMatchObject({ state: "ready", number: 17 });
+    expect(model.pullRequests.implementation).toMatchObject({ state: "unshipped" });
+    expect(model.pullRequests.implementation.number).toBeUndefined();
+    const view = mount(h(LifecycleTimeline, { model }));
+    expect(view.querySelector('.lifecycle-pr-checkpoint[aria-label^="Drafts pull request"]')?.textContent).toContain("#17");
+    expect(view.querySelector('.lifecycle-pr-checkpoint[aria-label^="Implementation pull request"]')?.textContent).not.toContain("#17");
+  });
+
+  test("keeps the artifact milestone label row on one line", async () => {
+    const css = await Bun.file(new URL("../src/ui/styles.css", import.meta.url)).text();
+    const labelRule = css.match(/\.lifecycle-artifact-label\s*\{([^}]*)\}/)?.[1];
+    expect(labelRule).toContain("white-space: nowrap");
+    expect(labelRule).toContain("overflow-wrap: normal");
+  });
+
   test("marks an unattempted Drafts PR as skipped after implementation starts", () => {
     const beforeImplementation = lifecycleTimelineModel(change({ stage: "ready" }), [], []);
     expect(beforeImplementation.pullRequests.proposal).toMatchObject({ state: "unshipped", label: "Not shipped" });

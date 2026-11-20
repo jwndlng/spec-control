@@ -1971,7 +1971,7 @@ a.badge.needs-you:focus-visible { outline: 2px solid var(--brand); outline-offse
 .lifecycle-artifact-dot.done .lifecycle-artifact-segment { background: var(--success); }
 .lifecycle-artifact-dot.ready .lifecycle-artifact-segment { background: linear-gradient(to right, var(--brand) 60%, var(--brand-softer) 60%); }
 .lifecycle-artifact-dot.blocked .lifecycle-artifact-segment { background: var(--warning); }
-.lifecycle-artifact-label { overflow-wrap: anywhere; font-size: 8px; line-height: 1.2; text-align: center; }
+.lifecycle-artifact-label { white-space: nowrap; overflow-wrap: normal; font-size: 8px; line-height: 1.2; text-align: center; }
 .lifecycle-artifact-dot.done { color: var(--success); }
 .lifecycle-artifact-dot.ready { color: var(--brand); }
 .lifecycle-artifact-dot.blocked { color: var(--warning); }
