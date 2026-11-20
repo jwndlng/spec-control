@@ -8,7 +8,7 @@ import { parseTaskLine } from "../shared/taskLine.ts";
 import { ApiError, api, type LifecycleDeliveryView } from "./api.ts";
 import { CopyButton, CopyRefButton, Meter } from "./kanban.tsx";
 import { type LinkResolver, renderMarkdown } from "./markdown.tsx";
-import { backTarget, CONSOLE_TAB, changePath, type DetailQuery, parseDetailQuery, repoPath, serializeDetailQuery } from "./routes.ts";
+import { backTarget, CONSOLE_TAB, PROMPT_TAB, changePath, type DetailQuery, parseDetailQuery, repoPath, serializeDetailQuery } from "./routes.ts";
 import { ConsolePanel, ConsoleSessionList, ResolveConflicts } from "./sessionPanel.tsx";
 import { changeWorktreePath, consoleAvailable, consoleSession, consoleSessions, consoleTabAvailable } from "./sessionState.ts";
 import { useSessionUi, WorkStatus } from "./sessions.tsx";
@@ -24,7 +24,7 @@ import { ChangePermissionPicker } from "./changePermissionPicker.tsx";
 import { duplicateNotice, staleHint, staleReason } from "./staleState.ts";
 import { deletedFilesNotice, dismissedNotice, dismissOffer } from "./dismissState.ts";
 import { checkoutHint, daysSince, leftoverHint, pendingArchiveHint, relTime, splitPathLabel } from "./format.ts";
-import { currentQuery, followInApp, href, hrefWithQuery, navigate, replaceQuery } from "./url.ts";
+import { currentQuery, followInApp, href, hrefWithQuery, navigate, onRouteChange, replaceQuery } from "./url.ts";
 import { dismissActiveSelect } from "./select.tsx";
 import { LifecycleTimeline, lifecycleTimelineModel } from "./lifecycleTimeline.tsx";
 import { SessionControls, ShipButton } from "./sessions.tsx";
@@ -32,6 +32,10 @@ import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 
 export function artifactLabel(id: string): string {
   return id.replace(/[-_]+/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+
+export function PromptContent({ prompt }: { prompt: string }) {
+  return <div class="detail-prompt-content" role="note" aria-label="Prompt"><p>{prompt}</p></div>;
 }
 
 export interface Selection {
@@ -44,8 +48,9 @@ export interface Selection {
  * file when they exist, else the first artifact that has content and its first file. A stale link — a missing
  * artifact, a missing file, or the console for a change without a session — therefore never produces an error.
  */
-export function resolveSelection(artifacts: ChangeArtifactEntry[], query: Pick<DetailQuery, "artifact" | "file">, hasConsole = false): Selection {
+export function resolveSelection(artifacts: ChangeArtifactEntry[], query: Pick<DetailQuery, "artifact" | "file">, hasConsole = false, hasPrompt = false): Selection {
   if (query.artifact === CONSOLE_TAB && hasConsole) return { artifactId: CONSOLE_TAB };
+  if (query.artifact === PROMPT_TAB && hasPrompt) return { artifactId: PROMPT_TAB };
   const withContent = artifacts.filter((a) => a.files.length > 0);
   const artifact = withContent.find((a) => a.id === query.artifact) ?? withContent[0];
   if (!artifact) return {};
@@ -319,13 +324,12 @@ function DismissButton({ change, failing, onDismiss }: { change: ChangeSnapshot;
 /**
  * What the card leaves out: where the change lives and what state it is in — column, tasks, last update, how long it
  * has been complete, its branch and checkouts, an archive the main checkout lacks or an active copy left next to one,
- * its worktree's work status — and the prompt it was started with. The artifact tabs below say which phases are written.
+ * its worktree's work status. The tabs below say which artifacts are written and provide the change prompt.
  */
 function ChangeFacts({ change, pullRequest, now = Date.now() }: { change: ChangeSnapshot; pullRequest?: DetailPr; now?: number }) {
   const age = daysSince(change.lastActivityAt, now);
   const pending = pendingArchiveHint(change);
   const leftover = leftoverHint(change);
-  const prompt = promptBody(change.prompt);
   return (
     <>
       <div class="row detail-facts">
@@ -353,12 +357,6 @@ function ChangeFacts({ change, pullRequest, now = Date.now() }: { change: Change
         {pullRequest && <DetailPullRequest info={pullRequest} />}
         <WorkStatus repoId={change.repoId} name={change.name} />
       </div>
-      {prompt && (
-        <div class="detail-prompt" role="note" aria-label={`prompt: ${prompt}`}>
-          <span class="detail-prompt-label">✎ prompt</span>
-          <p>{prompt}</p>
-        </div>
-      )}
     </>
   );
 }
@@ -448,13 +446,17 @@ export function ChangeDependencies({ change, repo, from }: { change: Pick<Change
 }
 
 /**
- * One tab per artifact of the change's schema, and — when the change has a session or a session worktree — the Console
- * tab after them. The Console tab is not an artifact: it carries no state label and is always selectable, so a change
- * whose artifacts are all unwritten can still be watched.
+ * Prompt (when present), one tab per artifact of the change's schema, and — when the change has a session or a session
+ * worktree — the Console tab after them. Prompt and Console are not artifacts and carry no state label.
  */
-export function ArtifactTabs({ artifacts, selected, onSelect, console: hasConsole = false }: { artifacts: ChangeArtifactEntry[]; selected?: string; onSelect: (id: string) => void; console?: boolean }) {
+export function ArtifactTabs({ artifacts, selected, onSelect, console: hasConsole = false, prompt = false }: { artifacts: ChangeArtifactEntry[]; selected?: string; onSelect: (id: string) => void; console?: boolean; prompt?: boolean }) {
   return (
-    <div class="detail-tabs" role="tablist" aria-label="Artifacts">
+    <div class="detail-tabs" role="tablist" aria-label="Change content">
+      {prompt && (
+        <button type="button" role="tab" class={`detail-tab ${selected === PROMPT_TAB ? "on" : ""}`} aria-selected={selected === PROMPT_TAB} onClick={() => onSelect(PROMPT_TAB)}>
+          Prompt
+        </button>
+      )}
       {artifacts.map((a) => {
         const empty = a.files.length === 0;
         return (
@@ -658,6 +660,9 @@ export function ChangeDetail({
     replaceQuery(serializeDetailQuery(next));
   };
 
+  // The tab is URL-backed, so browser back/forward navigation must restore it along with the other query state.
+  useEffect(() => onRouteChange(() => setQueryState(parseDetailQuery(currentQuery()))), []);
+
   const repo = snapshot?.repos.find((r) => r.id === repoId);
   const change = repo?.changes.find((c) => c.name === changeName);
   const known = change !== undefined;
@@ -738,8 +743,10 @@ export function ChangeDetail({
     } finally { setAcceptingArchive(false); }
   };
 
-  const selection = useMemo(() => resolveSelection(listing?.artifacts ?? [], query, hasConsole), [listing, query, hasConsole]);
+  const prompt = promptBody(change?.prompt);
+  const selection = useMemo(() => resolveSelection(listing?.artifacts ?? [], query, hasConsole, Boolean(prompt)), [listing, query, hasConsole, prompt]);
   const onConsole = selection.artifactId === CONSOLE_TAB;
+  const onPrompt = selection.artifactId === PROMPT_TAB;
   const file = selection.file;
 
   useEffect(() => {
@@ -913,14 +920,14 @@ export function ChangeDetail({
       </section>}
       {!change.archived && ui.config?.agentSessions.enabled && <ChangePermissionPicker key={`${repoId}/${changeName}`} repoId={repoId} changeName={changeName} />}
       <StaleNotice repo={repo} change={change} />
-      {(listing || hasConsole) && (
-        <ArtifactTabs artifacts={listing?.artifacts ?? []} selected={selection.artifactId} onSelect={(id) => setQuery({ artifact: id, file: undefined })} console={hasConsole} />
+      {(listing || hasConsole || prompt) && (
+        <ArtifactTabs artifacts={listing?.artifacts ?? []} selected={selection.artifactId} onSelect={(id) => setQuery({ artifact: id, file: undefined })} console={hasConsole} prompt={Boolean(prompt)} />
       )}
       <div class="detail-body">
         {onConsole ? (
           <ConsoleSessionList sessions={sessions} selected={shownSession?.id} onSelect={(id) => setQuery({ artifact: CONSOLE_TAB, session: id })} />
         ) : (
-          artifact && <FileList artifact={artifact} selected={file} onSelect={(path) => setQuery({ artifact: artifact.id, file: path })} />
+          !onPrompt && artifact && <FileList artifact={artifact} selected={file} onSelect={(path) => setQuery({ artifact: artifact.id, file: path })} />
         )}
         {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: delegated from the links inside, which are anchors — Enter on one fires this click too */}
         <section class="detail-content" onClick={followFileLink}>
@@ -928,6 +935,7 @@ export function ChangeDetail({
             <ConsolePanel session={shownSession} worktree={shownWorktree} of={{ repoId, change: changeName }} lifecycleActionsInTimeline />
           ) : (
             <>
+          {onPrompt && prompt ? <PromptContent prompt={prompt} /> : null}
           {file && (
             <div class="detail-toolbar">
               <code class="path">{file}</code>
@@ -937,7 +945,7 @@ export function ChangeDetail({
               </label>
             </div>
           )}
-          {listError && !listing ? (
+          {onPrompt && prompt ? null : listError && !listing ? (
             <div class="notice danger detail-problem">Could not read this change's artifacts: {listError}</div>
           ) : !listing ? (
             <p class="detail-hint">Loading…</p>

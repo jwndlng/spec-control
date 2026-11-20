@@ -43,10 +43,12 @@ export function changePath(repoId: string, changeName: string): string {
  * this name (`openspec status` ids are the schema's own), so the two cannot collide.
  */
 export const CONSOLE_TAB = "console";
+/** A detail-view tab backed by the change snapshot rather than a schema artifact. */
+export const PROMPT_TAB = "prompt";
 
 /** What the change detail view keeps in the query string, so a view can be linked and survives a reload. */
 export interface DetailQuery {
-  /** An artifact id, or `CONSOLE_TAB`. */
+  /** An artifact id, `PROMPT_TAB`, or `CONSOLE_TAB`. */
   artifact?: string;
   /** Path relative to the change directory. */
   file?: string;

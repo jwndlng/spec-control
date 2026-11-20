@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ChangeArtifactEntry, ChangeSnapshot, PullRequest, PullRequestsResponse, RepoPullRequests, RepoSnapshot } from "../src/shared/types.ts";
+import type { ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, PullRequest, PullRequestsResponse, RepoPullRequests, RepoSnapshot } from "../src/shared/types.ts";
 import { ApiError } from "../src/ui/api.ts";
 import {
   ArtifactTabs,
@@ -17,6 +17,7 @@ import {
   detailClose,
   FileContent,
   FileList,
+  PromptContent,
   type FileState,
   fileFailure,
   nextFileState,
@@ -27,8 +28,9 @@ import {
 } from "../src/ui/changeDetail.tsx";
 import { type Card, ChangeCard, ConsoleLink, CopyButton, cardLink, consoleTarget, initialFilters } from "../src/ui/kanban.tsx";
 import { renderMarkdown } from "../src/ui/markdown.tsx";
+import { promptBody } from "../src/ui/boardMarks.ts";
 import { detailPullRequest } from "../src/ui/pullRequests.tsx";
-import { backTarget, CONSOLE_TAB, parseDetailQuery, routeFromPath, serializeDetailQuery } from "../src/ui/routes.ts";
+import { backTarget, CONSOLE_TAB, PROMPT_TAB, parseDetailQuery, routeFromPath, serializeDetailQuery } from "../src/ui/routes.ts";
 import { FIXTURES } from "./helpers.ts";
 import { byComponent, byTag, elements, textOf } from "./vnode.ts";
 
@@ -98,11 +100,14 @@ test("detail header labels a recorded implementation model only when present", (
   expect(textOf(DetailHeader({ repo, change, onClose: noop }))).not.toContain("Implement model:");
 });
 
-test("the detail view shows the prompt as plain text, without the form's heading", () => {
+test("the detail header no longer displays the prompt", () => {
   const prompted = { ...change, prompt: "# Prompt\n\nLog every mutation <b>now</b>\n" };
-  const note = classed(DetailHeader({ repo, change: prompted, onClose: noop }), "detail-prompt")[0];
-  expect(textOf(byTag(note, "p")[0])).toBe("Log every mutation <b>now</b>");
-  expect(classed(DetailHeader({ repo, change, onClose: noop }), "detail-prompt")).toEqual([]);
+  expect(textOf(DetailHeader({ repo, change: prompted, onClose: noop }))).not.toContain("Log every mutation");
+  const prompt = PromptContent({ prompt: "Log every mutation <b>now</b>" });
+  expect(textOf(byTag(prompt, "p")[0])).toBe("Log every mutation <b>now</b>");
+  expect(classed(prompt, "detail-prompt-content")).toHaveLength(1);
+  expect(promptBody("# Prompt\n\n")).toBeUndefined();
+  expect(promptBody(undefined)).toBeUndefined();
 });
 
 test("the repository link keeps the filters of that repository's board when the view came from it", () => {
@@ -189,6 +194,17 @@ test("tabs: schema order, state on every tab, artifacts without files not select
   expect(artifactLabel("release-notes")).toBe("Release notes");
 });
 
+test("Prompt tab comes before artifacts, has no artifact state, and can be selected", () => {
+  const picked: string[] = [];
+  const tabs = byTag(ArtifactTabs({ artifacts, selected: PROMPT_TAB, onSelect: (id) => picked.push(id), prompt: true, console: true }), "button");
+  expect(tabs.map((tab) => textOf(tab))).toEqual(["Prompt", "Proposaldone", "Specsdone", "Designready", "Tasksblocked", "Console"]);
+  expect(tabs[0].props.disabled).toBeFalsy();
+  expect(tabs[0].props["aria-selected"]).toBe(true);
+  (tabs[0].props.onClick as () => void)();
+  expect(picked).toEqual([PROMPT_TAB]);
+  expect(byTag(ArtifactTabs({ artifacts, selected: "proposal", onSelect: () => {}, prompt: false }), "button").map(textOf)).not.toContain("Prompt");
+});
+
 test("the Console tab comes last and is selectable whatever the artifacts are in", () => {
   const withConsole = byTag(ArtifactTabs({ artifacts, selected: CONSOLE_TAB, onSelect: () => {}, console: true }), "button");
   expect(withConsole.map((tab) => textOf(tab))).toEqual(["Proposaldone", "Specsdone", "Designready", "Tasksblocked", "Console"]);
@@ -215,11 +231,22 @@ test("selection: URL wins when it exists, stale artifact or file falls back with
   expect(resolveSelection(artifacts, { artifact: "nope", file: "../../etc/passwd" })).toEqual({ artifactId: "proposal", file: "proposal.md" });
   expect(resolveSelection(artifacts.map((a) => ({ ...a, files: [] })), { artifact: "specs" })).toEqual({});
   expect(resolveSelection([], {})).toEqual({});
+  expect(resolveSelection(artifacts, { artifact: PROMPT_TAB }, false, true)).toEqual({ artifactId: PROMPT_TAB });
+  expect(resolveSelection(artifacts, { artifact: PROMPT_TAB }, false, false)).toEqual({ artifactId: "proposal", file: "proposal.md" });
+  expect(resolveSelection([], { artifact: PROMPT_TAB }, false, false)).toEqual({});
   // The Console tab is selectable whenever it is offered — which is now decided per repository, not per change.
   expect(resolveSelection(artifacts, { artifact: CONSOLE_TAB }, true)).toEqual({ artifactId: CONSOLE_TAB });
   expect(resolveSelection([], { artifact: CONSOLE_TAB }, true)).toEqual({ artifactId: CONSOLE_TAB });
   // No Console tab (agent sessions off for the repository): fall back to the first artifact with content, no error.
   expect(resolveSelection(artifacts, { artifact: CONSOLE_TAB }, false)).toEqual({ artifactId: "proposal", file: "proposal.md" });
+});
+
+test("Prompt tab survives URL serialization and selects normal content when prompt is no longer available", () => {
+  const query = { raw: false, artifact: PROMPT_TAB, from: "/board?q=sync" };
+  const roundTrip = parseDetailQuery(serializeDetailQuery(query));
+  expect(roundTrip).toMatchObject(query);
+  expect(resolveSelection(artifacts, roundTrip, false, true)).toEqual({ artifactId: PROMPT_TAB });
+  expect(resolveSelection(artifacts, roundTrip, false, false)).toEqual({ artifactId: "proposal", file: "proposal.md" });
 });
 
 test("file list only for multi-file artifacts, first file selected by default", () => {
@@ -475,6 +502,21 @@ test("a poll changes neither the selected tab nor the selected session", () => {
   expect(after).toEqual(before);
   expect(after).toEqual({ artifactId: CONSOLE_TAB });
   expect(parseDetailQuery(serializeDetailQuery(query)).session).toBe("s-2");
+
+  const promptQuery = { raw: false, artifact: PROMPT_TAB };
+  const promptListing = { change: { name: "c", dir: "/w/c" }, artifacts } as unknown as ChangeArtifacts;
+  const unchangedPromptListing = nextListing(promptListing, JSON.parse(JSON.stringify(promptListing)));
+  const promptBefore = resolveSelection(promptListing.artifacts, promptQuery, false, true);
+  const promptAfter = resolveSelection(unchangedPromptListing.artifacts, parseDetailQuery(serializeDetailQuery(promptQuery)), false, true);
+  expect(unchangedPromptListing).toBe(promptListing);
+  expect(promptAfter).toEqual(promptBefore);
+  expect(promptAfter).toEqual({ artifactId: PROMPT_TAB });
+  const promptBodyBefore = PromptContent({ prompt: "same prompt" });
+  const promptBodyAfter = PromptContent({ prompt: "same prompt" });
+  expect(textOf(promptBodyAfter)).toBe(textOf(promptBodyBefore));
+  // A refreshed snapshot can update prompt text without changing the URL-selected tab.
+  expect(resolveSelection(unchangedPromptListing.artifacts, promptQuery, false, true)).toEqual({ artifactId: PROMPT_TAB });
+  expect(textOf(PromptContent({ prompt: "updated prompt" }))).toContain("updated prompt");
 });
 
 // ---- the change's pull request in the header ----
