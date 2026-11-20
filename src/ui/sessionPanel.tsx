@@ -42,6 +42,7 @@ import {
 import { ConflictBadge, OpenInEditor, SessionBadgeView, SessionControls, useSessionUi } from "./sessions.tsx";
 import { StaleCleanupOutcome } from "./staleCleanup.tsx";
 import { Select } from "./select.tsx";
+import { ChangePermissionPicker } from "./changePermissionPicker.tsx";
 
 export function Copy({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false);
@@ -456,8 +457,8 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
   return (
     <section class="console-pane" aria-label={`Agent console ${change ?? ""}`}>
       <header class="session-head">
-        {card && repo && ui.config && ui.config.agentSessions.agents.length > 1 && (
-          <div class="row change-agent-picker">
+        {card && repo && ui.config && <div class="console-change-settings">
+          {ui.config.agentSessions.agents.length > 1 && <div class="row change-agent-picker">
             Agent{" "}
             <Select aria-label="Change agent"
               value={repo.agent?.changeAgents?.[change ?? ""] ?? ""}
@@ -474,8 +475,9 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
                 ...ui.config.agentSessions.agents.map((agent) => ({ value: agent.id, label: agent.name })),
               ]}
             />
-          </div>
-        )}
+          </div>}
+          {ui.config.agentSessions.enabled && <ChangePermissionPicker key={`${repoId}/${change}`} repoId={repoId!} changeName={change!} />}
+        </div>}
         {agentError && (
           <div class="notice danger" role="status">
             {agentError}
