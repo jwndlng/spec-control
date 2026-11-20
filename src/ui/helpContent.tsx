@@ -202,8 +202,8 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             the step they advance, and a compact confirmation appears in a phase that needs completion evidence. A smaller
             pull-request checkpoint follows Done: Ship appears there when work is ready, its marker shows shipping and check
             status, and Resolve conflicts appears when available. Delivery status remains separate from local progress.
-            Use the selected session's <strong>Session actions</strong> menu to Resume, Clean up, Delete record or Open in
-            editor. The copy icon beside a worktree path copies the path itself.
+            The selected session's <strong>Session actions</strong> are visible in the Console tab: Resume, Clean up,
+            Delete record and Open in editor. The copy icon beside a worktree path copies the path itself.
           </li>
           <li>
             In the demo, <strong>idempotency-keys</strong> shows a proposal waiting on PR #42, and <strong>deprecate-v1-auth</strong>
@@ -231,7 +231,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             <code>{"{model}"}</code>; otherwise the dashboard adds <code>--model</code> followed by the model name.
           </li>
           <li>
-            <strong>Open in editor</strong> is in the selected session's <strong>Session actions</strong> menu. In Open work,
+            <strong>Open in editor</strong> is in the selected session's visible <strong>Session actions</strong> group in the Console tab. In Open work,
             it remains beside <strong>Copy cd</strong>. It opens the
             folder the change's agent works in — its worktree, or the project folder for a session without one — in your
             editor. It runs VS Code's <code>code</code> unless you set another <strong>Editor command</strong> under{" "}

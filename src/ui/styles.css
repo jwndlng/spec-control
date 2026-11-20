@@ -2070,11 +2070,6 @@ a.badge.needs-you:focus-visible { outline: 2px solid var(--brand); outline-offse
 .console-action-groups { display: grid; gap: 10px; }
 .console-action-group { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
 .console-action-heading { color: var(--fg-subtle); font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
-.session-actions-menu > summary { cursor: pointer; list-style: none; }
-.session-actions-menu > summary::-webkit-details-marker { display: none; }
-.session-actions-menu > summary::after { content: "⌄"; margin-left: 6px; }
-.session-actions-menu[open] > summary::after { content: "⌃"; }
-.session-actions-menu:focus-within > summary { color: var(--fg-heading); }
 .console-action-group .row { gap: 6px; }
 /* The terminal is the part that scrolls, so it needs a bounded box: the detail content column does not scroll here. */
 .detail-content:has(.console-pane) { display: flex; flex-direction: column; overflow: hidden; padding: 0; }

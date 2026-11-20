@@ -41,12 +41,13 @@ test("an enabled control activates once and has no settings link", () => {
   expect(byTag(OpenInEditorView({ control: editorControl({ command: ["zed"], found: true }, FOLDER), busy: true, onActivate: () => {} }), "button")[0].props.disabled).toBe(true);
 });
 
-test("the Console tab offers editor access in Session actions, by session or by worktree name, never by path", () => {
+test("the Console tab offers editor access in the visible Session actions group, by session or by worktree name, never by path", () => {
   const panel = source("sessionPanel.tsx");
   expect(panel).toContain("api.openEditor(session.id)");
   expect(panel).toContain("api.openWorktreeEditor(tree.repoId, tree.name)");
   expect(panel).toContain("<OpenInEditor folder={path} open={openInEditor} run={act} />");
-  expect(panel).toContain("session-actions-menu");
+  expect(panel).toContain('<span class="console-action-heading">Session actions</span>');
+  expect(panel).not.toContain("session-actions-menu");
   const sessions = source("sessions.tsx");
   const orphan = sessions.slice(sessions.indexOf("function OrphanActions"), sessions.indexOf("export function OpenInEditor("));
   expect(orphan).toContain("Copy cd");

@@ -73,10 +73,11 @@ test("the panel's header actions go through the guard and are disabled while one
   expect(header).toContain("Commit this change, push its branch, and open or reuse a pull request. This does not merge it.");
   expect(header).toContain('aria-label="Pull request actions"');
   expect(header).toContain('aria-label="Change actions"');
-  expect(panel).toContain('class="console-action-group session-actions-menu"');
-  const sessionMenu = panel.slice(panel.indexOf('<details class="console-action-group session-actions-menu"'), panel.indexOf("</details>", panel.indexOf('<details class="console-action-group session-actions-menu"')));
-  for (const action of ["▶ Resume", "Clean up", "Delete record", "<OpenInEditor"]) expect(sessionMenu).toContain(action);
-  expect(sessionMenu).toContain("<summary class=\"console-action-heading\">Session actions</summary>");
+  expect(panel).toContain('<section class="console-action-group" aria-label={`Session actions for ${session?.change ?? "selected session"}`}>' );
+  expect(panel).not.toContain("session-actions-menu");
+  const sessionGroup = panel.slice(panel.indexOf('aria-label={`Session actions for'), panel.indexOf("</section>", panel.indexOf('aria-label={`Session actions for')));
+  for (const action of ["▶ Resume", "Clean up", "Delete record", "<OpenInEditor"]) expect(sessionGroup).toContain(action);
+  expect(sessionGroup).toContain('<span class="console-action-heading">Session actions</span>');
   // The same steps offered through the split button in the console.
   expect(header).toContain("disabled: !merge.enabled || acting,");
   expect(header).toContain("disabled: acting,");
