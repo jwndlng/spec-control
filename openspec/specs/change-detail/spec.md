@@ -785,6 +785,10 @@ The timeline SHALL present the available Draft artifacts, Implement, or Archive 
 - **WHEN** agent sessions are disabled
 - **THEN** the timeline remains readable without presenting an enabled launch action
 
+#### Scenario: Do not repeat Archive after lifecycle progress advances
+- **WHEN** the snapshot still says Done but lifecycle progress has already reached Archived
+- **THEN** the Archived checkpoint is current and the timeline does not offer Archive there again
+
 ### Requirement: The lifecycle stepper guides local and remote progress
 The change detail timeline SHALL place the existing phase action under the phase it advances, preserving all current eligibility and session handoff rules. Completed phases SHALL show green completion markers, the current actively running phase SHALL have a pulsing marker, and the available next phase SHALL be visually highlighted. A Done sub-state action such as Validate SHALL remain attached to Done. Backlog SHALL indicate the Fast-forward route to Implementing while retaining the existing Fast-forward action and confirmation.
 
@@ -805,7 +809,7 @@ The change detail timeline SHALL place the existing phase action under the phase
 - **THEN** its phase checkpoint shows a compact Confirm complete action, and confirming retains the server's artifact, task, and stable-worktree verification
 
 ### Requirement: The timeline shows a pull-request delivery checkpoint
-The timeline SHALL show smaller pull-request checkpoints after Drafts, Implementing, and Archived for proposal, implementation, and archive delivery, respectively. When Ship is available, it SHALL appear in the matching checkpoint and retain the existing shippability and confirmation behavior. Each checkpoint SHALL link to a known pull request and distinguish its delivery status in both text and appearance: shipping or checks in progress SHALL pulse orange, a mergeable pull request with passing checks SHALL be green, and conflicts or failing checks SHALL be red. A merged pull request SHALL be green. When conflicts can be resolved under the existing eligibility rules, Resolve conflicts SHALL appear in the matching checkpoint and use the existing recovery behavior. Each lifecycle delivery checkpoint SHALL discover its pull request from its delivery record or that phase's exact recorded or managed head branch. Archive shipping controls and their in-progress status SHALL appear at the Archive PR checkpoint, not the Implementation PR checkpoint.
+The timeline SHALL show smaller pull-request checkpoints after Drafts, Implementing, and Archived for proposal, implementation, and archive delivery, respectively. When Ship is available, it SHALL appear in the matching checkpoint and retain the existing shippability and confirmation behavior. Each checkpoint SHALL link to a known pull request and distinguish its delivery status in both text and appearance: shipping or checks in progress SHALL pulse orange, a mergeable pull request with passing checks SHALL be green, and conflicts or failing checks SHALL be red. A merged pull request SHALL be green. When conflicts can be resolved under the existing eligibility rules, Resolve conflicts SHALL appear in the matching checkpoint and use the existing recovery behavior. Each lifecycle delivery checkpoint SHALL discover its pull request from its delivery record or that phase's exact recorded or managed head branch. Archive shipping controls and their in-progress status SHALL appear at the Archive PR checkpoint, not the Implementation PR checkpoint. When implementation has started and no Drafts pull request or delivery attempt exists, the Drafts checkpoint SHALL be labeled “Skipped”.
 
 #### Scenario: Ship a completed change
 - **WHEN** a Done change has shippable work and no linked pull request
@@ -830,6 +834,14 @@ The timeline SHALL show smaller pull-request checkpoints after Drafts, Implement
 #### Scenario: Implementation and archive pull requests remain distinct
 - **WHEN** the same change has pull requests on its implementation and archive branches
 - **THEN** each pull request's checks and link appear at its matching phase checkpoint
+
+#### Scenario: Drafts delivery was skipped
+- **WHEN** the lifecycle timeline has reached Implementing and no Drafts pull request or delivery attempt exists
+- **THEN** the Drafts pull request checkpoint is labeled “Skipped”
+
+#### Scenario: Drafts delivery attempt retains its status
+- **WHEN** the lifecycle timeline has reached Implementing and a Drafts pull request or delivery attempt exists
+- **THEN** the Drafts checkpoint shows that pull request or delivery attempt's actual status instead of “Skipped”
 
 ### Requirement: Maintenance actions are progressively disclosed
 Resume, Clean up, Delete record, and Open in editor SHALL be directly visible in a labeled session actions group for the selected session when applicable, without expanding a menu. Their eligibility and confirmations SHALL be retained. The visible worktree path SHALL have an adjacent keyboard-accessible copy icon with success/failure feedback; detail SHALL NOT show a separate Copy cd text button.
