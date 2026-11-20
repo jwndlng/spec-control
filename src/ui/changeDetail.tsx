@@ -10,7 +10,7 @@ import { CopyButton, CopyRefButton, Meter } from "./kanban.tsx";
 import { type LinkResolver, renderMarkdown } from "./markdown.tsx";
 import { backTarget, CONSOLE_TAB, PROMPT_TAB, changePath, type DetailQuery, parseDetailQuery, repoPath, serializeDetailQuery } from "./routes.ts";
 import { ConsolePanel, ConsoleSessionList, ResolveConflicts } from "./sessionPanel.tsx";
-import { changeWorktreePath, consoleAvailable, consoleSession, consoleSessions, consoleTabAvailable } from "./sessionState.ts";
+import { changeWorktreePath, consoleAvailable, consoleSession, consoleSessions, consoleTabAvailable, lifecycleSession } from "./sessionState.ts";
 import { useSessionUi, WorkStatus } from "./sessions.tsx";
 import { isComplete } from "../shared/columns.ts";
 import { promptBody } from "./boardMarks.ts";
@@ -648,6 +648,7 @@ export function ChangeDetail({
   const [deliveryError, setDeliveryError] = useState<string>();
   const [retryingDelivery, setRetryingDelivery] = useState<string>();
   const [confirmingPhase, setConfirmingPhase] = useState(false);
+  const [confirmedActionId, setConfirmedActionId] = useState<string>();
   const [acceptingArchive, setAcceptingArchive] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [fileState, setFileState] = useState<FileState | null>(null);
@@ -724,6 +725,7 @@ export function ChangeDetail({
     setDeliveryError(undefined);
     try {
       await api.confirmPhaseComplete(shownSession.id, shownSession.managedActionId);
+      setConfirmedActionId(shownSession.managedActionId);
       await ui.refresh();
     } catch (err) {
       setDeliveryError(err instanceof Error ? err.message : String(err));
@@ -854,6 +856,8 @@ export function ChangeDetail({
     .filter((session) => session.repoId === repoId && session.change === changeName && ["draft", "implement", "fastForward", "validate", "archive"].includes(session.action))
     .filter((session) => !change.created || Date.parse(session.createdAt) >= Date.parse(change.created))
     .sort((a, b) => (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt));
+  const archiveSession = lifecycleSession(relevantSessions, "archive");
+  const archiveWorktree = archiveSession && worktrees.find((worktree) => worktree.path === archiveSession.worktreePath);
   const latestLifecycleAction = relevantSessions[0]?.action;
   const progressPhase = latestLifecycleAction === "draft" ? "Drafts" : latestLifecycleAction === "implement" || latestLifecycleAction === "fastForward" ? "Implementing" : latestLifecycleAction === "validate" ? "Done" : latestLifecycleAction === "archive" ? "Archived" : undefined;
   const timelineModel = lifecycleTimelineModel(change, change.artifacts, deliveries, change.archived ? undefined : checkpointPr, pullRequests.data?.repos.find((entry) => entry.repoId === repoId)?.pullRequests ?? [], workingPhase, progressPhase);
@@ -863,7 +867,7 @@ export function ChangeDetail({
     ? shownSession.action
     : undefined;
   const completionPhase = completionAction === "draft" ? "Drafts" : completionAction === "archive" ? "Archived" : completionAction ? "Implementing" : undefined;
-  const completionConfirmed = Boolean(shownSession?.managedActionId && shownSession.phaseCompletionConfirmedActionId === shownSession.managedActionId);
+  const completionConfirmed = Boolean(shownSession?.managedActionId && (shownSession.phaseCompletionConfirmedActionId === shownSession.managedActionId || confirmedActionId === shownSession.managedActionId));
   const completionDeliveryPhase: LifecycleDeliveryView["phase"] | undefined = completionAction === "draft" ? "proposal" : completionAction === "archive" ? "archive" : completionAction === "implement" || completionAction === "fastForward" ? "implementation" : undefined;
   const completionNeedsReconfirm = Boolean(completionConfirmed && completionDeliveryPhase && deliveryFor(completionDeliveryPhase)?.recovery.includes("confirm-complete"));
 
@@ -890,8 +894,8 @@ export function ChangeDetail({
           timelineAction="draft"
         />}
         completionChildren={completionAction && <>
-          <span class="lifecycle-completion-status" role="status">{completionNeedsReconfirm ? "Updated worktree needs verification" : completionConfirmed ? "Checking…" : "Awaiting confirmation"}</span>
-          {(!completionConfirmed || completionNeedsReconfirm) && <button type="button" class="btn sm" title="Verify this phase's artifacts and tasks." disabled={confirmingPhase} onClick={() => void confirmPhase()}>{confirmingPhase ? "Checking…" : completionNeedsReconfirm ? "Confirm updated phase" : "Confirm phase complete"}</button>}
+          <span class="lifecycle-completion-status" role="status">{completionNeedsReconfirm ? "Worktree changed; verify again before Ship" : completionConfirmed ? "Verifying worktree before Ship…" : "Confirm to verify and Ship this phase"}</span>
+          {(!completionConfirmed || completionNeedsReconfirm) && <button type="button" class="btn sm" title="Verify this phase's artifacts and tasks, then open its pull request." disabled={confirmingPhase} onClick={() => void confirmPhase()}>{confirmingPhase ? "Verifying…" : completionNeedsReconfirm ? "Verify updated phase" : "Confirm & Ship"}</button>}
         </>}
         deliveryChildren={
         <>
@@ -903,7 +907,7 @@ export function ChangeDetail({
         deliveryActions={{
           proposal: deliveryFor("proposal")?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => { const item = deliveryFor("proposal"); if (item) void retryDelivery(item); }}>{retryingDelivery === deliveryFor("proposal")?.id ? "Retrying…" : "Retry delivery"}</button>,
           archive: <>
-            {timelineModel.pullRequests.archive.state === "unshipped" && shownSession?.action === "archive" && shownWorktree && <ShipButton session={shownSession} worktree={shownWorktree} />}
+            {timelineModel.pullRequests.archive.state === "unshipped" && archiveSession && archiveWorktree && <ShipButton session={archiveSession} worktree={archiveWorktree} />}
             {deliveryFor("archive")?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => { const item = deliveryFor("archive"); if (item) void retryDelivery(item); }}>{retryingDelivery === deliveryFor("archive")?.id ? "Retrying…" : "Retry delivery"}</button>}
           </>,
         }}
@@ -917,13 +921,7 @@ export function ChangeDetail({
           timelineAction={timelineModel.draftActionPhase && shownSession?.state !== "running" ? "main" : undefined}
         />
       </LifecycleTimeline>
-      {(visibleDeliveries.some((delivery) => Boolean(delivery.blocker) || ((delivery.state === "blocked" || delivery.state === "unavailable" || delivery.state === "pending") && delivery.recovery.includes("retry"))) || deliveryError || (shownSession?.action === "archive" && shownSession.managedActionId && change.archived && change.tasks && change.tasks.total > change.tasks.done)) && <section class="notice lifecycle-delivery" aria-label="Lifecycle delivery">
-        {visibleDeliveries.map((delivery) => <p key={delivery.id}>
-          <strong>{delivery.phase[0].toUpperCase() + delivery.phase.slice(1)} delivery · {delivery.state.replaceAll("-", " ")}</strong>
-          {delivery.pullRequestUrl && <> · <a href={delivery.pullRequestUrl} target="_blank" rel="noopener noreferrer">PR #{delivery.pullRequestNumber ?? "open"}</a></>}
-          {delivery.blocker && <><br />{delivery.blocker}</>}
-          {delivery.phase !== "implementation" && timelineModel.pullRequests[delivery.phase].state !== "merged" && (delivery.state === "blocked" || delivery.state === "unavailable" || delivery.state === "pending") && delivery.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => void retryDelivery(delivery)}>{retryingDelivery === delivery.id ? "Retrying…" : "Retry delivery"}</button>}
-        </p>)}
+      {(deliveryError || (shownSession?.action === "archive" && shownSession.managedActionId && change.archived && change.tasks && change.tasks.total > change.tasks.done)) && <section class="notice lifecycle-delivery" aria-label="Lifecycle delivery">
         {shownSession?.action === "archive" && shownSession.managedActionId && change.archived && change.tasks && change.tasks.total > change.tasks.done && <p>
           {shownSession.unresolvedArchiveAcceptedActionId === shownSession.managedActionId
             ? <><strong>Unresolved archive publication accepted.</strong> Task markers remain unchanged; delivery opens a PR for review and will not auto-merge.</>

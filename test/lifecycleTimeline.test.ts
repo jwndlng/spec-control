@@ -55,6 +55,10 @@ describe("lifecycleTimelineModel", () => {
 
     expect(latestLifecycleDeliveries([oldProposal, blockedProposal, implementation]).map(({ id }) => id)).toEqual(["blocked", "implementation"]);
     expect(visibleLifecycleDeliveries([oldProposal, blockedProposal, implementation], model.pullRequests).map(({ id }) => id)).toEqual(["implementation"]);
+    expect(model.pullRequests.proposal).toMatchObject({ state: "merged", number: 42 });
+    const view = mount(h(LifecycleTimeline, { model }));
+    expect(view.querySelector('.lifecycle-pr-checkpoint[aria-label^="Drafts pull request"]')?.textContent).toContain("Merged");
+    expect(view.querySelector(".lifecycle-status")?.textContent).not.toContain("Proposal delivery");
   });
 
   test("uses schema artifact names and does not fabricate missing evidence", () => {
@@ -255,6 +259,18 @@ describe("lifecycleTimelineModel", () => {
       completionChildren: h("button", {}, "Confirm complete"),
     }));
     expect(confirmation.querySelector(".lifecycle-phase.current .lifecycle-phase-completion")?.textContent).toContain("Confirm complete");
+  });
+
+  test("shows one delivery status in the PR checkpoint, without a duplicate status row", () => {
+    const model = lifecycleTimelineModel(
+      change({ stage: "drafts" }), [],
+      [delivery({ phase: "proposal", state: "waiting-to-merge", pullRequestNumber: 35, recovery: ["open-pr"] })],
+    );
+    const view = mount(h(LifecycleTimeline, { model }));
+    const proposal = view.querySelector('.lifecycle-pr-checkpoint[aria-label^="Drafts pull request"]');
+    expect(proposal?.textContent).toContain("#35");
+    expect(proposal?.textContent).toContain("Checks running");
+    expect(view.querySelector(".lifecycle-status")?.textContent).not.toContain("Proposal delivery");
   });
 
   test("demo includes fictional pending, blocked and archive delivery examples", async () => {
