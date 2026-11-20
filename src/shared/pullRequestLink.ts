@@ -103,7 +103,8 @@ export function phasePullRequest(
   const managedBranch = phase === "proposal" ? proposalBranch(change.name)
     : phase === "archive" ? sessionBranch("archive", change.name)
       : sessionBranch("implement", change.name);
-  const recordedBranch = phase === "implementation" ? change.recorded?.branch
+  const recordedBranch = phase === "implementation"
+    ? change.recorded?.branch === proposalBranch(change.name) ? undefined : change.recorded?.branch
     : phase === "archive" ? change.recorded?.archiveBranch
       : undefined;
   const branches = new Set([recordedBranch, managedBranch].filter((branch): branch is string => typeof branch === "string" && branch !== ""));

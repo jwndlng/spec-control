@@ -92,7 +92,7 @@ export function lifecycleTimelineModel(
               : phasePr.checks === "pending" || phasePr.mergeable === "unknown" || !phasePr.mergeable ? "checking"
                 : phasePr.mergeable === "mergeable" && (phasePr.checks === "passing" || phasePr.checks === "none") ? "ready" : "waiting";
     const label = ({ upcoming: "Not started", unshipped: "Not shipped", skipped: "Skipped", shipping: "Shipping", checking: "Checks running", ready: "Checks passed", conflicts: "Conflicts", failed: delivery?.blocker ? "Delivery blocked" : "Checks failed", merged: "Merged", closed: "Closed", waiting: "Waiting" } as const)[state];
-    return { state, label, ...(delivery?.blocker ? { blocker: delivery.blocker } : {}), ...(phasePr?.number ? { number: phasePr.number } : delivery?.pullRequestNumber ? { number: delivery.pullRequestNumber } : phase === "implementation" && pr?.number ? { number: pr.number } : {}), ...(phasePr?.url ? { url: phasePr.url } : delivery?.pullRequestUrl ? { url: delivery.pullRequestUrl } : phase === "implementation" && pr?.url ? { url: pr.url } : {}) };
+    return { state, label, ...(delivery?.blocker ? { blocker: delivery.blocker } : {}), ...(phasePr?.number ? { number: phasePr.number } : delivery?.pullRequestNumber ? { number: delivery.pullRequestNumber } : {}), ...(phasePr?.url ? { url: phasePr.url } : delivery?.pullRequestUrl ? { url: delivery.pullRequestUrl } : {}) };
   };
   const pullRequests = Object.fromEntries((['proposal', 'implementation', 'archive'] as const).map((phase) => {
     const delivery = latestDeliveries.get(phase);

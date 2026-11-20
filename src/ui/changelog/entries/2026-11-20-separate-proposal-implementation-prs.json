@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-20-separate-proposal-implementation-prs",
+  "date": "2026-11-20",
+  "title": "Keep proposal and implementation PRs distinct",
+  "summary": "Proposal pull requests now stay under Drafts instead of appearing again under Implementation. Draft artifact milestone labels also stay on one line and remain available in full through their tooltip."
+}
