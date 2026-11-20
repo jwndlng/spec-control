@@ -1893,12 +1893,8 @@ body:has(.detail-overlay) { overflow: hidden; }
 .detail-deps .dep-missing .dep-state, .detail-deps .dep-cycle .dep-state { color: var(--danger); }
 .detail-deps .dep-waiting .dep-state { color: var(--warning); }
 .detail-deps .dep-met .dep-state { color: var(--success); }
-.detail-prompt {
-  display: flex; gap: 10px; align-items: baseline; max-width: 860px; padding: 10px 14px;
-  background: var(--bg-raised); border: 1px solid var(--border-light); border-radius: var(--radius);
-}
-.detail-prompt-label { flex: none; font-size: 11px; font-weight: 600; color: var(--fg-subtle); text-transform: uppercase; letter-spacing: 0.05em; }
-.detail-prompt p { margin: 0; max-height: 6.2em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.55; color: var(--fg-body); }
+.detail-prompt-content { max-width: 860px; color: var(--fg-body); }
+.detail-prompt-content p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; }
 .detail-head .row { display: flex; align-items: center; gap: var(--gap-1); }
 .detail-head .crumbs { flex: 1; min-width: 0; flex-wrap: wrap; }
 .detail-head .spacer { flex: 1; }
