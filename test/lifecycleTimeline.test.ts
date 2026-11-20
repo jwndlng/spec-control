@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 import { h, render, type ComponentChildren } from "preact";
 import type { ChangeArtifactEntry, ChangeSnapshot, PullRequest } from "../src/shared/types.ts";
 import type { LifecycleDeliveryView } from "../src/ui/api.ts";
-import { LifecycleTimeline, lifecycleTimelineModel } from "../src/ui/lifecycleTimeline.tsx";
+import { LifecycleTimeline, lifecycleTimelineModel, latestLifecycleDeliveries, visibleLifecycleDeliveries } from "../src/ui/lifecycleTimeline.tsx";
 import { createDemoApi } from "../src/ui/demo/demoApi.ts";
 
 const change = (overrides: Partial<ChangeSnapshot> = {}) => ({
@@ -44,6 +44,19 @@ function mount(node: ComponentChildren) {
 }
 
 describe("lifecycleTimelineModel", () => {
+  test("shows only the latest delivery per phase and hides merged delivery retries", () => {
+    const oldProposal = delivery({ id: "old", phase: "proposal", state: "waiting-to-merge", updatedAt: "2026-11-16T10:00:00Z", recovery: ["open-pr"] });
+    const blockedProposal = delivery({ id: "blocked", phase: "proposal", state: "blocked", updatedAt: "2026-11-16T11:00:00Z", blocker: "there is nothing to ship (merged)", recovery: ["retry"] });
+    const implementation = delivery({ id: "implementation", phase: "implementation", updatedAt: "2026-11-16T09:00:00Z" });
+    const model = lifecycleTimelineModel(
+      change({ stage: "archived", archived: "2026-11-16" }), [], [oldProposal, blockedProposal, implementation], undefined,
+      [pullRequest({ head: "docs/rotate-keys", state: "merged" })],
+    );
+
+    expect(latestLifecycleDeliveries([oldProposal, blockedProposal, implementation]).map(({ id }) => id)).toEqual(["blocked", "implementation"]);
+    expect(visibleLifecycleDeliveries([oldProposal, blockedProposal, implementation], model.pullRequests).map(({ id }) => id)).toEqual(["implementation"]);
+  });
+
   test("uses schema artifact names and does not fabricate missing evidence", () => {
     const model = lifecycleTimelineModel(change(), [artifact("overview", "done"), artifact("quality-gate", "blocked")], []);
     expect(model.current).toBe("Drafts");

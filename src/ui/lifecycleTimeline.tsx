@@ -27,6 +27,24 @@ export interface LifecycleTimelineModel {
   workingPhase?: LifecyclePhase;
 }
 
+/** The newest delivery record per phase; older retries are history, not separate current status rows. */
+export function latestLifecycleDeliveries(deliveries: readonly LifecycleDeliveryView[]): LifecycleDeliveryView[] {
+  const latest = new Map<LifecycleDeliveryView["phase"], LifecycleDeliveryView>();
+  for (const delivery of deliveries) {
+    const previous = latest.get(delivery.phase);
+    if (!previous || delivery.updatedAt.localeCompare(previous.updatedAt) > 0) latest.set(delivery.phase, delivery);
+  }
+  return [...latest.values()];
+}
+
+/** Current, actionable delivery rows; merged checkpoints are already represented by their green phase marker. */
+export function visibleLifecycleDeliveries(
+  deliveries: readonly LifecycleDeliveryView[],
+  pullRequests: LifecycleTimelineModel["pullRequests"],
+): LifecycleDeliveryView[] {
+  return latestLifecycleDeliveries(deliveries).filter((delivery) => delivery.state !== "merged" && pullRequests[delivery.phase].state !== "merged");
+}
+
 const stagePhase: Record<ChangeSnapshot["stage"], LifecyclePhase> = {
   backlog: "Backlog", drafts: "Drafts", unknown: "Backlog", ready: "Ready",
   implementing: "Implementing", done: "Done", archived: "Archived",
@@ -64,11 +82,7 @@ export function lifecycleTimelineModel(
   const actionPhase = change.subState === "validate" ? "Done" as const
     : nextPhase === "Archived" && visualCurrent === "Archived" ? undefined
       : nextPhase;
-  const latestDeliveries = new Map<LifecycleDeliveryView["phase"], LifecycleDeliveryView>();
-  for (const delivery of deliveries) {
-    const previous = latestDeliveries.get(delivery.phase);
-    if (!previous || delivery.updatedAt.localeCompare(previous.updatedAt) > 0) latestDeliveries.set(delivery.phase, delivery);
-  }
+  const latestDeliveries = new Map(latestLifecycleDeliveries(deliveries).map((delivery) => [delivery.phase, delivery]));
   const persistence = [...latestDeliveries.values()].map((delivery) => ({
     id: delivery.id,
     label: `${humanize(delivery.phase)} delivery: ${humanize(delivery.state)}${delivery.blocker ? ` · ${delivery.blocker}` : ""}`,
