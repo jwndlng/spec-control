@@ -2,3 +2,4 @@ schema: spec-driven
 created: 2026-11-19
 spec-control:
   branch: docs/move-prompt-to-tabs
+  archive-branch: chore/archive-move-prompt-to-tabs
