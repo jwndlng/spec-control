@@ -2,7 +2,7 @@
 
 ## 1. Compact the Console panel header
 
-- [~] 1.1 Restructure the Console panel header so agent, project, branch, session state and work status sit at the top left, End session and Open in editor sit at the top right without a visible heading, and the terminal keeps at least 80% of the panel height; user: review the Console at wide and 375px widths and confirm those placements and terminal height. At 375px in the local demo, the detail title wrapped vertically and extended below the viewport, so the Console layout could not be visually confirmed there.
+- [x] 1.1 Restructure the Console panel header so agent, project, branch, session state and work status sit at the top left, End session and Open in editor sit at the top right without a visible heading, and the terminal keeps at least 80% of the panel height; user: review the Console at wide and 375px widths and confirm those placements and terminal height. At 375px in the local demo, the detail title wrapped vertically and extended below the viewport, so the Console layout could not be visually confirmed there.
 - [x] 1.2 Move the agent and permission dropdowns behind a collapsed settings gear disclosure with accessible name and tooltip; verify settings stay hidden by default, retain saved values when closed, and preserve feedback without restarting the session using `bun test test/sessionPanelUi.test.ts`.
 
 ## 2. Align delivery and destructive action styling
