@@ -1,5 +1,5 @@
 import type { ArtifactStatus, ChangeSnapshot } from "../shared/types.ts";
-import { Fragment, type ComponentChildren } from "preact";
+import type { ComponentChildren } from "preact";
 import type { PullRequest } from "../shared/types.ts";
 import type { LifecycleDeliveryView } from "./api.ts";
 import { Meter } from "./kanban.tsx";
@@ -55,12 +55,24 @@ const stagePhase: Record<ChangeSnapshot["stage"], LifecyclePhase> = {
 };
 
 const PHASE_TRACK_COLUMN: Record<LifecyclePhase, number> = {
-  Backlog: 1, Drafts: 2, Ready: 4, Implementing: 5, Done: 7, Archived: 8,
+  Backlog: 1, Drafts: 2, Ready: 3, Implementing: 4, Done: 5, Archived: 6,
 };
 
-const DELIVERY_TRACK_COLUMN: Record<LifecycleDeliveryView["phase"], number> = {
-  proposal: 3, implementation: 6, archive: 9,
+const DELIVERY_PHASE: Partial<Record<LifecyclePhase, LifecycleDeliveryView["phase"]>> = {
+  Drafts: "proposal", Implementing: "implementation", Archived: "archive",
 };
+
+const DELIVERY_LABEL: Record<LifecycleDeliveryView["phase"], string> = {
+  proposal: "Proposal", implementation: "Implementation", archive: "Archive",
+};
+
+const ARTIFACT_SHORT_LABEL: Record<string, string> = {
+  Proposal: "Pro", Specs: "Spe", Design: "Des", Tasks: "Tas",
+};
+
+function compactArtifactLabel(label: string): string {
+  return ARTIFACT_SHORT_LABEL[label] ?? label.replace(/[^a-z0-9]/gi, "").slice(0, 3);
+}
 
 function humanize(value: string): string {
   return value.replaceAll("-", " ").replace(/^./, (letter) => letter.toUpperCase());
@@ -147,39 +159,44 @@ export function LifecycleTimeline({ model, children, draftChildren, deliveryChil
   completionPhase?: LifecyclePhase;
   completionChildren?: ComponentChildren;
 }) {
-  const renderPullRequest = (phase: LifecycleDeliveryView["phase"], label: string) => {
+  const renderDelivery = (phase: LifecycleDeliveryView["phase"]) => {
     const item = model.pullRequests[phase];
-    return <li class={`lifecycle-pr-checkpoint timeline-node ${item.state}`} style={{ gridColumn: DELIVERY_TRACK_COLUMN[phase], gridRow: 1 }} aria-label={`${label} pull request: ${item.label}`}>
-      <span class="lifecycle-pr-marker" aria-hidden="true">{item.state === "ready" || item.state === "merged" ? "✓" : ""}</span>
-      <span class="lifecycle-pr-label">{label} PR</span><span class="lifecycle-pr-state">{item.label}</span>
-      {item.blocker && <span class="lifecycle-pr-blocker" title={item.blocker}>{item.blocker}</span>}
-      {item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer">{item.number ? `#${item.number}` : "Open PR"}</a> : item.number && <span>#{item.number}</span>}
+    if (item.state === "upcoming") return null;
+    const label = DELIVERY_LABEL[phase];
+    return <div class={`lifecycle-phase-delivery ${item.state}`} title={item.blocker ? `${label} pull request: ${item.label} · ${item.blocker}` : `${label} pull request: ${item.label}`}>
+      <span class="visually-hidden">{label} pull request </span>
+      <span class="lifecycle-delivery-marker" aria-hidden="true">{item.state === "ready" || item.state === "merged" ? "✓" : ""}</span>
+      <span class="lifecycle-delivery-kind" aria-hidden="true">PR</span>
+      <span class="lifecycle-delivery-state">{item.label}</span>
+      {item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`${label} pull request #${item.number ?? ""}`}>{item.number ? `#${item.number}` : "Open"}</a> : item.number && <span>#{item.number}</span>}
+      {item.blocker && <span class="lifecycle-delivery-blocker">{item.blocker}</span>}
       {deliveryActions[phase] ?? (phase === "implementation" ? deliveryChildren : undefined)}
-    </li>;
+    </div>;
+  };
+  const renderPhaseDelivery = (phase: LifecyclePhase) => {
+    const delivery = DELIVERY_PHASE[phase];
+    return delivery ? renderDelivery(delivery) : null;
   };
   return (
     <section class="lifecycle-timeline" aria-label="Change lifecycle">
       <div class="lifecycle-timeline-wide">
-        <ol class="lifecycle-phases" style={{ "--lifecycle-progress": `${Math.max(0, (PHASE_TRACK_COLUMN[model.visualCurrent] - 1) / 9) * 100}%` }}>
-          {model.phases.map((phase) => <Fragment key={phase.label}>
-            <li class={`lifecycle-phase timeline-node ${phase.state}${phase.label === model.actionPhase || phase.label === model.draftActionPhase ? " actionable" : ""}${phase.label === "Drafts" && model.artifacts.length ? " has-artifacts" : ""}${phase.label === "Implementing" && model.taskProgress ? " has-progress" : ""}${phase.label === model.workingPhase ? " working" : ""}`} style={{ gridColumn: PHASE_TRACK_COLUMN[phase.label], gridRow: 1 }} aria-current={phase.state === "current" ? "step" : undefined}>
+        <ol class="lifecycle-phases" style={{ "--lifecycle-progress": `${Math.max(0, (PHASE_TRACK_COLUMN[model.visualCurrent] - 1) / 6) * 100}%` }}>
+          {model.phases.map((phase) => <li key={phase.label} data-phase={phase.label} class={`lifecycle-phase timeline-node ${phase.state}${phase.label === model.actionPhase || phase.label === model.draftActionPhase ? " actionable" : ""}${phase.label === "Drafts" && model.artifacts.length ? " has-artifacts" : ""}${phase.label === "Implementing" && model.taskProgress ? " has-progress" : ""}${phase.label === model.workingPhase ? " working" : ""}`} style={{ gridColumn: PHASE_TRACK_COLUMN[phase.label], gridRow: 1 }} aria-current={phase.state === "current" ? "step" : undefined}>
               <span class="lifecycle-phase-marker" aria-hidden="true">{phase.state === "complete" ? "✓" : ""}</span>
               <span class="lifecycle-phase-label">{phase.label}</span>
+              {renderPhaseDelivery(phase.label)}
               {phase.label === model.actionPhase && <section class="lifecycle-phase-action" aria-label={`Available action for ${phase.label}`}>{children}</section>}
               {phase.label === model.draftActionPhase && <section class="lifecycle-phase-action" aria-label="Draft action">{draftChildren}</section>}
               {phase.label === "Drafts" && model.artifacts.length > 0 && <ol class="lifecycle-artifact-segments" aria-label="Draft artifact progress">
                 {model.artifacts.map((artifact) => <li key={artifact.id} class={`lifecycle-artifact-dot ${artifact.status}`} aria-label={`${artifact.label}: ${artifact.status}`} title={`${artifact.label}: ${artifact.status}`}>
                   <span class="lifecycle-artifact-segment" aria-hidden="true" />
-                  <span class="lifecycle-artifact-label">{artifact.label}</span>
+                  <span class="lifecycle-artifact-label" aria-hidden="true">{compactArtifactLabel(artifact.label)}</span>
                 </li>)}
               </ol>}
               {phase.label === "Implementing" && model.taskProgress && <div class="lifecycle-phase-progress"><Meter {...model.taskProgress} showUnit /></div>}
               {phase.label === completionPhase && <section class="lifecycle-phase-completion" aria-label={`Completion check for ${phase.label}`}>{completionChildren}</section>}
             </li>
-            {phase.label === "Drafts" && renderPullRequest("proposal", "Drafts")}
-            {phase.label === "Implementing" && renderPullRequest("implementation", "Implementation")}
-            {phase.label === "Archived" && renderPullRequest("archive", "Archive")}
-          </Fragment>)}
+          )}
         </ol>
         {model.current === "Backlog" && <section class="lifecycle-fast-forward" aria-label="Fast-forward route from Backlog to Implementing">
           <span>Backlog</span><span class="lifecycle-fast-forward-line" aria-hidden="true">⟶</span><span>Implementing</span><strong>Fast-forward is in the action menu</strong>

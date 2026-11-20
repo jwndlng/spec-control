@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-21-compact-lifecycle-timeline",
+  "date": "2026-11-21",
+  "title": "A simpler change timeline",
+  "summary": "The timeline now keeps each pull request's status and actions inside the phase that creates it. Draft artifact labels are shortened to fit, with full names available on hover and to screen readers."
+}
