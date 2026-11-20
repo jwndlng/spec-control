@@ -57,7 +57,7 @@ describe("lifecycleTimelineModel", () => {
     expect(visibleLifecycleDeliveries([oldProposal, blockedProposal, implementation], model.pullRequests).map(({ id }) => id)).toEqual(["implementation"]);
     expect(model.pullRequests.proposal).toMatchObject({ state: "merged", number: 42 });
     const view = mount(h(LifecycleTimeline, { model }));
-    expect(view.querySelector('.lifecycle-pr-checkpoint[aria-label^="Drafts pull request"]')?.textContent).toContain("Merged");
+    expect(view.querySelector('.lifecycle-phase[data-phase="Drafts"] .lifecycle-phase-delivery')?.textContent).toContain("Merged");
     expect(view.querySelector(".lifecycle-status")?.textContent).not.toContain("Proposal delivery");
   });
 
@@ -84,7 +84,7 @@ describe("lifecycleTimelineModel", () => {
     expect(model.phases.find((phase) => phase.label === "Implementing")?.state).toBe("current");
     const view = mount(h(LifecycleTimeline, { model }));
     expect(view.querySelector('.lifecycle-phase[aria-current="step"] .lifecycle-phase-label')?.textContent).toBe("Implementing");
-    expect(view.querySelector('.lifecycle-phase.complete[style*="grid-column: 4"] .lifecycle-phase-label')?.textContent).toBe("Ready");
+    expect(view.querySelector('.lifecycle-phase.complete[style*="grid-column: 3"] .lifecycle-phase-label')?.textContent).toBe("Ready");
   });
 
   test("keeps an ended implementation attempt current without animating it", () => {
@@ -111,12 +111,21 @@ describe("lifecycleTimelineModel", () => {
     expect(draftView.querySelector(".lifecycle-artifact-dot.done .lifecycle-artifact-segment")).not.toBeNull();
     expect(draftView.querySelector(".lifecycle-artifact-dot.ready .lifecycle-artifact-segment")).not.toBeNull();
     expect(draftView.querySelector(".lifecycle-phase.current")?.getAttribute("style")).toContain("grid-column: 2");
-    expect(draftView.querySelector('.lifecycle-pr-checkpoint[aria-label^="Drafts pull request"]')?.getAttribute("style")).toContain("grid-column: 3");
+    expect(draftView.querySelector('.lifecycle-phase[data-phase="Drafts"] .lifecycle-phase-delivery')).not.toBeNull();
 
     const implementing = lifecycleTimelineModel(change({ stage: "implementing", tasks: { done: 2, awaiting: 1, total: 4 } }), [], []);
     expect(implementing.taskProgress).toEqual({ done: 2, awaiting: 1, total: 4 });
     const implementationView = mount(h(LifecycleTimeline, { model: implementing }));
     expect(implementationView.querySelector(".lifecycle-phase.current .meter")?.getAttribute("aria-label")).toBe("2 of 4 tasks complete, 1 needs the user, 1 open");
+  });
+
+  test("uses compact artifact labels while exposing each full name to assistive technology and on hover", () => {
+    const artifacts = [artifact("proposal", "done"), artifact("specs", "done"), artifact("design", "ready"), artifact("tasks", "blocked")];
+    const view = mount(h(LifecycleTimeline, { model: lifecycleTimelineModel(change(), artifacts, []) }));
+    expect([...view.querySelectorAll(".lifecycle-artifact-label")].map((node) => node.textContent)).toEqual(["Pro", "Spe", "Des", "Tas"]);
+    expect([...view.querySelectorAll(".lifecycle-artifact-dot")].map((node) => [node.getAttribute("aria-label"), node.getAttribute("title")])).toEqual([
+      ["Proposal: done", "Proposal: done"], ["Specs: done", "Specs: done"], ["Design: ready", "Design: ready"], ["Tasks: blocked", "Tasks: blocked"],
+    ]);
   });
 
   test("keeps optional Draft artifacts under Drafts and Implement under Implementing", () => {
@@ -161,9 +170,15 @@ describe("lifecycleTimelineModel", () => {
     expect(model.pullRequests.implementation).toMatchObject({ state: "checking", number: 22 });
     expect(model.pullRequests.archive).toMatchObject({ state: "conflicts", number: 33 });
     const view = mount(h(LifecycleTimeline, { model }));
-    expect([...view.querySelectorAll(".lifecycle-pr-checkpoint")].map((node) => node.getAttribute("aria-label"))).toEqual([
-      "Drafts pull request: Merged", "Implementation pull request: Checks running", "Archive pull request: Conflicts",
+    expect([...view.querySelectorAll(".lifecycle-phase-delivery")].map((node) => [
+      node.querySelector(".visually-hidden")?.textContent?.trim(), node.querySelector(".lifecycle-delivery-state")?.textContent,
+    ])).toEqual([
+      ["Proposal pull request", "Merged"], ["Implementation pull request", "Checks running"], ["Archive pull request", "Conflicts"],
     ]);
+    expect(view.querySelectorAll(".lifecycle-pr-checkpoint")).toHaveLength(0);
+    expect(view.querySelector('.lifecycle-phase[data-phase="Drafts"] .lifecycle-phase-delivery')).not.toBeNull();
+    expect(view.querySelector('.lifecycle-phase[data-phase="Implementing"] .lifecycle-phase-delivery')).not.toBeNull();
+    expect(view.querySelector('.lifecycle-phase[data-phase="Archived"] .lifecycle-phase-delivery')).not.toBeNull();
   });
 
   test("does not show a recorded proposal branch again as the Implementation PR", () => {
@@ -176,8 +191,8 @@ describe("lifecycleTimelineModel", () => {
     expect(model.pullRequests.implementation).toMatchObject({ state: "unshipped" });
     expect(model.pullRequests.implementation.number).toBeUndefined();
     const view = mount(h(LifecycleTimeline, { model }));
-    expect(view.querySelector('.lifecycle-pr-checkpoint[aria-label^="Drafts pull request"]')?.textContent).toContain("#17");
-    expect(view.querySelector('.lifecycle-pr-checkpoint[aria-label^="Implementation pull request"]')?.textContent).not.toContain("#17");
+    expect(view.querySelector('.lifecycle-phase[data-phase="Drafts"] .lifecycle-phase-delivery')?.textContent).toContain("#17");
+    expect(view.querySelector('.lifecycle-phase[data-phase="Implementing"] .lifecycle-phase-delivery')?.textContent).not.toContain("#17");
   });
 
   test("keeps the artifact milestone label row on one line", async () => {
@@ -193,7 +208,7 @@ describe("lifecycleTimelineModel", () => {
 
     const implementing = lifecycleTimelineModel(change({ stage: "implementing" }), [], []);
     expect(implementing.pullRequests.proposal).toMatchObject({ state: "skipped", label: "Skipped" });
-    expect(mount(h(LifecycleTimeline, { model: implementing })).querySelector('.lifecycle-pr-checkpoint[aria-label^="Drafts pull request"]')?.textContent).toContain("Skipped");
+    expect(mount(h(LifecycleTimeline, { model: implementing })).querySelector('.lifecycle-phase[data-phase="Drafts"] .lifecycle-phase-delivery')?.textContent).toContain("Skipped");
   });
 
   test("preserves Drafts PR and delivery statuses after implementation starts", () => {
@@ -230,7 +245,7 @@ describe("lifecycleTimelineModel", () => {
     const done = lifecycleTimelineModel(change({ stage: "done" }), [], [delivery({ phase: "implementation", state: "merged" })], pullRequest({ state: "merged" }));
     const doneView = mount(h(LifecycleTimeline, { model: done }));
     expect(doneView.querySelector(".lifecycle-phase.current.working")).toBeNull();
-    expect(doneView.querySelector(".lifecycle-pr-checkpoint.merged")).not.toBeNull();
+    expect(doneView.querySelector('.lifecycle-phase[data-phase="Implementing"] .lifecycle-phase-delivery.merged')).not.toBeNull();
     const active = lifecycleTimelineModel(change({ stage: "implementing" }), [], [], undefined, [], "Implementing");
     expect(mount(h(LifecycleTimeline, { model: active })).querySelector(".lifecycle-phase.working")?.textContent).toContain("Implementing");
   });
@@ -243,14 +258,14 @@ describe("lifecycleTimelineModel", () => {
       deliveryChildren: h("button", {}, "Ship"),
     }));
     expect(view.querySelector(".lifecycle-phase.actionable")?.textContent).toContain("Archive");
-    expect(view.querySelector('.lifecycle-pr-checkpoint[aria-label^="Implementation pull request"]')?.textContent).toContain("Ship");
+    expect(view.querySelector('.lifecycle-phase[data-phase="Implementing"] .lifecycle-phase-delivery')?.textContent).toContain("Ship");
 
     const archived = lifecycleTimelineModel(change({ stage: "archived", archived: "2026-11-19" }), [], []);
     const archiveView = mount(h(LifecycleTimeline, {
       model: archived,
       deliveryActions: { archive: h("button", {}, "Ship archive") },
     }));
-    expect(archiveView.querySelector('.lifecycle-pr-checkpoint[aria-label^="Archive pull request"]')?.textContent).toContain("Ship archive");
+    expect(archiveView.querySelector('.lifecycle-phase[data-phase="Archived"] .lifecycle-phase-delivery')?.textContent).toContain("Ship archive");
 
     const active = change({ stage: "implementing" });
     const confirmation = mount(h(LifecycleTimeline, {
@@ -261,13 +276,13 @@ describe("lifecycleTimelineModel", () => {
     expect(confirmation.querySelector(".lifecycle-phase.current .lifecycle-phase-completion")?.textContent).toContain("Confirm complete");
   });
 
-  test("shows one delivery status in the PR checkpoint, without a duplicate status row", () => {
+  test("shows one delivery status within its phase, without a duplicate status row", () => {
     const model = lifecycleTimelineModel(
       change({ stage: "drafts" }), [],
       [delivery({ phase: "proposal", state: "waiting-to-merge", pullRequestNumber: 35, recovery: ["open-pr"] })],
     );
     const view = mount(h(LifecycleTimeline, { model }));
-    const proposal = view.querySelector('.lifecycle-pr-checkpoint[aria-label^="Drafts pull request"]');
+    const proposal = view.querySelector('.lifecycle-phase[data-phase="Drafts"] .lifecycle-phase-delivery');
     expect(proposal?.textContent).toContain("#35");
     expect(proposal?.textContent).toContain("Checks running");
     expect(view.querySelector(".lifecycle-status")?.textContent).not.toContain("Proposal delivery");
