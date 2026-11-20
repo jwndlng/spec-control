@@ -832,11 +832,11 @@ The timeline SHALL show smaller pull-request checkpoints after Drafts, Implement
 - **THEN** each pull request's checks and link appear at its matching phase checkpoint
 
 ### Requirement: Maintenance actions are progressively disclosed
-Resume, Clean up, Delete record, and Open in editor SHALL be available from a labeled session actions menu for the selected session when applicable. Their eligibility and confirmations SHALL be retained. The visible worktree path SHALL have an adjacent keyboard-accessible copy icon with success/failure feedback; detail SHALL NOT show a separate Copy cd text button.
+Resume, Clean up, Delete record, and Open in editor SHALL be directly visible in a labeled session actions group for the selected session when applicable, without expanding a menu. Their eligibility and confirmations SHALL be retained. The visible worktree path SHALL have an adjacent keyboard-accessible copy icon with success/failure feedback; detail SHALL NOT show a separate Copy cd text button.
 
 #### Scenario: Ended session
 - **WHEN** a resumable ended session is selected
-- **THEN** Resume is available in its actions menu without competing with the lifecycle action
+- **THEN** Resume is directly available in its actions group without competing with the lifecycle action
 
 #### Scenario: Copy path
 - **WHEN** the user activates the icon beside a worktree path
@@ -844,7 +844,7 @@ Resume, Clean up, Delete record, and Open in editor SHALL be available from a la
 
 #### Scenario: Small screen and keyboard
 - **WHEN** detail is viewed at narrow width or navigated by keyboard
-- **THEN** timeline labels, artifact tabs, menus, and copy controls remain reachable with visible focus and no page-wide horizontal overflow
+- **THEN** timeline labels, artifact tabs, the always-visible session actions, and copy controls remain reachable with visible focus and no page-wide horizontal overflow
 
 ### Requirement: Lifecycle timeline fits the detail view
 The lifecycle timeline SHALL place its phase and delivery checkpoints within the detail view's available width without horizontal scrolling. Labels, PR states, and action controls SHALL remain readable and within their checkpoints.
