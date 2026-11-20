@@ -153,6 +153,7 @@ test("first check about a minute after start, then every 24 hours, remembered on
   expect(h.requests()).toBe(0);
   await h.time.advance(1);
   expect(h.requests()).toBe(1);
+  await waitForPending(h.time, CHECK_INTERVAL_MS);
   expect(h.checker.status()).toMatchObject({ outcome: "ok", latest: "v0.12.0", available: true, checkedAt: new Date(T0 + START_DELAY_MS).toISOString() });
   expect(JSON.parse(await readFile(updateCheckPath(), "utf8"))).toEqual({ checkedAt: new Date(T0 + START_DELAY_MS).toISOString(), outcome: "ok", latest: "v0.12.0" });
   await h.time.advance(CHECK_INTERVAL_MS - 1);

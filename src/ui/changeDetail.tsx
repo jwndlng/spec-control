@@ -9,7 +9,7 @@ import { ApiError, api, type LifecycleDeliveryView } from "./api.ts";
 import { CopyButton, CopyRefButton, Meter } from "./kanban.tsx";
 import { type LinkResolver, renderMarkdown } from "./markdown.tsx";
 import { backTarget, CONSOLE_TAB, PROMPT_TAB, changePath, type DetailQuery, parseDetailQuery, repoPath, serializeDetailQuery } from "./routes.ts";
-import { ConsolePanel, ConsoleSessionList, ResolveConflicts } from "./sessionPanel.tsx";
+import { ConsolePanel, ConsoleSessionList, ResolveConflicts, ShipOperationStatus } from "./sessionPanel.tsx";
 import { changeWorktreePath, consoleAvailable, consoleSession, consoleSessions, consoleTabAvailable, lifecycleSession } from "./sessionState.ts";
 import { useSessionUi, WorkStatus } from "./sessions.tsx";
 import { isComplete } from "../shared/columns.ts";
@@ -290,7 +290,7 @@ export function DetailHeader({
           <CopyRefButton project={repo.name} change={change.name} />
         </h1>
         {onDismiss && "column" in change && <DismissButton change={change} failing={!repo.ok} onDismiss={onDismiss} />}
-        {onDeleteFiles && "column" in change && !change.archived && <button type="button" class="btn sm ghost" disabled={!repo.ok} title="Delete only the main checkout's change files" onClick={onDeleteFiles}>Delete change files</button>}
+        {onDeleteFiles && "column" in change && !change.archived && <button type="button" class="btn sm ghost delete-change-files" disabled={!repo.ok} title="Delete only the main checkout's change files" onClick={onDeleteFiles}>Delete change files</button>}
         <CloseButton onClose={onClose} />
       </div>
       {"column" in change && <ChangeFacts change={change} pullRequest={pullRequest} />}
@@ -899,6 +899,7 @@ export function ChangeDetail({
         </>}
         deliveryChildren={
         <>
+          {shownSession?.action !== "archive" && shownSession && <ShipOperationStatus session={shownSession} />}
           {shownSession?.action !== "archive" && timelineModel.pullRequests.implementation.state === "unshipped" && shownSession && shownWorktree && <ShipButton session={shownSession} worktree={shownWorktree} />}
           {implementationDelivery?.recovery.includes("retry") && timelineModel.pullRequests.implementation.state !== "merged" && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => void retryDelivery(implementationDelivery)}>{retryingDelivery === implementationDelivery.id ? "Retrying…" : "Retry delivery"}</button>}
           <ResolveConflicts change={change} compact />
@@ -907,6 +908,7 @@ export function ChangeDetail({
         deliveryActions={{
           proposal: deliveryFor("proposal")?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => { const item = deliveryFor("proposal"); if (item) void retryDelivery(item); }}>{retryingDelivery === deliveryFor("proposal")?.id ? "Retrying…" : "Retry delivery"}</button>,
           archive: <>
+            {archiveSession && <ShipOperationStatus session={archiveSession} />}
             {timelineModel.pullRequests.archive.state === "unshipped" && archiveSession && archiveWorktree && <ShipButton session={archiveSession} worktree={archiveWorktree} />}
             {deliveryFor("archive")?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => { const item = deliveryFor("archive"); if (item) void retryDelivery(item); }}>{retryingDelivery === deliveryFor("archive")?.id ? "Retrying…" : "Retry delivery"}</button>}
           </>,

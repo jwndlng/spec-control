@@ -49,12 +49,14 @@ test("Agent sessions Help distinguishes local lifecycle stages from remote deliv
     expect(text).toContain(phrase);
 });
 
-test("Agent sessions Help documents the responsive timeline, delivery examples and session menu", () => {
+test("Agent sessions Help documents the responsive timeline, delivery examples and compact Console header", () => {
   const section = walked.find((item) => item.id === "agent-sessions")?.text ?? "";
   expect(section).toContain("Backlog, Drafts, Ready, Implementing, Done and Archived");
   expect(section).toContain("idempotency-keys");
   expect(section).toContain("deprecate-v1-auth");
-  expect(section).toContain("Session actions");
+  expect(section).toContain("80% of the panel height");
+  expect(section).toContain("collapsed Console settings gear");
+  expect(section).toContain("no visible heading");
   expect(section).toContain("copies the path itself");
 });
 
