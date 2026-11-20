@@ -692,8 +692,8 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
             </section>
             )}
             {showSessionActions && (
-            <details class="console-action-group session-actions-menu" aria-label={`Session actions for ${session?.change ?? "selected session"}`}>
-              <summary class="console-action-heading">Session actions</summary>
+            <section class="console-action-group" aria-label={`Session actions for ${session?.change ?? "selected session"}`}>
+              <span class="console-action-heading">Session actions</span>
               <div class="row console-secondary-actions">
                 {session && session.state !== "running" && session.resumable && (
                   <button
@@ -724,7 +724,7 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
                 )}
                 {path && openInEditor && <OpenInEditor folder={path} open={openInEditor} run={act} />}
               </div>
-            </details>
+            </section>
             )}
         </div>
         {(error ?? session?.error) && <div class="notice danger">{error ?? session?.error}</div>}

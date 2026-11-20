@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-19-visible-session-actions",
+  "date": "2026-11-19",
+  "title": "See session actions in the Console",
+  "summary": "Resume, Clean up, Delete record and Open in editor now appear directly in the selected session's Console action group, with their existing availability preserved."
+}
