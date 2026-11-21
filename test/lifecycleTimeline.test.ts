@@ -227,6 +227,14 @@ describe("lifecycleTimelineModel", () => {
     expect(mount(h(LifecycleTimeline, { model, children: h("button", {}, "End proposal session and archive") })).querySelector(".lifecycle-phase.current .lifecycle-phase-action")).toBeNull();
   });
 
+  test("keeps an archived change's lifecycle action inside Archived", () => {
+    const model = lifecycleTimelineModel(change({ stage: "archived", archived: "2026-11-20" }), [], []);
+    const view = mount(h(LifecycleTimeline, { model, children: h("button", {}, "Archive") }));
+    expect(model.actionPhase).toBe("Archived");
+    expect(view.querySelector('.lifecycle-phase[data-phase="Archived"] .lifecycle-phase-action')?.textContent).toBe("Archive");
+    expect(view.querySelector(".lifecycle-timeline-action")).toBeNull();
+  });
+
   test("discovers implementation and archive PRs from their own branches", () => {
     const implementation = pullRequest({ number: 51, head: "feat/rotate-keys", checks: "passing" });
     const archive = pullRequest({ number: 52, head: "chore/archive-rotate-keys", checks: "pending" });

@@ -96,7 +96,8 @@ export function lifecycleTimelineModel(
   const visualCurrentIndex = LIFECYCLE_PHASES.indexOf(visualCurrent);
   const nextPhase = LIFECYCLE_PHASES[currentIndex + 1];
   const actionPhase = change.subState === "validate" ? "Done" as const
-    : nextPhase === "Archived" && visualCurrent === "Archived" ? undefined
+    : current === "Archived" ? "Archived" as const
+      : nextPhase === "Archived" && visualCurrent === "Archived" ? undefined
       : nextPhase;
   const latestDeliveries = new Map(latestLifecycleDeliveries(deliveries).map((delivery) => [delivery.phase, delivery]));
   const persistence = [...latestDeliveries.values()].map((delivery) => ({
