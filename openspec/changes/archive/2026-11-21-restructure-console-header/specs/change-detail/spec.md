@@ -81,3 +81,14 @@ Agent and permission settings for the change SHALL be grouped behind a collapsed
 #### Scenario: Change a console setting
 - **WHEN** the user opens the settings disclosure and changes an available setting
 - **THEN** the existing setting behavior and feedback are preserved, and the console session is not restarted
+
+### Requirement: The change window provides room for Console settings
+The change window SHALL use the available viewport with compact outer gutters and SHALL grow beyond its previous width and height limits on larger screens. When Console Settings is open, its menu SHALL remain visible outside the compact header, bounded by the viewport and scrollable when its contents exceed the available height.
+
+#### Scenario: Open settings
+- **WHEN** the user opens Console Settings
+- **THEN** the menu is not clipped by the compact Console header and its contents can be reached by scrolling
+
+#### Scenario: Larger viewport
+- **WHEN** the detail view opens on a viewport larger than the previous window limits
+- **THEN** the change window uses the additional width and height while keeping its outer gutters
