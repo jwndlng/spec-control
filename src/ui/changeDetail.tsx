@@ -25,7 +25,7 @@ import { deletedFilesNotice, dismissedNotice, dismissOffer } from "./dismissStat
 import { checkoutHint, daysSince, leftoverHint, pendingArchiveHint, relTime, splitPathLabel } from "./format.ts";
 import { currentQuery, followInApp, href, hrefWithQuery, navigate, onRouteChange, replaceQuery } from "./url.ts";
 import { dismissActiveSelect } from "./select.tsx";
-import { LifecycleTimeline, latestLifecycleDeliveries, lifecycleTimelineModel, shouldShowDirectShipAction, visibleLifecycleDeliveries } from "./lifecycleTimeline.tsx";
+import { LifecycleTimeline, lifecycleTimelineModel, shouldShowDirectShipAction, visibleLifecycleDeliveries } from "./lifecycleTimeline.tsx";
 import { SessionControls, ShipButton } from "./sessions.tsx";
 import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 
@@ -676,6 +676,7 @@ export function ChangeDetail({
   // frame instead of "not found".
   const hasConsole = consoleTabAvailable(ui.config, repoId);
   const hasWork = consoleAvailable(ui.config, ui.sessions, ui.worktrees, repoId, changeName);
+  const activeSession = sessions.find((session) => session.state === "running" && (!change?.created || Date.parse(session.createdAt) >= Date.parse(change.created)));
   const shownSession = consoleSession(sessions, query.session);
   const shownWorktree = worktrees.find((w) => w.path === shownSession?.worktreePath) ?? (shownSession ? undefined : worktrees[0]);
 
@@ -720,12 +721,12 @@ export function ChangeDetail({
   };
 
   const confirmPhase = async () => {
-    if (!shownSession?.managedActionId || confirmingPhase) return;
+    if (!activeSession?.managedActionId || confirmingPhase) return;
     setConfirmingPhase(true);
     setDeliveryError(undefined);
     try {
-      await api.confirmPhaseComplete(shownSession.id, shownSession.managedActionId);
-      setConfirmedActionId(shownSession.managedActionId);
+      await api.confirmPhaseComplete(activeSession.id, activeSession.managedActionId);
+      setConfirmedActionId(activeSession.managedActionId);
       await ui.refresh();
     } catch (err) {
       setDeliveryError(err instanceof Error ? err.message : String(err));
@@ -733,11 +734,11 @@ export function ChangeDetail({
   };
 
   const acceptUnresolvedArchive = async () => {
-    if (!shownSession?.managedActionId || acceptingArchive) return;
+    if (!activeSession?.managedActionId || acceptingArchive) return;
     setAcceptingArchive(true);
     setDeliveryError(undefined);
     try {
-      await api.acceptUnresolvedArchive(shownSession.id, shownSession.managedActionId);
+      await api.acceptUnresolvedArchive(activeSession.id, activeSession.managedActionId);
       await ui.refresh();
     } catch (err) {
       setDeliveryError(err instanceof Error ? err.message : String(err));
@@ -847,9 +848,6 @@ export function ChangeDetail({
   const filePath = listing && file ? absoluteFilePath(listing.change.dir, file) : undefined;
   const current = fileState && fileState.path === file ? fileState : null;
   const checkpointPr = linkedPullRequest(change, pullRequests.data?.repos);
-  const latestDeliveries = latestLifecycleDeliveries(deliveries);
-  const implementationDelivery = latestDeliveries.find((delivery) => delivery.phase === "implementation");
-  const activeSession = sessions.find((session) => session.repoId === repoId && session.change === changeName && session.state === "running");
   const activeAction = activeSession && !activeSession.waitingReportedAt ? activeSession.action : undefined;
   const workingPhase = activeAction === "draft" ? "Drafts" : activeAction === "implement" || activeAction === "fastForward" ? "Implementing" : activeAction === "archive" ? "Archived" : undefined;
   const relevantSessions = sessions
@@ -858,18 +856,32 @@ export function ChangeDetail({
     .sort((a, b) => (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt));
   const archiveSession = lifecycleSession(relevantSessions, "archive");
   const archiveWorktree = archiveSession && worktrees.find((worktree) => worktree.path === archiveSession.worktreePath);
+  const implementationSession = relevantSessions.find((session) => session.action === "implement" || session.action === "fastForward")
+    ?? (shownSession?.action === "custom" || shownSession?.action === "validate" ? shownSession : undefined);
+  const implementationWorktree = implementationSession && worktrees.find((tree) => tree.path === implementationSession.worktreePath);
   const latestLifecycleAction = relevantSessions[0]?.action;
   const progressPhase = latestLifecycleAction === "draft" ? "Drafts" : latestLifecycleAction === "implement" || latestLifecycleAction === "fastForward" ? "Implementing" : latestLifecycleAction === "validate" ? "Done" : latestLifecycleAction === "archive" ? "Archived" : undefined;
-  const timelineModel = lifecycleTimelineModel(change, change.artifacts, deliveries, change.archived ? undefined : checkpointPr, pullRequests.data?.repos.find((entry) => entry.repoId === repoId)?.pullRequests ?? [], workingPhase, progressPhase);
+  const remote = pullRequests.data?.repos.find((entry) => entry.repoId === repoId);
+  const localOnly = repo?.isGit === false || remote?.reason === "not on GitHub";
+  const timelineModel = lifecycleTimelineModel(change, change.artifacts, deliveries, change.archived ? undefined : checkpointPr, remote?.pullRequests ?? [], workingPhase, progressPhase, {
+    unavailable: remote?.status === "failed" || remote?.status === "unavailable", localOnly, fetchedAt: remote?.fetchedAt,
+  });
+  const prOwner = checkpointPr && (["proposal", "implementation", "archive"] as const).find((phase) => timelineModel.pullRequests[phase].number === checkpointPr.number);
+  if (checkpointPr?.state === "open" && prOwner && !change.archived) {
+    timelineModel.actionPhase = { proposal: "Drafts", implementation: "Implementing", archive: "Archived" }[prOwner] as typeof timelineModel.actionPhase;
+  }
   const visibleDeliveries = visibleLifecycleDeliveries(deliveries, timelineModel.pullRequests);
   const deliveryFor = (phase: LifecycleDeliveryView["phase"]) => visibleDeliveries.find((delivery) => delivery.phase === phase);
-  const completionAction = shownSession?.state === "running" && shownSession.managedActionId && ["draft", "implement", "fastForward", "archive"].includes(shownSession.action)
-    ? shownSession.action
+  const implementationDelivery = deliveryFor("implementation");
+  const refreshFailed = remote?.status === "failed" || (remote?.status === "unavailable" && !localOnly);
+  const completionAction = activeSession?.state === "running" && activeSession.managedActionId && ["draft", "implement", "fastForward", "archive"].includes(activeSession.action)
+    ? activeSession.action
     : undefined;
   const completionPhase = completionAction === "draft" ? "Drafts" : completionAction === "archive" ? "Archived" : completionAction ? "Implementing" : undefined;
-  const completionConfirmed = Boolean(shownSession?.managedActionId && (shownSession.phaseCompletionConfirmedActionId === shownSession.managedActionId || confirmedActionId === shownSession.managedActionId));
+  const completionConfirmed = Boolean(activeSession?.managedActionId && (activeSession.phaseCompletionConfirmedActionId === activeSession.managedActionId || confirmedActionId === activeSession.managedActionId));
   const completionDeliveryPhase: LifecycleDeliveryView["phase"] | undefined = completionAction === "draft" ? "proposal" : completionAction === "archive" ? "archive" : completionAction === "implement" || completionAction === "fastForward" ? "implementation" : undefined;
-  const completionNeedsReconfirm = Boolean(completionConfirmed && completionDeliveryPhase && deliveryFor(completionDeliveryPhase)?.recovery.includes("confirm-complete"));
+  const completionState = completionDeliveryPhase && timelineModel.pullRequests[completionDeliveryPhase].state;
+  const completionNeedsReconfirm = Boolean(completionDeliveryPhase && deliveryFor(completionDeliveryPhase)?.recovery.includes("confirm-complete"));
 
   return (
     <>
@@ -884,9 +896,16 @@ export function ChangeDetail({
         pullRequest={detailPullRequest(change, pullRequests.data)}
       />
       <LifecycleTimeline
+        key={changePath(repoId, changeName)}
         model={timelineModel}
-        completionPhase={completionPhase}
-        draftChildren={timelineModel.draftActionPhase && shownSession?.state !== "running" && <SessionControls
+        documentLink={(id) => listing?.artifacts.some((artifact) => artifact.id === id && artifact.files.length)
+          ? hrefWithQuery(changePath(repoId, changeName), serializeDetailQuery({ ...query, artifact: id, file: undefined })) : undefined}
+        question={activeSession?.waitingReportedAt && hasConsole ? {
+          phase: activeSession.action === "archive" ? "Archived" : activeSession.action === "draft" ? "Drafts" : timelineModel.visualCurrent,
+          open: () => setQuery({ artifact: CONSOLE_TAB, session: activeSession.id, file: undefined }),
+        } : undefined}
+        completionPhase={!localOnly && (completionState === "unshipped" || completionState === "upcoming" || completionNeedsReconfirm) ? completionPhase : undefined}
+        draftChildren={timelineModel.draftActionPhase && activeSession?.state !== "running" && <SessionControls
           card={change}
           place="console"
           suppressSessionStatus
@@ -899,33 +918,33 @@ export function ChangeDetail({
         </>}
         deliveryChildren={
         <>
-          {shownSession?.action !== "archive" && shownSession && <ShipOperationStatus session={shownSession} />}
-          {shownSession?.action !== "archive" && shouldShowDirectShipAction("implementation", completionDeliveryPhase) && timelineModel.pullRequests.implementation.state === "unshipped" && shownSession && shownWorktree && <ShipButton session={shownSession} worktree={shownWorktree} />}
+          {implementationSession && timelineModel.pullRequest.state !== "merged" && !timelineModel.pullRequest.number && <ShipOperationStatus session={implementationSession} />}
+          {shouldShowDirectShipAction("implementation", completionDeliveryPhase) && timelineModel.pullRequests.implementation.state === "unshipped" && implementationSession && implementationWorktree && <ShipButton session={implementationSession} worktree={implementationWorktree} />}
           {implementationDelivery?.recovery.includes("retry") && timelineModel.pullRequests.implementation.state !== "merged" && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => void retryDelivery(implementationDelivery)}>{retryingDelivery === implementationDelivery.id ? "Retrying…" : "Retry delivery"}</button>}
-          <ResolveConflicts change={change} compact />
+          {!refreshFailed && (!prOwner || prOwner === "implementation") && timelineModel.pullRequest.state !== "merged" && <ResolveConflicts change={change} compact />}
         </>
       }
         deliveryActions={{
           proposal: deliveryFor("proposal")?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => { const item = deliveryFor("proposal"); if (item) void retryDelivery(item); }}>{retryingDelivery === deliveryFor("proposal")?.id ? "Retrying…" : "Retry delivery"}</button>,
           archive: <>
-            {archiveSession && <ShipOperationStatus session={archiveSession} />}
+            {archiveSession && timelineModel.pullRequests.archive.state !== "merged" && !timelineModel.pullRequests.archive.number && <ShipOperationStatus session={archiveSession} />}
             {shouldShowDirectShipAction("archive", completionDeliveryPhase) && timelineModel.pullRequests.archive.state === "unshipped" && archiveSession && archiveWorktree && <ShipButton session={archiveSession} worktree={archiveWorktree} />}
             {deliveryFor("archive")?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => { const item = deliveryFor("archive"); if (item) void retryDelivery(item); }}>{retryingDelivery === deliveryFor("archive")?.id ? "Retrying…" : "Retry delivery"}</button>}
           </>,
         }}
       >
-        <SessionControls
+        {!activeSession?.waitingReportedAt && !(refreshFailed && checkpointPr?.state === "open") && <SessionControls
           card={change}
           place="console"
           suppressSessionStatus
           pullRequest={linkedPullRequest(change, pullRequests.data?.repos)}
-          into={shownSession?.state === "running" ? shownSession : undefined}
-          timelineAction={timelineModel.draftActionPhase && shownSession?.state !== "running" ? "main" : undefined}
-        />
+          into={activeSession}
+          timelineAction={timelineModel.draftActionPhase && !activeSession ? "main" : undefined}
+        />}
       </LifecycleTimeline>
-      {(deliveryError || (shownSession?.action === "archive" && shownSession.managedActionId && change.archived && change.tasks && change.tasks.total > change.tasks.done)) && <section class="notice lifecycle-delivery" aria-label="Lifecycle delivery">
-        {shownSession?.action === "archive" && shownSession.managedActionId && change.archived && change.tasks && change.tasks.total > change.tasks.done && <p>
-          {shownSession.unresolvedArchiveAcceptedActionId === shownSession.managedActionId
+      {(deliveryError || (activeSession?.action === "archive" && activeSession.managedActionId && change.archived && change.tasks && change.tasks.total > change.tasks.done)) && <section class="notice lifecycle-delivery" aria-label="Lifecycle delivery">
+        {activeSession?.action === "archive" && activeSession.managedActionId && change.archived && change.tasks && change.tasks.total > change.tasks.done && <p>
+          {activeSession.unresolvedArchiveAcceptedActionId === activeSession.managedActionId
             ? <><strong>Unresolved archive publication accepted.</strong> Task markers remain unchanged; delivery opens a PR for review and will not auto-merge.</>
             : <><strong>{change.tasks.total - change.tasks.done} archive tasks remain unresolved.</strong> Accepting publishes this archived checkpoint for review without marking tasks complete or enabling auto-merge. <button type="button" class="btn sm" disabled={acceptingArchive} onClick={() => void acceptUnresolvedArchive()}>{acceptingArchive ? "Accepting…" : "Accept and publish archive"}</button></>}
         </p>}

@@ -201,9 +201,9 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           <li>
             Change details show Backlog, Drafts, Ready, Implementing, Done and Archived in a lifecycle timeline. Smaller
             milestones follow the repository's schema and show local artifact and task progress. Phase actions sit beneath
-            the step they advance, and a compact confirmation appears in a phase that needs completion evidence. A smaller
-            pull-request checkpoint follows Done: Ship appears there when work is ready, its marker shows shipping and check
-            status, and Resolve conflicts appears when available. Delivery status remains separate from local progress.
+            the step they advance, and a compact confirmation appears in a phase that needs completion evidence. Open Drafts to read the planning document names and jump to an available file.
+            Each pull request appears under the phase that created it. Pending checks update there, and a merged implementation
+            can still have an archive to deliver. Choose Answer agent to return to a question in this change’s console.
             The selected session's actions are directly available in the Console header, with an accessible actions label
             and no visible heading. The copy icon beside a worktree path copies the path itself.
           </li>

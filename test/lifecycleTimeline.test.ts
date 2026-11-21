@@ -70,7 +70,7 @@ describe("lifecycleTimelineModel", () => {
   test("uses schema artifact names and does not fabricate missing evidence", () => {
     const model = lifecycleTimelineModel(change(), [artifact("overview", "done"), artifact("quality-gate", "blocked")], []);
     expect(model.current).toBe("Drafts");
-    expect(model.actionPhase).toBe("Ready");
+    expect(model.actionPhase).toBe("Drafts");
     expect(model.phases.find((phase) => phase.label === "Drafts")?.state).toBe("current");
     expect(model.phases.find((phase) => phase.label === "Ready")?.state).toBe("next");
     expect(model.phases.find((phase) => phase.label === "Archived")?.state).toBe("upcoming");
@@ -105,7 +105,7 @@ describe("lifecycleTimelineModel", () => {
     const model = lifecycleTimelineModel(change({ stage: "done", subState: "validate", tasks: { done: 2, awaiting: 1, total: 4 } }), [], []);
     expect(model.current).toBe("Done");
     expect(model.actionPhase).toBe("Done");
-    expect(model.validation).toBe("Validation awaiting confirmation");
+    expect(model.validation).toBe("1 task needs review");
     expect(model.localProgress).toBe("2/4 tasks complete · 1 awaiting confirmation");
   });
 
@@ -152,6 +152,36 @@ describe("lifecycleTimelineModel", () => {
     expect(model.current).toBe("Archived");
     expect(model.phases.at(-1)?.state).toBe("current");
     expect(model.persistence).toEqual([{ id: "delivery-1", label: "Archive delivery: Pending", pullRequestNumber: 42, pullRequestUrl: undefined }]);
+  });
+
+  test("opens the schema document list from a segment and answers the question in its phase", async () => {
+    const model = lifecycleTimelineModel(change(), [artifact("quality-gate", "done")], []);
+    let answered = false;
+    const view = mount(h(LifecycleTimeline, {
+      model, documentLink: () => "#quality-gate",
+      question: { phase: "Drafts", open: () => { answered = true; } },
+    }));
+    const list = view.querySelector<HTMLElement>(".timeline-documents")!;
+    expect(list.hidden).toBe(true);
+    view.querySelector<HTMLButtonElement>(".draft-segment-button")!.click();
+    await Promise.resolve();
+    expect(list.hidden).toBe(false);
+    expect(list.querySelector("a")?.textContent).toBe("Quality gate");
+    expect(list.querySelector("a")?.getAttribute("href")).toBe("#quality-gate");
+    view.querySelector<HTMLButtonElement>('[data-phase="Drafts"] > button')!.click();
+    expect(answered).toBe(true);
+  });
+
+  test("returning to a change distinguishes unknown PR data, pending checks and a local archive", () => {
+    const current = change({ stage: "implementing", tasks: { total: 6, done: 4, awaiting: 0 } });
+    const remote = { localOnly: false, unavailable: true };
+    const model = lifecycleTimelineModel(current, [], [], pullRequest({ checks: "pending" }), [], undefined, undefined, remote);
+    expect(model.pullRequest).toMatchObject({ state: "waiting", label: "Status unavailable", number: 42 });
+    expect(model.actionPhase).toBe("Implementing");
+    expect(model.taskProgress?.done).toBe(4);
+    expect(model.workingPhase).toBeUndefined();
+    const archived = lifecycleTimelineModel(change({ stage: "archived" }), [], [], undefined, [], undefined, undefined, { localOnly: true, unavailable: true });
+    expect(archived.pullRequests.archive.state).toBe("upcoming");
   });
 
   test("shows Ship and live PR readiness at the delivery checkpoint", () => {
@@ -298,7 +328,7 @@ describe("lifecycleTimelineModel", () => {
     const view = mount(h(LifecycleTimeline, { model }));
     const proposal = view.querySelector('.lifecycle-phase[data-phase="Drafts"] .lifecycle-phase-delivery');
     expect(proposal?.textContent).toContain("#35");
-    expect(proposal?.textContent).toContain("Checks running");
+    expect(proposal?.textContent).toContain("Awaiting merge");
     expect(view.querySelector(".lifecycle-status")?.textContent).not.toContain("Proposal delivery");
   });
 

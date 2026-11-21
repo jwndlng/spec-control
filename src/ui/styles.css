@@ -1958,9 +1958,6 @@ a.badge.needs-you:focus-visible { outline: 2px solid var(--brand); outline-offse
 .lifecycle-phase-delivery.skipped .lifecycle-delivery-marker { border-style: dashed; }
 .lifecycle-phase-delivery > .btn { max-width: 100%; white-space: normal; }
 .lifecycle-ship-button { white-space: nowrap; }
-.lifecycle-fast-forward { grid-column: 1 / -1; display: flex; align-items: center; gap: 7px; color: var(--fg-subtle); font-size: 10px; }
-.lifecycle-fast-forward-line { color: var(--brand); font-size: 17px; line-height: 1; }
-.lifecycle-fast-forward strong { color: var(--brand); font-size: 10px; }
 @keyframes lifecycle-current-dot { 0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 40%, transparent); } 50% { transform: scale(1.18); box-shadow: 0 0 0 5px color-mix(in srgb, var(--brand) 18%, transparent); } }
 @keyframes lifecycle-delivery-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 35%, transparent); } 75%, 100% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--warning) 0%, transparent); } }
 @media (prefers-reduced-motion: reduce) { .lifecycle-phase.working .lifecycle-phase-marker, .lifecycle-phase-delivery.checking .lifecycle-delivery-marker, .lifecycle-phase-delivery.shipping .lifecycle-delivery-marker { animation: none; } }
@@ -2343,3 +2340,10 @@ button.label-chip:focus-visible { outline: 2px solid var(--brand-ring); outline-
 .tour-card p { margin: 0; font-size: 13px; line-height: 1.55; }
 .tour-actions { display: flex; align-items: center; gap: var(--gap-1); }
 .tour-actions .grow { flex: 1; }
+
+.draft-documents-toggle { font: inherit; color: inherit; border: 0; background: transparent; cursor: pointer; padding: 3px; }
+.draft-documents-toggle:focus-visible { outline: 2px solid var(--brand); }
+.timeline-documents { font-size: 13px; padding-inline-start: 24px; }
+
+.draft-segment-button { background: transparent; border: 0; color: inherit; display: grid; gap: 3px; align-content: center; min-height: 24px; padding: 0; cursor: pointer; }
+.draft-segment-button:focus-visible { outline: 2px solid var(--brand); }
