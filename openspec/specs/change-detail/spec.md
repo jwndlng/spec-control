@@ -837,7 +837,11 @@ The timeline SHALL present the available Draft artifacts, Implement, or Archive 
 - **THEN** the Archived checkpoint is current and the timeline does not offer Archive there again
 
 ### Requirement: The lifecycle stepper guides local and remote progress
-The change detail timeline SHALL place the existing phase action under the phase it advances, preserving all current eligibility and session handoff rules. Completed phases SHALL show green completion markers, the current actively running phase SHALL have a pulsing marker, and the available next phase SHALL be visually highlighted. A Done sub-state action such as Validate SHALL remain attached to Done. Backlog SHALL indicate the Fast-forward route to Implementing while retaining the existing Fast-forward action and confirmation.
+The change detail timeline SHALL place the existing phase action under the phase it advances, preserving all current eligibility and session handoff rules. Completed phases SHALL show green completion markers, the current actively running phase SHALL have a pulsing marker, and the available next phase SHALL be visually highlighted. A Done sub-state action such as Validate SHALL remain attached to Done. Backlog SHALL indicate the Fast-forward route to Implementing while retaining the existing Fast-forward action and confirmation. For an already archived change, any available lifecycle action SHALL remain within the Archived checkpoint rather than appearing in a separate centered row.
+
+#### Scenario: Archived change action stays in its phase
+- **WHEN** the detail view shows an archived change with an available lifecycle action
+- **THEN** the action appears beneath Archived within the timeline
 
 #### Scenario: Next local action
 - **WHEN** a change is Ready and Implement is available
