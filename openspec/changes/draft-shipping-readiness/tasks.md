@@ -1,0 +1,3 @@
+- [x] Gate the normal draft completion fallback on Ready and disclose it on demand.
+- [x] Retain explicit recovery and verification feedback.
+- [x] Cover writing, ready and recovery states.

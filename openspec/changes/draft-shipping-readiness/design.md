@@ -1,0 +1,1 @@
+Use the same Ready stage the lifecycle observer requires for proposal delivery. Keep a ready draft’s manual fallback in a collapsed disclosure. Explicit recovery and verification already underway stay visible. A waiting agent question takes priority over the optional fallback.

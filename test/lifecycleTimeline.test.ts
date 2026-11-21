@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 import { h, render, type ComponentChildren } from "preact";
 import type { ChangeArtifactEntry, ChangeSnapshot, PullRequest } from "../src/shared/types.ts";
 import type { LifecycleDeliveryView } from "../src/ui/api.ts";
-import { LifecycleTimeline, lifecycleTimelineModel, latestLifecycleDeliveries, shouldShowDirectShipAction, visibleLifecycleDeliveries } from "../src/ui/lifecycleTimeline.tsx";
+import { draftConfirmationMode, LifecycleTimeline, lifecycleTimelineModel, latestLifecycleDeliveries, shouldShowDirectShipAction, visibleLifecycleDeliveries } from "../src/ui/lifecycleTimeline.tsx";
 import { createDemoApi } from "../src/ui/demo/demoApi.ts";
 
 const change = (overrides: Partial<ChangeSnapshot> = {}) => ({
@@ -44,6 +44,14 @@ function mount(node: ComponentChildren) {
 }
 
 describe("lifecycleTimelineModel", () => {
+  test("manual draft shipping is a ready-only fallback while verification and recovery stay visible", () => {
+    expect(draftConfirmationMode("drafts", false, false, false)).toBe("hidden");
+    expect(draftConfirmationMode("ready", true, false, false)).toBe("hidden");
+    expect(draftConfirmationMode("ready", false, false, false)).toBe("optional");
+    expect(draftConfirmationMode("ready", false, true, false)).toBe("visible");
+    expect(draftConfirmationMode("drafts", false, false, true)).toBe("visible");
+  });
+
   test("hides a direct Ship action only for the phase with an active completion confirmation", () => {
     expect(shouldShowDirectShipAction("archive", "archive")).toBe(false);
     expect(shouldShowDirectShipAction("implementation", "archive")).toBe(true);

@@ -80,6 +80,12 @@ function humanize(value: string): string {
   return value.replaceAll("-", " ").replace(/^./, (letter) => letter.toUpperCase());
 }
 
+/** The proposal observer can verify a draft only after its required documents reach Ready. */
+export function draftConfirmationMode(stage: ChangeSnapshot["stage"], waitingForAnswer: boolean, confirmed: boolean, needsRecovery: boolean) {
+  if (confirmed || needsRecovery) return "visible";
+  return stage === "ready" && !waitingForAnswer ? "optional" : "hidden";
+}
+
 export function shouldShowDirectShipAction(
   phase: LifecycleDeliveryView["phase"],
   completionPhase: LifecycleDeliveryView["phase"] | undefined,

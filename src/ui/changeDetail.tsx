@@ -25,7 +25,7 @@ import { deletedFilesNotice, dismissedNotice, dismissOffer } from "./dismissStat
 import { checkoutHint, daysSince, leftoverHint, pendingArchiveHint, relTime, splitPathLabel } from "./format.ts";
 import { currentQuery, followInApp, href, hrefWithQuery, navigate, onRouteChange, replaceQuery } from "./url.ts";
 import { dismissActiveSelect } from "./select.tsx";
-import { LifecycleTimeline, lifecycleTimelineModel, shouldShowDirectShipAction, visibleLifecycleDeliveries } from "./lifecycleTimeline.tsx";
+import { draftConfirmationMode, LifecycleTimeline, lifecycleTimelineModel, shouldShowDirectShipAction, visibleLifecycleDeliveries } from "./lifecycleTimeline.tsx";
 import { SessionControls, ShipButton } from "./sessions.tsx";
 import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 
@@ -883,6 +883,14 @@ export function ChangeDetail({
   const completionState = completionDeliveryPhase && timelineModel.pullRequests[completionDeliveryPhase].state;
   const completionNeedsReconfirm = Boolean(completionDeliveryPhase && deliveryFor(completionDeliveryPhase)?.recovery.includes("confirm-complete"));
 
+  const confirmationMode = completionAction === "draft"
+    ? draftConfirmationMode(change.stage, Boolean(activeSession?.waitingReportedAt), completionConfirmed, completionNeedsReconfirm)
+    : "visible";
+  const confirmationControls = completionAction && <>
+    <span class="lifecycle-completion-status" role="status">{completionNeedsReconfirm ? "Worktree changed; verify again before Ship" : completionConfirmed ? "Verifying worktree before Ship…" : "Confirm to verify and Ship this phase"}</span>
+    {(!completionConfirmed || completionNeedsReconfirm) && <button type="button" class="btn sm" title="Verify this phase's artifacts and tasks, then open its pull request." disabled={confirmingPhase} onClick={() => void confirmPhase()}>{confirmingPhase ? "Verifying…" : completionNeedsReconfirm ? "Verify updated phase" : "Confirm & Ship"}</button>}
+  </>;
+
   return (
     <>
     <DetailOverlay label={label} onClose={close} panelRef={panel}>
@@ -904,7 +912,7 @@ export function ChangeDetail({
           phase: activeSession.action === "archive" ? "Archived" : activeSession.action === "draft" ? "Drafts" : timelineModel.visualCurrent,
           open: () => setQuery({ artifact: CONSOLE_TAB, session: activeSession.id, file: undefined }),
         } : undefined}
-        completionPhase={!localOnly && (completionState === "unshipped" || completionState === "upcoming" || completionNeedsReconfirm) ? completionPhase : undefined}
+        completionPhase={confirmationMode !== "hidden" && !localOnly && (completionState === "unshipped" || completionState === "upcoming" || completionNeedsReconfirm) ? completionPhase : undefined}
         draftChildren={timelineModel.draftActionPhase && activeSession?.state !== "running" && <SessionControls
           card={change}
           place="console"
@@ -912,10 +920,10 @@ export function ChangeDetail({
           pullRequest={linkedPullRequest(change, pullRequests.data?.repos)}
           timelineAction="draft"
         />}
-        completionChildren={completionAction && <>
-          <span class="lifecycle-completion-status" role="status">{completionNeedsReconfirm ? "Worktree changed; verify again before Ship" : completionConfirmed ? "Verifying worktree before Ship…" : "Confirm to verify and Ship this phase"}</span>
-          {(!completionConfirmed || completionNeedsReconfirm) && <button type="button" class="btn sm" title="Verify this phase's artifacts and tasks, then open its pull request." disabled={confirmingPhase} onClick={() => void confirmPhase()}>{confirmingPhase ? "Verifying…" : completionNeedsReconfirm ? "Verify updated phase" : "Confirm & Ship"}</button>}
-        </>}
+        completionChildren={confirmationMode === "optional" ? <details>
+          <summary>Open proposal PR manually</summary>
+          {confirmationControls}
+        </details> : confirmationControls}
         deliveryChildren={
         <>
           {implementationSession && timelineModel.pullRequest.state !== "merged" && !timelineModel.pullRequest.number && <ShipOperationStatus session={implementationSession} />}
