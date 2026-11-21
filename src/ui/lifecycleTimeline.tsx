@@ -80,6 +80,19 @@ function humanize(value: string): string {
   return value.replaceAll("-", " ").replace(/^./, (letter) => letter.toUpperCase());
 }
 
+const RUNNING_LABEL: Partial<Record<LifecyclePhase, string>> = {
+  Drafts: "Drafting…", Implementing: "Implementing…", Done: "Validating…", Archived: "Archiving…",
+};
+
+export function phaseReadyForVerification(phase: LifecycleDeliveryView["phase"], change: Pick<ChangeSnapshot, "stage" | "archived" | "tasks">, acceptedUnresolved = false) {
+  if (phase === "proposal") return change.stage === "ready";
+  const tasks = change.tasks;
+  if (!tasks || tasks.total === 0) return false;
+  const complete = tasks.done === tasks.total && !tasks.awaiting;
+  if (phase === "archive") return change.stage === "archived" && Boolean(change.archived) && (complete || acceptedUnresolved);
+  return change.stage === "done" && complete;
+}
+
 export function shouldShowDirectShipAction(
   phase: LifecycleDeliveryView["phase"],
   completionPhase: LifecycleDeliveryView["phase"] | undefined,
@@ -179,6 +192,7 @@ export function LifecycleTimeline({ model, documentLink, question, children, dra
 }) {
   const [documentsOpen, setDocumentsOpen] = useState(false);
   const documentsId = useId();
+  const phaseLabel = (phase: LifecyclePhase) => phase === model.workingPhase ? RUNNING_LABEL[phase] ?? phase : phase;
   const renderDelivery = (phase: LifecycleDeliveryView["phase"]) => {
     const item = model.pullRequests[phase];
     if (item.state === "upcoming") return null;
@@ -203,7 +217,7 @@ export function LifecycleTimeline({ model, documentLink, question, children, dra
         <ol class="lifecycle-phases" style={{ "--lifecycle-progress": `${Math.max(0, (PHASE_TRACK_COLUMN[model.visualCurrent] - 1) / 6) * 100}%` }}>
           {model.phases.map((phase) => <li key={phase.label} data-phase={phase.label} class={`lifecycle-phase timeline-node ${phase.state}${phase.label === model.actionPhase || phase.label === model.draftActionPhase ? " actionable" : ""}${phase.label === "Drafts" && model.artifacts.length ? " has-artifacts" : ""}${phase.label === "Implementing" && model.taskProgress ? " has-progress" : ""}${phase.label === model.workingPhase ? " working" : ""}`} style={{ gridColumn: PHASE_TRACK_COLUMN[phase.label], gridRow: 1 }} aria-current={phase.state === "current" ? "step" : undefined}>
               <span class="lifecycle-phase-marker" aria-hidden="true">{phase.state === "complete" ? "✓" : ""}</span>
-              <span class="lifecycle-phase-label">{phase.label === "Drafts" && model.artifacts.length ? <button class="draft-documents-toggle" type="button" aria-expanded={documentsOpen} aria-controls={documentsId} onClick={() => setDocumentsOpen(!documentsOpen)}>Drafts ▾</button> : phase.label}</span>
+              <span class="lifecycle-phase-label">{phase.label === "Drafts" && model.artifacts.length ? <button class="draft-documents-toggle" type="button" aria-expanded={documentsOpen} aria-controls={documentsId} onClick={() => setDocumentsOpen(!documentsOpen)}>{phaseLabel(phase.label)} ▾</button> : phaseLabel(phase.label)}</span>
               {phase.label === question?.phase && <button class="btn sm" type="button" onClick={question.open}>Answer agent</button>}
               {phase.label === "Archived" && model.archivePendingDelivery && <small>Archived locally</small>}
               {renderPhaseDelivery(phase.label)}

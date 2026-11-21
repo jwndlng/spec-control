@@ -639,7 +639,11 @@ export function SessionControls({
     };
   };
   const item = (next: NextStep, isMain: boolean): ActionItem | ActionStatus | undefined => {
-    if (next.kind === "start") return starterItem(next.action, isMain);
+    if (next.kind === "start") {
+      // The timeline already shows this action running at its checkpoint.
+      if (suppressSessionStatus && into && (next.action === into.action || (into.action === "fastForward" && next.action === "implement"))) return undefined;
+      return starterItem(next.action, isMain);
+    }
     if (next.kind === "waiting") return { status: waitingLabel(next.reason, proposal), title: "The pull request is not ready yet; every action is still in the menu" };
     if (!pullRequest) return undefined;
     if (into) return steps?.[next.step];
