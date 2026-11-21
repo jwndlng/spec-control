@@ -25,7 +25,7 @@ import { deletedFilesNotice, dismissedNotice, dismissOffer } from "./dismissStat
 import { checkoutHint, daysSince, leftoverHint, pendingArchiveHint, relTime, splitPathLabel } from "./format.ts";
 import { currentQuery, followInApp, href, hrefWithQuery, navigate, onRouteChange, replaceQuery } from "./url.ts";
 import { dismissActiveSelect } from "./select.tsx";
-import { LifecycleTimeline, latestLifecycleDeliveries, lifecycleTimelineModel, visibleLifecycleDeliveries } from "./lifecycleTimeline.tsx";
+import { LifecycleTimeline, latestLifecycleDeliveries, lifecycleTimelineModel, shouldShowDirectShipAction, visibleLifecycleDeliveries } from "./lifecycleTimeline.tsx";
 import { SessionControls, ShipButton } from "./sessions.tsx";
 import { linkedPullRequest } from "../shared/pullRequestLink.ts";
 
@@ -900,7 +900,7 @@ export function ChangeDetail({
         deliveryChildren={
         <>
           {shownSession?.action !== "archive" && shownSession && <ShipOperationStatus session={shownSession} />}
-          {shownSession?.action !== "archive" && timelineModel.pullRequests.implementation.state === "unshipped" && shownSession && shownWorktree && <ShipButton session={shownSession} worktree={shownWorktree} />}
+          {shownSession?.action !== "archive" && shouldShowDirectShipAction("implementation", completionDeliveryPhase) && timelineModel.pullRequests.implementation.state === "unshipped" && shownSession && shownWorktree && <ShipButton session={shownSession} worktree={shownWorktree} />}
           {implementationDelivery?.recovery.includes("retry") && timelineModel.pullRequests.implementation.state !== "merged" && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => void retryDelivery(implementationDelivery)}>{retryingDelivery === implementationDelivery.id ? "Retrying…" : "Retry delivery"}</button>}
           <ResolveConflicts change={change} compact />
         </>
@@ -909,7 +909,7 @@ export function ChangeDetail({
           proposal: deliveryFor("proposal")?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => { const item = deliveryFor("proposal"); if (item) void retryDelivery(item); }}>{retryingDelivery === deliveryFor("proposal")?.id ? "Retrying…" : "Retry delivery"}</button>,
           archive: <>
             {archiveSession && <ShipOperationStatus session={archiveSession} />}
-            {timelineModel.pullRequests.archive.state === "unshipped" && archiveSession && archiveWorktree && <ShipButton session={archiveSession} worktree={archiveWorktree} />}
+            {shouldShowDirectShipAction("archive", completionDeliveryPhase) && timelineModel.pullRequests.archive.state === "unshipped" && archiveSession && archiveWorktree && <ShipButton session={archiveSession} worktree={archiveWorktree} />}
             {deliveryFor("archive")?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => { const item = deliveryFor("archive"); if (item) void retryDelivery(item); }}>{retryingDelivery === deliveryFor("archive")?.id ? "Retrying…" : "Retry delivery"}</button>}
           </>,
         }}
