@@ -46,10 +46,17 @@ test("the console's terminal sits in an unbroken column of flex parents, so it h
 test("the Console header leaves at least 80% of the panel to the terminal and wraps at narrow widths", () => {
   expect(rule(".console-pane > .session-head")).toMatch(/max-height:\s*20%/);
   expect(rule(".console-pane > .session-head")).toMatch(/overflow:\s*auto/);
+  expect(rule(".console-pane > .session-head:has(.console-settings[open])")).toMatch(/overflow:\s*visible/);
   expect(rule(".console-head-layout")).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/);
   expect(rule(".console-head-context")).toMatch(/flex-wrap:\s*wrap/);
   expect(rule(".console-session-facts")).toMatch(/flex-wrap:\s*wrap/);
   expect(rule(".console-head-actions .console-secondary-actions")).toMatch(/flex-wrap:\s*wrap/);
+});
+
+test("the change window uses more of the viewport and gives the settings menu room", () => {
+  expect(rule(".detail-overlay")).toMatch(/padding:\s*clamp\(4px,\s*2vh,\s*20px\)\s+clamp\(4px,\s*2vw,\s*24px\)/);
+  expect(rule(".detail")).toMatch(/width:\s*min\(1440px,\s*100%\)/);
+  expect(rule(".detail")).not.toMatch(/max-height:\s*960px/);
 });
 
 test("dismiss and delete change controls have persistent borders at rest", () => {

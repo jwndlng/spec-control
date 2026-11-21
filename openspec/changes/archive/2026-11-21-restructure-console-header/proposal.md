@@ -8,6 +8,7 @@ The Console tab's header consumes close to half of the available panel height, l
 
 - Reduce the Console panel header to at most 20% of the panel height so the terminal can use at least 80%.
 - Keep session identity and status visible, place End session and Open in editor at the panel header's top right, and move agent and permission configuration behind a disclosure.
+- Expand the change window to use more of the viewport and keep the opened settings menu visible beyond the compact Console header.
 - Remove Ship from the Console panel and rely on the lifecycle timeline's delivery checkpoint for shipping.
 - Keep a visible border on the Dismiss change and Delete change files controls at rest so both actions remain easy to identify.
 
