@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 import { h, render, type ComponentChildren } from "preact";
 import type { ChangeArtifactEntry, ChangeSnapshot, PullRequest } from "../src/shared/types.ts";
 import type { LifecycleDeliveryView } from "../src/ui/api.ts";
-import { LifecycleTimeline, lifecycleTimelineModel, latestLifecycleDeliveries, visibleLifecycleDeliveries } from "../src/ui/lifecycleTimeline.tsx";
+import { LifecycleTimeline, lifecycleTimelineModel, latestLifecycleDeliveries, shouldShowDirectShipAction, visibleLifecycleDeliveries } from "../src/ui/lifecycleTimeline.tsx";
 import { createDemoApi } from "../src/ui/demo/demoApi.ts";
 
 const change = (overrides: Partial<ChangeSnapshot> = {}) => ({
@@ -44,6 +44,12 @@ function mount(node: ComponentChildren) {
 }
 
 describe("lifecycleTimelineModel", () => {
+  test("hides a direct Ship action only for the phase with an active completion confirmation", () => {
+    expect(shouldShowDirectShipAction("archive", "archive")).toBe(false);
+    expect(shouldShowDirectShipAction("implementation", "archive")).toBe(true);
+    expect(shouldShowDirectShipAction("archive", undefined)).toBe(true);
+  });
+
   test("shows only the latest delivery per phase and hides merged delivery retries", () => {
     const oldProposal = delivery({ id: "old", phase: "proposal", state: "waiting-to-merge", updatedAt: "2026-11-16T10:00:00Z", recovery: ["open-pr"] });
     const blockedProposal = delivery({ id: "blocked", phase: "proposal", state: "blocked", updatedAt: "2026-11-16T11:00:00Z", blocker: "there is nothing to ship (merged)", recovery: ["retry"] });

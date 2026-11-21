@@ -78,6 +78,13 @@ function humanize(value: string): string {
   return value.replaceAll("-", " ").replace(/^./, (letter) => letter.toUpperCase());
 }
 
+export function shouldShowDirectShipAction(
+  phase: LifecycleDeliveryView["phase"],
+  completionPhase: LifecycleDeliveryView["phase"] | undefined,
+): boolean {
+  return phase !== completionPhase;
+}
+
 export function lifecycleTimelineModel(
   change: Pick<ChangeSnapshot, "repoId" | "name" | "created" | "recorded" | "stage" | "archived" | "subState" | "tasks">,
   artifacts: readonly Pick<ArtifactStatus, "id" | "status" | "required">[],
