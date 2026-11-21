@@ -1,3 +1,4 @@
 - [x] Gate the normal draft completion fallback on Ready and disclose it on demand.
 - [x] Retain explicit recovery and verification feedback.
 - [x] Cover writing, ready and recovery states.
+- [x] Apply readiness and working labels across implementation, validation and archive, including fast-forward.

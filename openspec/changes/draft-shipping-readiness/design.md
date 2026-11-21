@@ -1,1 +1,3 @@
 Use the same Ready stage the lifecycle observer requires for proposal delivery. Keep a ready draft’s manual fallback in a collapsed disclosure. Explicit recovery and verification already underway stay visible. A waiting agent question takes priority over the optional fallback.
+
+Implementation and Fast-forward share the verified task gate. Archive additionally requires an archived change and checks for acceptance of any unresolved tasks on the current managed action. Validate runs at Done and has no shipping control. Labels and animation derive from the same working phase. Once the agent waits or exits the checkpoint resumes its ordinary phase name.
