@@ -83,8 +83,8 @@ test("the panel's header actions go through the guard and are disabled while one
   // Operation progress and recovery render in the timeline delivery checkpoint.
   expect(panel).toContain("export function ShipOperationStatus");
   expect(panel).toContain("aria-live={operation.state === \"failed\" ? \"assertive\" : \"polite\"}");
-  expect(detailSource).toContain("<ShipOperationStatus session={shownSession} />");
-  expect(detailSource).toContain("ShipOperationStatus session={shownSession}");
+  expect(detailSource).toContain("<ShipOperationStatus session={implementationSession} />");
+  expect(detailSource).toContain("ShipOperationStatus session={archiveSession}");
   expect(panel).toContain("Ship outcome unknown:");
   expect(panel).toContain("shipOperationDismissed(operation.operationId)");
   for (const call of ["api.resolveConflicts(session.id)", "api.mergeSession(session.id)", "api.resumeSession(session.id)", "api.deleteSession(session.id)"]) {

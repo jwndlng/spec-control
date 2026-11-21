@@ -1,4 +1,5 @@
 import type { ArtifactStatus, ChangeSnapshot } from "../shared/types.ts";
+import { useId, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { PullRequest } from "../shared/types.ts";
 import type { LifecycleDeliveryView } from "./api.ts";
@@ -25,6 +26,7 @@ export interface LifecycleTimelineModel {
   pullRequest: { state: LifecyclePullRequestState; label: string; number?: number; url?: string };
   pullRequests: Record<LifecycleDeliveryView["phase"], { state: LifecyclePullRequestState; label: string; number?: number; url?: string; blocker?: string }>;
   workingPhase?: LifecyclePhase;
+  archivePendingDelivery?: boolean;
 }
 
 /** The newest delivery record per phase; older retries are history, not separate current status rows. */
@@ -93,6 +95,7 @@ export function lifecycleTimelineModel(
   prs: readonly PullRequest[] = [],
   workingPhase?: LifecyclePhase,
   progressPhase?: LifecyclePhase,
+  remote?: { unavailable: boolean; localOnly: boolean; fetchedAt?: string },
 ): LifecycleTimelineModel {
   const current = change.archived ? "Archived" : stagePhase[change.stage];
   const currentIndex = LIFECYCLE_PHASES.indexOf(current);
@@ -103,6 +106,8 @@ export function lifecycleTimelineModel(
   const visualCurrentIndex = LIFECYCLE_PHASES.indexOf(visualCurrent);
   const nextPhase = LIFECYCLE_PHASES[currentIndex + 1];
   const actionPhase = change.subState === "validate" ? "Done" as const
+    : current === "Implementing" ? "Implementing" as const
+    : current === "Drafts" ? "Drafts" as const
     : current === "Archived" ? "Archived" as const
       : nextPhase === "Archived" && visualCurrent === "Archived" ? undefined
       : nextPhase;
@@ -119,19 +124,21 @@ export function lifecycleTimelineModel(
     const started = phaseStarted || (phase === "proposal" ? currentIndex >= 1 : phase === "implementation" ? currentIndex >= 3 : currentIndex >= 5);
     const skipped = phase === "proposal" && visualCurrentIndex >= LIFECYCLE_PHASES.indexOf("Implementing") && !phasePr && !delivery;
     const state: LifecyclePullRequestState = alreadyMerged ? "merged"
+      : remote?.localOnly && !phaseStarted ? "upcoming"
+      : remote?.unavailable && (phasePr || delivery?.pullRequestNumber) ? "waiting"
       : skipped ? "skipped"
         : !phasePr ? !started ? "upcoming"
         : delivery && ["pending", "committing", "pushing", "opening-pr"].includes(delivery.state) ? "shipping"
           : delivery?.recovery.includes("resolve-conflicts") ? "conflicts"
             : delivery && ["blocked", "unavailable"].includes(delivery.state) ? "failed"
-              : delivery?.state === "waiting-to-merge" ? "checking" : "unshipped"
+              : delivery?.state === "waiting-to-merge" || delivery?.pullRequestNumber ? "waiting" : "unshipped"
         : phasePr.state === "closed" ? "closed"
           : phasePr.mergeable === "conflicting" ? "conflicts"
             : phasePr.checks === "failing" ? "failed"
-              : phasePr.checks === "pending" || phasePr.mergeable === "unknown" || !phasePr.mergeable ? "checking"
+              : phasePr.checks === "pending" ? "checking"
                 : phasePr.mergeable === "mergeable" && (phasePr.checks === "passing" || phasePr.checks === "none") ? "ready" : "waiting";
-    const label = ({ upcoming: "Not started", unshipped: "Not shipped", skipped: "Skipped", shipping: "Shipping", checking: "Checks running", ready: "Checks passed", conflicts: "Conflicts", failed: delivery?.blocker ? "Delivery blocked" : "Checks failed", merged: "Merged", closed: "Closed", waiting: "Waiting" } as const)[state];
-    return { state, label, ...(!alreadyMerged && delivery?.blocker ? { blocker: delivery.blocker } : {}), ...(phasePr?.number ? { number: phasePr.number } : delivery?.pullRequestNumber ? { number: delivery.pullRequestNumber } : {}), ...(phasePr?.url ? { url: phasePr.url } : delivery?.pullRequestUrl ? { url: delivery.pullRequestUrl } : {}) };
+    const label = ({ upcoming: "Not started", unshipped: "Not shipped", skipped: "Skipped", shipping: "Shipping", checking: "Checks running", ready: "Checks passed", conflicts: "Conflicts", failed: !phasePr && delivery?.blocker ? "Delivery blocked" : "Checks failed", merged: "Merged", closed: "Closed", waiting: remote?.unavailable ? "Status unavailable" : phasePr ? "Awaiting PR status" : "Awaiting merge" } as const)[state];
+    return { state, label, ...(state === "waiting" && remote?.unavailable && remote.fetchedAt ? { blocker: `Last checked ${remote.fetchedAt}` } : {}), ...(!phasePr && !alreadyMerged && delivery?.blocker ? { blocker: delivery.blocker } : {}), ...(phasePr?.number ? { number: phasePr.number } : delivery?.pullRequestNumber ? { number: delivery.pullRequestNumber } : {}), ...(phasePr?.url ? { url: phasePr.url } : delivery?.pullRequestUrl ? { url: delivery.pullRequestUrl } : {}) };
   };
   const pullRequests = Object.fromEntries((['proposal', 'implementation', 'archive'] as const).map((phase) => {
     const delivery = latestDeliveries.get(phase);
@@ -143,13 +150,14 @@ export function lifecycleTimelineModel(
   return {
     current,
     visualCurrent,
+    archivePendingDelivery: current === "Archived" && !remote?.localOnly && pullRequests.archive.state !== "merged",
     ...(actionPhase ? { actionPhase } : {}),
     ...(current === "Ready" && artifacts.some((artifact) => artifact.required === false && artifact.status !== "done") ? { draftActionPhase: "Drafts" as const } : {}),
     phases: LIFECYCLE_PHASES.map((label, index) => ({ label, state: index < visualCurrentIndex ? "complete" : index === visualCurrentIndex ? "current" : index === visualCurrentIndex + 1 ? "next" : "upcoming" })),
     artifacts: artifacts.map(({ id, status }) => ({ id, label: humanize(id), status })),
     ...(current === "Drafts" && artifacts.length > 0 ? { artifactProgress: { done: artifacts.filter((artifact) => artifact.status === "done").length, total: artifacts.length } } : {}),
     ...(change.tasks && change.tasks.total > 0 && current !== "Backlog" && current !== "Drafts" ? { taskProgress: change.tasks } : {}),
-    ...(change.subState === "validate" ? { validation: "Validation awaiting confirmation" } : {}),
+    ...(change.subState === "validate" ? { validation: change.tasks?.awaiting ? `${change.tasks.awaiting} ${change.tasks.awaiting === 1 ? "task needs" : "tasks need"} review` : "Validation awaiting confirmation" } : {}),
     ...(change.tasks ? { localProgress: `${change.tasks.done}/${change.tasks.total} tasks complete${change.tasks.awaiting ? ` · ${change.tasks.awaiting} awaiting confirmation` : ""}` } : {}),
     persistence,
     pullRequest: pullRequests.implementation,
@@ -158,8 +166,10 @@ export function lifecycleTimelineModel(
   };
 }
 
-export function LifecycleTimeline({ model, children, draftChildren, deliveryChildren, deliveryActions = {}, completionPhase, completionChildren }: {
+export function LifecycleTimeline({ model, documentLink, question, children, draftChildren, deliveryChildren, deliveryActions = {}, completionPhase, completionChildren }: {
   model: LifecycleTimelineModel;
+  documentLink?: (id: string) => string | undefined;
+  question?: { phase: LifecyclePhase; open: () => void };
   children?: ComponentChildren;
   draftChildren?: ComponentChildren;
   deliveryChildren?: ComponentChildren;
@@ -167,6 +177,8 @@ export function LifecycleTimeline({ model, children, draftChildren, deliveryChil
   completionPhase?: LifecyclePhase;
   completionChildren?: ComponentChildren;
 }) {
+  const [documentsOpen, setDocumentsOpen] = useState(false);
+  const documentsId = useId();
   const renderDelivery = (phase: LifecycleDeliveryView["phase"]) => {
     const item = model.pullRequests[phase];
     if (item.state === "upcoming") return null;
@@ -191,14 +203,17 @@ export function LifecycleTimeline({ model, children, draftChildren, deliveryChil
         <ol class="lifecycle-phases" style={{ "--lifecycle-progress": `${Math.max(0, (PHASE_TRACK_COLUMN[model.visualCurrent] - 1) / 6) * 100}%` }}>
           {model.phases.map((phase) => <li key={phase.label} data-phase={phase.label} class={`lifecycle-phase timeline-node ${phase.state}${phase.label === model.actionPhase || phase.label === model.draftActionPhase ? " actionable" : ""}${phase.label === "Drafts" && model.artifacts.length ? " has-artifacts" : ""}${phase.label === "Implementing" && model.taskProgress ? " has-progress" : ""}${phase.label === model.workingPhase ? " working" : ""}`} style={{ gridColumn: PHASE_TRACK_COLUMN[phase.label], gridRow: 1 }} aria-current={phase.state === "current" ? "step" : undefined}>
               <span class="lifecycle-phase-marker" aria-hidden="true">{phase.state === "complete" ? "✓" : ""}</span>
-              <span class="lifecycle-phase-label">{phase.label}</span>
+              <span class="lifecycle-phase-label">{phase.label === "Drafts" && model.artifacts.length ? <button class="draft-documents-toggle" type="button" aria-expanded={documentsOpen} aria-controls={documentsId} onClick={() => setDocumentsOpen(!documentsOpen)}>Drafts ▾</button> : phase.label}</span>
+              {phase.label === question?.phase && <button class="btn sm" type="button" onClick={question.open}>Answer agent</button>}
+              {phase.label === "Archived" && model.archivePendingDelivery && <small>Archived locally</small>}
               {renderPhaseDelivery(phase.label)}
               {phase.label === model.actionPhase && <section class="lifecycle-phase-action" aria-label={`Available action for ${phase.label}`}>{children}</section>}
               {phase.label === model.draftActionPhase && <section class="lifecycle-phase-action" aria-label="Draft action">{draftChildren}</section>}
               {phase.label === "Drafts" && model.artifacts.length > 0 && <ol class="lifecycle-artifact-segments" aria-label="Draft artifact progress">
                 {model.artifacts.map((artifact) => <li key={artifact.id} class={`lifecycle-artifact-dot ${artifact.status}`} aria-label={`${artifact.label}: ${artifact.status}`} title={`${artifact.label}: ${artifact.status}`}>
+                  <button type="button" class="draft-segment-button" aria-label={`Planning documents: ${artifact.label}, ${artifact.status}`} aria-expanded={documentsOpen} aria-controls={documentsId} onClick={() => setDocumentsOpen(!documentsOpen)}>
                   <span class="lifecycle-artifact-segment" aria-hidden="true" />
-                  <span class="lifecycle-artifact-label" aria-hidden="true">{compactArtifactLabel(artifact.label)}</span>
+                  <span class="lifecycle-artifact-label" aria-hidden="true">{compactArtifactLabel(artifact.label)}</span></button>
                 </li>)}
               </ol>}
               {phase.label === "Implementing" && model.taskProgress && <div class="lifecycle-phase-progress"><Meter {...model.taskProgress} showUnit /></div>}
@@ -206,9 +221,12 @@ export function LifecycleTimeline({ model, children, draftChildren, deliveryChil
             </li>
           )}
         </ol>
-        {model.current === "Backlog" && <section class="lifecycle-fast-forward" aria-label="Fast-forward route from Backlog to Implementing">
-          <span>Backlog</span><span class="lifecycle-fast-forward-line" aria-hidden="true">⟶</span><span>Implementing</span><strong>Fast-forward is in the action menu</strong>
-        </section>}
+        <ul class="timeline-documents" hidden={!documentsOpen} id={documentsId} aria-label="Planning documents">
+          {model.artifacts.map((artifact) => {
+            const link = documentLink?.(artifact.id);
+            return <li key={artifact.id}>{link ? <a href={link}>{artifact.label}</a> : artifact.label} · {artifact.status}</li>;
+          })}
+        </ul>
       </div>
       <div class="lifecycle-status" aria-live="polite">
         {model.validation && <span>{model.validation}</span>}
