@@ -20,7 +20,7 @@ import { consoleFolderProblem, prepareConsoleFolder } from "./consoleFolder.ts";
 import { editorArgv, EditorError, editorCommand, editorFound, openEditor } from "./editor.ts";
 import type { SessionActivity } from "../activity/events.ts";
 import { isBusy } from "../keepAwake.ts";
-import { readCompletionReport, readReport, STATE_FILE_ENV, terminalRepliesOnly, type Report, type ReportedState } from "./reportedState.ts";
+import { ACTIVITY_FILE_ENV, readCompletionReport, readReport, STATE_FILE_ENV, terminalRepliesOnly, type Report, type ReportedState } from "./reportedState.ts";
 import { SessionStore } from "./store.ts";
 import { submitText, validSubmission, type SubmitOptions } from "./submit.ts";
 import { KILL_GRACE_MS, spawnTerminal, type TerminalProcess } from "./terminal.ts";
@@ -196,6 +196,7 @@ interface Live {
   lastUserInputAt: number;
   /** The report read last from the state file, kept so an unchanged file is not read again. */
   report?: Report & { size: number };
+  activityReport?: Report & { size: number };
   completionReport?: import("../../shared/types.ts").ManagedCompletionReport;
   /** The word of that report while it is current (see `readReports`); keep-awake's input, never the badge's. */
   current?: ReportedState;
@@ -1888,9 +1889,11 @@ export class SessionManager {
     const live: Live = { scrollback: this.live.get(session.id)?.scrollback ?? new Scrollback(), viewers: this.live.get(session.id)?.viewers ?? new Set(), lastStamp: 0, startedAt: 0, echoUntil: 0, lastUserInputAt: 0 };
     // A report never outlives the process that wrote it: whatever an earlier run left is gone before this one starts.
     const stateFile = this.store.statePath(session.id);
+    const activityFile = this.store.activityPath(session.id);
+    rmSync(activityFile, { force: true });
     rmSync(stateFile, { force: true });
     delete session.waitingReportedAt;
-    env = { ...env, [STATE_FILE_ENV]: stateFile };
+    env = { ...env, [STATE_FILE_ENV]: stateFile, [ACTIVITY_FILE_ENV]: activityFile };
     live.startedAt = Date.now();
     this.live.set(session.id, live);
     let proc: TerminalProcess;
@@ -1954,12 +1957,18 @@ export class SessionManager {
           delete session.waitingReportedAt;
           return;
         }
-        const report = await readReport(this.store.statePath(session.id), live.report);
-        live.report = report;
+        const [legacy, activity] = await Promise.all([
+          readReport(this.store.statePath(session.id), live.report),
+          readReport(this.store.activityPath(session.id), live.activityReport),
+        ]);
+        if (this.live.get(session.id) !== live || !live.proc || session.state !== "running") return;
+        live.report = legacy;
+        live.activityReport = activity;
+        const report = activity && (!legacy || activity.mtimeMs >= legacy.mtimeMs) ? activity : legacy;
         if (!isChangeless(session) && session.managedActionId) {
           const completion = await readCompletionReport(this.store.statePath(session.id));
-          if (completion?.actionId === session.managedActionId && completion.phase === session.action) live.completionReport = completion;
-          else if (!completion || completion.actionId !== session.managedActionId || completion.phase !== session.action) live.completionReport = undefined;
+          if (this.live.get(session.id) !== live || !live.proc) return;
+          live.completionReport = completion?.actionId === session.managedActionId && completion?.phase === session.action ? completion : undefined;
         }
         const current = report && report.mtimeMs > live.startedAt && report.mtimeMs > live.lastUserInputAt ? report : undefined;
         live.current = current?.state;

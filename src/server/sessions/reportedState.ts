@@ -4,8 +4,9 @@ import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import type { ManagedActionPhase, ManagedCompletionReport } from "../../shared/types.ts";
 
-/** The environment variable that names the file. The whole contract with an agent is this name and the two words. */
+/** The legacy state file also accepts structured phase completion reports. */
 export const STATE_FILE_ENV = "SPEC_CONTROL_STATE_FILE";
+export const ACTIVITY_FILE_ENV = "SPEC_CONTROL_ACTIVITY_FILE";
 
 export type ReportedState = "waiting" | "working";
 
