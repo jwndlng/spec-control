@@ -1,7 +1,7 @@
 ## 1. Session status
 
 - [x] Read session-local activity reports independently of completion and preserve legacy reports.
-- [x] Document the Codex hooks and request a waiting report in managed prompts.
+- [x] Document the Codex hooks.
 
 ## 2. Dashboard
 

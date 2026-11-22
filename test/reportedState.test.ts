@@ -258,3 +258,21 @@ test("deleting a record removes its state file with it", async () => {
   expect(existsSync(stateFile)).toBe(false);
   expect(existsSync(dirname(stateFile))).toBe(false);
 });
+
+test("activity hooks survive redraws independently of the phase completion file", async () => {
+  const { manager, s, stateFile } = await running();
+  const activity = new SessionStore().activityPath(s.id);
+  const actionId = (manager.get(s.id) as import("../src/shared/types.ts").ChangeSession).managedActionId as string;
+  const completion = { kind: "phase-complete", phase: "implement", revision: 1, actionId } as const;
+  await writeFile(stateFile, JSON.stringify(completion));
+  await writeFile(activity, "waiting");
+  manager.resize(s.id, 120, 40);
+  manager.write(s.id, "\x1b[I");
+  await manager.readReports();
+  expect(manager.get(s.id).waitingReportedAt).toBeTruthy();
+  expect(manager.managedCompletion(s.id)).toEqual(completion);
+  await sleep(5);
+  manager.write(s.id, "y");
+  await manager.readReports();
+  expect(manager.get(s.id).waitingReportedAt).toBeUndefined();
+});

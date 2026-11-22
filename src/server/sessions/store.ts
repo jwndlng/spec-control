@@ -46,6 +46,10 @@ export class SessionStore {
     return join(this.dir(id), STATE_FILE);
   }
 
+  activityPath(id: string): string {
+    return join(this.dir(id), "agent-activity");
+  }
+
   saveMeta(session: Session): Promise<void> {
     // Snapshot now; the object keeps changing. A waiting report is only true of a running process, so it is not kept.
     const { waitingReportedAt: _, ...stored } = session;

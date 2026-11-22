@@ -462,7 +462,7 @@ export function OpenInEditorView({ control, busy = false, onActivate }: { contro
 export function OpenWork() {
   const ui = useSessionUi();
   const [open, setOpen] = useState(false);
-  const { items, unshipped, running } = useMemo(() => openWork(ui.worktrees, ui.sessions), [ui.worktrees, ui.sessions]);
+  const { items, unshipped, running, waiting } = useMemo(() => openWork(ui.worktrees, ui.sessions), [ui.worktrees, ui.sessions]);
   const hues = useMemo(() => assignRepoHues((ui.snapshot?.repos ?? []).map((r) => r.id)), [ui.snapshot]);
   if (!ui.config?.agentSessions.enabled || items.length === 0) return null;
   const repoName = (id: string) => ui.config?.repos.find((r) => r.id === id)?.name ?? id;
@@ -470,12 +470,12 @@ export function OpenWork() {
     <div class="open-work">
       <button
         type="button"
-        class={`btn sm ${unshipped > 0 ? "attention" : running > 0 ? "" : "ghost"}`}
+        class={`btn sm ${waiting > 0 || unshipped > 0 ? "attention" : running > 0 ? "" : "ghost"}`}
         aria-expanded={open}
         title="Agents running right now, and work in agent worktrees that has not ended in a merged pull request"
         onClick={() => setOpen(!open)}
       >
-        Open work {running + unshipped > 0 ? running + unshipped : "✓"}
+        Open work {running + unshipped > 0 ? running + unshipped : "✓"}{waiting > 0 && ` · ${waiting} waiting for you`}
       </button>
       {open && (
         <div class="open-work-list" role="dialog" aria-label="Open work">

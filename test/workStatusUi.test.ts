@@ -325,3 +325,11 @@ test("the rendered conflict badge carries the warning tone, the explanation and 
   expect(ConflictBadge({ worktree: wt("a", { state: "pushed", base: "origin/main" }) })).toBeNull();
   expect(ConflictBadge({ worktree: undefined })).toBeNull();
 });
+
+test("Open work surfaces confirmed waits across changes ahead of older active sessions", () => {
+  const working = sess("old", { createdAt: ago(5) });
+  const waiting = sess("new", { waitingReportedAt: ago(1), lastOutputAt: ago(0) });
+  const result = openWork([], [working, waiting, sess("ended", { state: "exited", waitingReportedAt: ago(1) })], NOW);
+  expect(result.waiting).toBe(1);
+  expect(result.items.map((item) => item.key)).toEqual(["new", "old"]);
+});
