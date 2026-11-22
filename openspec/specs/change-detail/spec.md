@@ -5,6 +5,27 @@ Lets the user read one change's OpenSpec artifacts inside the dashboard — its 
 
 ## Requirements
 
+### Requirement: Draft progress distinguishes writing from manual shipping
+The Drafts checkpoint SHALL keep manual shipping out of the normal writing flow.
+#### Scenario: Planning is incomplete
+- **WHEN** the agent is drafting and the change has yet to reach Ready
+- **THEN** show progress without offering manual completion or shipping
+#### Scenario: Planning files are ready
+- **WHEN** a running managed draft has reached Ready and automatic delivery has yet to start
+- **THEN** make manual verification and shipping available through a collapsed disclosure
+#### Scenario: Verification needs attention
+- **WHEN** the current draft requires explicit reconfirmation or confirmation has been accepted
+- **THEN** show its recovery control or verification status directly
+
+### Requirement: Working phases describe the operation
+Each actively working checkpoint SHALL display its current operation and suppress a duplicate starter for that operation.
+#### Scenario: Work in progress
+- **WHEN** drafting, implementation, fast-forward, validation or archival is running
+- **THEN** its checkpoint describes the work in progress and pulses until the agent waits or exits
+#### Scenario: Implementation and archive verification
+- **WHEN** implementation tasks are verified complete, or an archive exists with completed or explicitly accepted unresolved tasks
+- **THEN** offer manual shipping as an optional disclosure and keep explicit recovery visible
+
 ### Requirement: A blocked phase can be confirmed again
 When a delivery blocker offers phase-completion confirmation for the current running managed action, the corresponding phase checkpoint SHALL make that recovery action available again and show its updated verification state.
 
@@ -839,7 +860,7 @@ The timeline SHALL present the available Draft artifacts, Implement, or Archive 
 - **THEN** the Archived checkpoint is current and the timeline does not offer Archive there again
 
 ### Requirement: The lifecycle stepper guides local and remote progress
-The change detail timeline SHALL place each phase action and its associated pull-request delivery state and actions within the phase it advances or creates, preserving all current eligibility and session handoff rules. Completed phases SHALL show green completion markers, the current actively running phase SHALL have a pulsing marker, and the available next phase SHALL be visually highlighted. A Done sub-state action such as Validate SHALL remain attached to Done. Backlog SHALL indicate the Fast-forward route to Implementing while retaining the existing Fast-forward action and confirmation.
+The change detail timeline SHALL place each phase action and its associated pull-request delivery state and actions within the phase it advances or creates, preserving all current eligibility and session handoff rules. Completed phases SHALL show green completion markers, the current actively running phase SHALL have a pulsing marker, and the available next phase SHALL be visually highlighted. A Done sub-state action such as Validate SHALL remain attached to Done. Backlog SHALL indicate the Fast-forward route to Implementing while retaining the existing Fast-forward action and confirmation. When a managed phase is awaiting completion confirmation and shipping, its matching phase SHALL show that confirmation as the sole primary ship action; the direct Ship button for that same phase SHALL be hidden until the confirmation is no longer active.
 
 #### Scenario: Next local action
 - **WHEN** a change is Ready and Implement is available
@@ -856,6 +877,10 @@ The change detail timeline SHALL place each phase action and its associated pull
 #### Scenario: Completion confirmation needed
 - **WHEN** a running managed session has not reported completion for Draft, Implement, Fast-forward, or Archive
 - **THEN** its phase checkpoint shows a compact Confirm complete action, and confirming retains the server's artifact, task, and stable-worktree verification
+
+#### Scenario: One ship action while completion is confirmed
+- **WHEN** a phase has an active completion confirmation and its pull request is also eligible for direct Ship
+- **THEN** the phase shows Confirm & Ship without a second Ship button, while a different phase's Ship action remains available
 
 ### Requirement: The timeline shows a pull-request delivery checkpoint
 The timeline SHALL show proposal delivery within Drafts, implementation delivery within Implementing, and archive delivery within Archived, without separate pull-request checkpoint nodes. When Ship is available, it SHALL appear within the matching phase and retain the existing shippability and confirmation behavior. Each phase SHALL link to a known pull request and distinguish its delivery status in both text and appearance: shipping or checks in progress SHALL pulse orange, a mergeable pull request with passing checks SHALL be green, and conflicts or failing checks SHALL be red. A merged pull request SHALL be green. When conflicts can be resolved under the existing eligibility rules, Resolve conflicts SHALL appear within the matching phase and use the existing recovery behavior. Each lifecycle delivery SHALL discover its pull request from its delivery record or that phase's exact recorded or managed head branch. The Implementation phase SHALL NOT match the proposal branch, even when `.openspec.yaml` records that branch in its generic branch field. Archive shipping controls and their in-progress status SHALL appear within Archived, not Implementing. When implementation has started and no Drafts pull request or delivery attempt exists, the Drafts phase SHALL be labeled “Skipped”.
@@ -958,23 +983,37 @@ The change window SHALL use the available viewport with compact outer gutters an
 - **WHEN** the detail view opens on a viewport larger than the previous window limits
 - **THEN** the change window uses the additional width and height while keeping its outer gutters
 
-### Requirement: Draft progress distinguishes writing from manual shipping
-The Drafts checkpoint SHALL keep manual shipping out of the normal writing flow.
-#### Scenario: Planning is incomplete
-- **WHEN** the agent is drafting and the change has yet to reach Ready
-- **THEN** show progress without offering manual completion or shipping
-#### Scenario: Planning files are ready
-- **WHEN** a running managed draft has reached Ready and automatic delivery has yet to start
-- **THEN** make manual verification and shipping available through a collapsed disclosure
-#### Scenario: Verification needs attention
-- **WHEN** the current draft requires explicit reconfirmation or confirmation has been accepted
-- **THEN** show its recovery control or verification status directly
+### Requirement: Phase guidance follows actionable evidence
+The UI SHALL support the following user journeys.
 
-### Requirement: Working phases describe the operation
-Each actively working checkpoint SHALL display its current operation and suppress a duplicate starter for that operation.
-#### Scenario: Work in progress
-- **WHEN** drafting, implementation, fast-forward, validation or archival is running
-- **THEN** its checkpoint describes the work in progress and pulses until the agent waits or exits
-#### Scenario: Implementation and archive verification
-- **WHEN** implementation tasks are verified complete, or an archive exists with completed or explicitly accepted unresolved tasks
-- **THEN** offer manual shipping as an optional disclosure and keep explicit recovery visible
+#### Scenario: PR checks are unknown
+- **WHEN** the phase PR is known but its latest check status is unavailable
+- **THEN** show the last known status and PR link without claiming checks are running or offering another Ship
+
+#### Scenario: Draft document on a narrow screen
+- **WHEN** a keyboard or touch user selects Drafts
+- **THEN** show full schema document names, statuses and available document links
+
+#### Scenario: Archive pending delivery
+- **WHEN** an archive exists locally and its PR awaits merge
+- **THEN** identify the archive PR beneath Archived and show its verified state
+
+#### Scenario: Completed delivery after a retry
+- **WHEN** fresh evidence confirms the same phase PR merged
+- **THEN** replace stale recovery controls with the merged result
+
+#### Scenario: Return after an interrupted implementation
+- **WHEN** the user reopens a change with incomplete tasks after its session ended
+- **THEN** Implementing shows current task progress and the eligible continuation without an active pulse
+
+#### Scenario: Resolve the implementation PR conflict
+- **WHEN** fresh evidence confirms a conflict on the implementation PR
+- **THEN** offer the eligible resolution beside that PR and retire it once the conflict clears
+
+#### Scenario: Finish the change
+- **WHEN** implementation has merged and the change is eligible for archive
+- **THEN** offer Archive beneath Archived and distinguish local archival from the subsequent archive PR outcome
+
+#### Scenario: Ship once
+- **WHEN** phase verification is required before shipping
+- **THEN** show one shipping action under that phase and replace it with progress after acceptance
