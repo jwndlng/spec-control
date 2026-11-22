@@ -839,7 +839,7 @@ The timeline SHALL present the available Draft artifacts, Implement, or Archive 
 - **THEN** the Archived checkpoint is current and the timeline does not offer Archive there again
 
 ### Requirement: The lifecycle stepper guides local and remote progress
-The change detail timeline SHALL place each phase action and its associated pull-request delivery state and actions within the phase it advances or creates, preserving all current eligibility and session handoff rules. Completed phases SHALL show green completion markers, the current actively running phase SHALL have a pulsing marker, and the available next phase SHALL be visually highlighted. A Done sub-state action such as Validate SHALL remain attached to Done. Backlog SHALL indicate the Fast-forward route to Implementing while retaining the existing Fast-forward action and confirmation.
+The change detail timeline SHALL place each phase action and its associated pull-request delivery state and actions within the phase it advances or creates, preserving all current eligibility and session handoff rules. Completed phases SHALL show green completion markers, the current actively running phase SHALL have a pulsing marker, and the available next phase SHALL be visually highlighted. A Done sub-state action such as Validate SHALL remain attached to Done. Backlog SHALL indicate the Fast-forward route to Implementing while retaining the existing Fast-forward action and confirmation. When a managed phase is awaiting completion confirmation and shipping, its matching phase SHALL show that confirmation as the sole primary ship action; the direct Ship button for that same phase SHALL be hidden until the confirmation is no longer active.
 
 #### Scenario: Next local action
 - **WHEN** a change is Ready and Implement is available
@@ -856,6 +856,10 @@ The change detail timeline SHALL place each phase action and its associated pull
 #### Scenario: Completion confirmation needed
 - **WHEN** a running managed session has not reported completion for Draft, Implement, Fast-forward, or Archive
 - **THEN** its phase checkpoint shows a compact Confirm complete action, and confirming retains the server's artifact, task, and stable-worktree verification
+
+#### Scenario: One ship action while completion is confirmed
+- **WHEN** a phase has an active completion confirmation and its pull request is also eligible for direct Ship
+- **THEN** the phase shows Confirm & Ship without a second Ship button, while a different phase's Ship action remains available
 
 ### Requirement: The timeline shows a pull-request delivery checkpoint
 The timeline SHALL show proposal delivery within Drafts, implementation delivery within Implementing, and archive delivery within Archived, without separate pull-request checkpoint nodes. When Ship is available, it SHALL appear within the matching phase and retain the existing shippability and confirmation behavior. Each phase SHALL link to a known pull request and distinguish its delivery status in both text and appearance: shipping or checks in progress SHALL pulse orange, a mergeable pull request with passing checks SHALL be green, and conflicts or failing checks SHALL be red. A merged pull request SHALL be green. When conflicts can be resolved under the existing eligibility rules, Resolve conflicts SHALL appear within the matching phase and use the existing recovery behavior. Each lifecycle delivery SHALL discover its pull request from its delivery record or that phase's exact recorded or managed head branch. The Implementation phase SHALL NOT match the proposal branch, even when `.openspec.yaml` records that branch in its generic branch field. Archive shipping controls and their in-progress status SHALL appear within Archived, not Implementing. When implementation has started and no Drafts pull request or delivery attempt exists, the Drafts phase SHALL be labeled “Skipped”.
