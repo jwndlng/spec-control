@@ -1288,6 +1288,7 @@ html:has(.board:not(.stacked)), body:has(.board:not(.stacked)) { overflow: hidde
 .delete-branch-facts { margin: 6px 0 0; padding-left: 18px; }
 .delete-branch-files summary { font-size: 12px; cursor: pointer; }
 .delete-branch-files .cleanup-list { margin-top: 6px; max-height: 200px; overflow-y: auto; font-size: 12px; }
+.stale-cleanup { overflow-wrap: anywhere; }
 /* A stale change's leftovers (stale-changes): one entry per worktree, branch or main-checkout copy. */
 .stale-leftovers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; text-align: left; }
 .stale-leftovers > li { display: flex; flex-direction: column; gap: 4px; }
@@ -1476,7 +1477,7 @@ p.add-github-root { display: block; }
 .notice.ok { color: var(--success); border-color: var(--success-border); }
 /* A stale change's reason and its one action (stale-changes spec), in the detail under the header. */
 .stale-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px var(--detail-pad, 16px) 0; }
-.stale-notice p { margin: 0; flex: 1 1 280px; }
+.stale-notice > p { margin: 0; flex: 1 1 280px; }
 .stale-notice .error { color: var(--danger); flex-basis: 100%; }
 
 /* ---- Section navigation (Settings, Help) ---- */
