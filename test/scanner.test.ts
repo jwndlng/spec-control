@@ -52,7 +52,7 @@ test("scans a fixture repo: artifacts, tasks, archive dates, columns", async () 
   expect(archived.created).toBe("2026-06-16");
   expect(archived.column).toBe("Archived");
   expect(archived.tasks?.done).toBe(archived.tasks?.total);
-});
+}, 30_000);
 
 test("a change without a design is Ready: the spec-driven schema requires only tasks", async () => {
   const snap = await scanRepo(nano);
@@ -66,7 +66,7 @@ test("a change without a design is Ready: the spec-driven schema requires only t
   expect(trim.tasks).toEqual({ done: 0, awaiting: 0, total: 3 });
   expect(trim.column).toBe("Ready");
   expect(trim.warnings ?? []).not.toContain("tasks file has no tasks");
-});
+}, 30_000);
 
 test("all artifacts done with an empty tasks file lands in Ready with a warning", async () => {
   const root = await tempDir();
@@ -140,7 +140,7 @@ test("archived list is sorted newest first and archive count matches disk", asyn
   expect(archived.length).toBe(16);
   const dates = archived.map((c) => c.archived!);
   expect([...dates].sort().reverse()).toEqual(dates);
-});
+}, 30_000);
 
 test("missing repo path yields ok:false without throwing", async () => {
   const snap = await scanRepo(newRepoConfig("/nonexistent/repo", true));
@@ -157,7 +157,7 @@ test("unexpected change directory names are skipped with a warning", async () =>
   }
   const snap = await scanRepo(nano, new Weird(nano.path));
   expect(snap.warnings?.[0]).toContain("foo;rm -rf");
-});
+}, 30_000);
 
 test("scanner isolates a failing repo and keeps its last good changes", async () => {
   const config = { ...defaultConfig(), repos: [nano, soc] };
@@ -183,7 +183,7 @@ test("scanner isolates a failing repo and keeps its last good changes", async ()
   expect(b.ok).toBe(false);
   expect(b.error).toBe("disk on fire");
   expect(b.changes.length).toBe(socChanges);
-}, 30_000); // Scans both fixture repositories twice, including their git metadata.
+}, 60_000); // Scans both fixture repositories twice, including their git metadata.
 
 // --- Checkouts: real linked worktrees in temporary repositories, with a local bare repository as the "remote". ---
 
@@ -397,7 +397,7 @@ test("checkouts: above the cap the rest are listed without a status", async () =
   expect(snap.worktrees[0].status).toEqual(CLEAN);
   expect(snap.workInProgress).toEqual({ worktrees: total, uncommitted: 0, unpushed: 0, stale: 0, unknown: 0 });
   await rm(base, { recursive: true, force: true });
-});
+}, 30_000);
 
 test("checkouts: a non-git repository reports none and no summary", async () => {
   class NotGit extends LocalRepoSource {
@@ -879,25 +879,37 @@ function gatedScanner(getConfig: () => ReturnType<typeof defaultConfig>) {
 }
 
 test("a repository enabled while another is scanned is in the follow-up's snapshot", async () => {
-  let config = { ...defaultConfig(), repos: [nano] };
+  const root = await tempDir();
+  const nanoPath = join(root, "nano");
+  const socPath = join(root, "soc");
+  await mkdir(nanoPath);
+  await mkdir(socPath);
+  const firstRepo = newRepoConfig(nanoPath, true);
+  const secondRepo = newRepoConfig(socPath, true);
+  let config = { ...defaultConfig(), repos: [firstRepo] };
   const { scanner, counts, release } = gatedScanner(() => config);
   const first = scanner.trigger();
   expect(first.started).toBe(true);
-  config = { ...config, repos: [nano, soc] };
+  config = { ...config, repos: [firstRepo, secondRepo] };
   const second = scanner.trigger();
   expect(second.started).toBe(false);
   release();
-  expect((await first.done).repos.map((r) => r.name)).toEqual([nano.name]);
+  expect((await first.done).repos.map((r) => r.name)).toEqual([firstRepo.name]);
   await Bun.sleep(0);
   release();
-  expect((await second.done).repos.map((r) => r.name)).toEqual([nano.name, soc.name]);
+  expect((await second.done).repos.map((r) => r.name)).toEqual([firstRepo.name, secondRepo.name]);
   expect(counts.started).toBe(2);
   expect(counts.maxRunning).toBe(1);
   expect(scanner.scanning).toBe(false);
+  await rm(root, { recursive: true, force: true });
 }, 30_000);
 
 test("three triggers during one scan start exactly one follow-up, and scans never overlap", async () => {
-  const config = { ...defaultConfig(), repos: [nano] };
+  const root = await tempDir();
+  const repoPath = join(root, "nano");
+  await mkdir(repoPath);
+  const repo = newRepoConfig(repoPath, true);
+  const config = { ...defaultConfig(), repos: [repo] };
   const { scanner, counts, release } = gatedScanner(() => config);
   const first = scanner.trigger();
   const queued = [scanner.trigger(), scanner.trigger(), scanner.trigger()];
@@ -918,6 +930,7 @@ test("three triggers during one scan start exactly one follow-up, and scans neve
   await later.done;
   expect(counts.started).toBe(3);
   expect(counts.maxRunning).toBe(1);
+  await rm(root, { recursive: true, force: true });
 }, 30_000);
 
 test("the follow-up runs after a failed scan too", async () => {

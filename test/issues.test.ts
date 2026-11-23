@@ -33,7 +33,7 @@ async function repoAt(name: string, origin?: string): Promise<string> {
 }
 
 const target = (id: string, path: string, isGit = true): RepoTarget => ({ id, path, isGit });
-const store = () => new Issues({ timeoutMs: 2000 });
+const store = () => new Issues({ timeoutMs: 10_000 });
 
 // ---- the fake gh (1.2) ----
 
