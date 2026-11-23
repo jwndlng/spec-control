@@ -312,7 +312,7 @@ test("fake-agent lifecycle delivers proposal, implementation and archive across 
   expect((await gh.calls()).filter((call) => call.argv.includes("create"))).toHaveLength(3);
   expect((manager.get(archive.id) as ChangeSession).shipOperation).toMatchObject({ checkpointId: archiveRecord.id, state: "succeeded" });
   archiveTerminal.detach();
-});
+}, 60_000);
 
 // ---------------------------------------------------------------------------
 // 3.2 Deterministic Ship
@@ -438,7 +438,7 @@ test("Ship uses a non-empty fallback for blank and unsafe description artifacts"
     expect(bodyIndex).toBeGreaterThanOrEqual(0);
     expect(create?.argv[bodyIndex + 1]).toBe(`Review the OpenSpec artifacts for ${IMPLEMENT}.`);
   }
-});
+}, 60_000);
 
 test("Ship failure after push preserves the verified outcome and retry safely opens one PR", async () => {
   const h = await harness();

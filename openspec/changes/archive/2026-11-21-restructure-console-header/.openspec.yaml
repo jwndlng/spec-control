@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-11-20
+spec-control:
+  branch: feat/restructure-console-header
+  archive-branch: chore/archive-restructure-console-header

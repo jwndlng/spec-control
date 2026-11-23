@@ -1,0 +1,46 @@
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"${SPEC_CONTROL_ACTIVITY_FILE:-}\" ]; then printf \"%s\\n\" waiting > \"$SPEC_CONTROL_ACTIVITY_FILE\"; fi"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "(^|__)request_user_input$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"${SPEC_CONTROL_ACTIVITY_FILE:-}\" ]; then printf \"%s\\n\" waiting > \"$SPEC_CONTROL_ACTIVITY_FILE\"; fi"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "(^|__)request_user_input$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"${SPEC_CONTROL_ACTIVITY_FILE:-}\" ]; then printf \"%s\\n\" working > \"$SPEC_CONTROL_ACTIVITY_FILE\"; fi"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"${SPEC_CONTROL_ACTIVITY_FILE:-}\" ]; then printf \"%s\\n\" working > \"$SPEC_CONTROL_ACTIVITY_FILE\"; fi"
+          }
+        ]
+      }
+    ]
+  }
+}

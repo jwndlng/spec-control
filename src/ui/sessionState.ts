@@ -603,10 +603,12 @@ export interface OpenWorkItem {
  * worktree that still holds work and has no running session — including worktrees whose change is gone from the board,
  * which no card can offer.
  */
-export function openWork(worktrees: SessionWorktree[], all: readonly Session[], now = Date.now()): { items: OpenWorkItem[]; unshipped: number; running: number } {
+export function openWork(worktrees: SessionWorktree[], all: readonly Session[], now = Date.now()): { items: OpenWorkItem[]; unshipped: number; running: number; waiting: number } {
   // The main console belongs to no repository and no change: it is never open work.
   const sessions = changeSessions(all);
-  const live = sessions.filter((s) => s.state === "running" || s.cleanup?.state === "pending").sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const needsInput = (session: ChangeSession) => session.state === "running" && !!session.waitingReportedAt;
+  const live = sessions.filter((s) => s.state === "running" || s.cleanup?.state === "pending")
+    .sort((a, b) => Number(needsInput(b)) - Number(needsInput(a)) || a.createdAt.localeCompare(b.createdAt));
   const items: OpenWorkItem[] = live.map((session) => ({
     key: session.id,
     repoId: session.repoId,
@@ -630,7 +632,7 @@ export function openWork(worktrees: SessionWorktree[], all: readonly Session[], 
   left.sort((a, b) => a.rank - b.rank || (a.worktree?.lastActivityAt ?? "").localeCompare(b.worktree?.lastActivityAt ?? ""));
 
   // Each row counts once: a running session is "running", never also "unshipped", so the badge matches the rows.
-  return { items: [...items, ...left], unshipped: left.filter((i) => i.worktree?.work.state !== "merged").length, running: items.length };
+  return { items: [...items, ...left], unshipped: left.filter((i) => i.worktree?.work.state !== "merged").length, running: items.length, waiting: live.filter(needsInput).length };
 }
 
 /**

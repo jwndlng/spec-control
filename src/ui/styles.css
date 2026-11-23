@@ -1288,6 +1288,7 @@ html:has(.board:not(.stacked)), body:has(.board:not(.stacked)) { overflow: hidde
 .delete-branch-facts { margin: 6px 0 0; padding-left: 18px; }
 .delete-branch-files summary { font-size: 12px; cursor: pointer; }
 .delete-branch-files .cleanup-list { margin-top: 6px; max-height: 200px; overflow-y: auto; font-size: 12px; }
+.stale-cleanup { overflow-wrap: anywhere; }
 /* A stale change's leftovers (stale-changes): one entry per worktree, branch or main-checkout copy. */
 .stale-leftovers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; text-align: left; }
 .stale-leftovers > li { display: flex; flex-direction: column; gap: 4px; }
@@ -1476,7 +1477,7 @@ p.add-github-root { display: block; }
 .notice.ok { color: var(--success); border-color: var(--success-border); }
 /* A stale change's reason and its one action (stale-changes spec), in the detail under the header. */
 .stale-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px var(--detail-pad, 16px) 0; }
-.stale-notice p { margin: 0; flex: 1 1 280px; }
+.stale-notice > p { margin: 0; flex: 1 1 280px; }
 .stale-notice .error { color: var(--danger); flex-basis: 100%; }
 
 /* ---- Section navigation (Settings, Help) ---- */
@@ -1856,10 +1857,10 @@ button.activity-repo-name:focus-visible { outline: 2px solid var(--brand); }
    fallback where `inert` is ignored. */
 .app[inert] { pointer-events: none; user-select: none; overflow: hidden; }
 body:has(.detail-overlay) { overflow: hidden; }
-.detail-overlay { z-index: 25; padding: clamp(8px, 4vh, 40px) clamp(8px, 4vw, 48px); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.detail-overlay { z-index: 25; padding: clamp(4px, 2vh, 20px) clamp(4px, 2vw, 24px); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
 .detail {
   display: flex; flex-direction: column; overflow: hidden;
-  width: min(1120px, 100%); height: 100%; max-height: 960px;
+  width: min(1440px, 100%); height: 100%;
   background: var(--bg-base); border: 1px solid var(--border-strong); border-radius: 16px;
   box-shadow: var(--shadow-lg);
 }
@@ -2062,6 +2063,7 @@ a.badge.needs-you:focus-visible { outline: 2px solid var(--brand); outline-offse
 .console-settings > summary::-webkit-details-marker { display: none; }
 .console-settings > summary:hover, .console-settings > summary:focus-visible, .console-settings[open] > summary { color: var(--fg-heading); background: var(--bg-surface); }
 .console-settings[open] > .console-change-settings { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: min(340px, calc(100vw - 48px)); max-height: min(60vh, 420px); overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); box-shadow: var(--shadow-lg); }
+.console-pane > .session-head:has(.console-settings[open]) { overflow: visible; }
 .console-change-settings { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 20px; }
 .console-change-settings .detail-permission-picker { padding: 0; border: 0; background: transparent; }
 .console-change-settings .detail-permission-picker > span:first-child { color: var(--text-muted); font-size: 12px; }

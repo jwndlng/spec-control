@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 import { h, render, type ComponentChildren } from "preact";
 import type { ChangeArtifactEntry, ChangeSnapshot, PullRequest } from "../src/shared/types.ts";
 import type { LifecycleDeliveryView } from "../src/ui/api.ts";
-import { LifecycleTimeline, lifecycleTimelineModel, latestLifecycleDeliveries, shouldShowDirectShipAction, visibleLifecycleDeliveries } from "../src/ui/lifecycleTimeline.tsx";
+import { phaseReadyForVerification, LifecycleTimeline, lifecycleTimelineModel, latestLifecycleDeliveries, shouldShowDirectShipAction, visibleLifecycleDeliveries } from "../src/ui/lifecycleTimeline.tsx";
 import { createDemoApi } from "../src/ui/demo/demoApi.ts";
 
 const change = (overrides: Partial<ChangeSnapshot> = {}) => ({
@@ -44,6 +44,33 @@ function mount(node: ComponentChildren) {
 }
 
 describe("lifecycleTimelineModel", () => {
+  test("renders the Backlog step without a separate Fast-forward route banner", () => {
+    const model = lifecycleTimelineModel(change({ stage: "backlog" }), [], []);
+    const view = mount(h(LifecycleTimeline, { model }));
+    expect(view.querySelector('[data-phase="Backlog"][aria-current="step"]')).not.toBeNull();
+    expect(view.querySelector('[aria-label="Fast-forward route from Backlog to Implementing"]')).toBeNull();
+    expect(view.textContent).not.toContain("Fast-forward is in the action menu");
+  });
+
+  test("manual shipping waits for the evidence required by each delivery phase", () => {
+    const incomplete = change({ stage: "implementing", tasks: { total: 2, done: 1 } });
+    const done = change({ stage: "done", tasks: { total: 2, done: 2 } });
+    expect(phaseReadyForVerification("proposal", change())).toBe(false);
+    expect(phaseReadyForVerification("proposal", change({stage: "ready"}))).toBe(true);
+    expect(phaseReadyForVerification("implementation", incomplete)).toBe(false);
+    expect(phaseReadyForVerification("implementation", done)).toBe(true);
+    expect(phaseReadyForVerification("archive", done)).toBe(false);
+    expect(phaseReadyForVerification("archive", {...done, stage: "archived", archived: "2026-11-21"})).toBe(true);
+    expect(phaseReadyForVerification("archive", {...incomplete, stage: "archived", archived: "2026-11-21"}, true)).toBe(true);
+  });
+
+  test("working phases describe the action in progress", () => {
+    for (const [phase, label] of [["Drafts", "Drafting…"], ["Implementing", "Implementing…"], ["Done", "Validating…"], ["Archived", "Archiving…"]] as const) {
+      const model = lifecycleTimelineModel(change(), [], [], undefined, [], phase);
+      expect(mount(h(LifecycleTimeline, { model })).querySelector(`[data-phase="${phase}"] .lifecycle-phase-label`)?.textContent).toContain(label);
+    }
+  });
+
   test("hides a direct Ship action only for the phase with an active completion confirmation", () => {
     expect(shouldShowDirectShipAction("archive", "archive")).toBe(false);
     expect(shouldShowDirectShipAction("implementation", "archive")).toBe(true);
@@ -89,7 +116,7 @@ describe("lifecycleTimelineModel", () => {
     expect(model.phases.find((phase) => phase.label === "Ready")?.state).toBe("complete");
     expect(model.phases.find((phase) => phase.label === "Implementing")?.state).toBe("current");
     const view = mount(h(LifecycleTimeline, { model }));
-    expect(view.querySelector('.lifecycle-phase[aria-current="step"] .lifecycle-phase-label')?.textContent).toBe("Implementing");
+    expect(view.querySelector('.lifecycle-phase[aria-current="step"] .lifecycle-phase-label')?.textContent).toBe("Implementing…");
     expect(view.querySelector('.lifecycle-phase.complete[style*="grid-column: 3"] .lifecycle-phase-label')?.textContent).toBe("Ready");
   });
 

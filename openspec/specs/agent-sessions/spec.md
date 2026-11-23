@@ -2366,3 +2366,44 @@ Ship, automatic Merge, and their UI SHALL share a documentation-only classificat
 #### Scenario: Missing check evidence
 - **WHEN** the cached PR has no checks and applicable required-check evidence cannot be read
 - **THEN** the UI explains the verification blocker and no automatic merge occurs
+
+### Requirement: Activity reports are independent of phase completion
+
+The session manager SHALL expose a session-local activity file through `SPEC_CONTROL_ACTIVITY_FILE`. It SHALL accept the same bounded `waiting` and `working` reports and apply the same freshness rules as for legacy state reports. When both files contain valid activity reports, the more recent report SHALL take precedence, with the activity file winning ties. The manager SHALL clear the activity file before starting or resuming a process and SHALL read phase completion from the existing state file.
+
+#### Scenario: An agent reports waiting alongside a phase completion
+
+- **WHEN** a running agent has a valid phase completion report and writes a current waiting report to its activity file
+- **THEN** the dashboard shows the agent as waiting and preserves the phase completion report
+
+### Requirement: Open work surfaces agents waiting for the user
+
+Open work SHALL display a count of running change sessions with current waiting reports and show those sessions first.
+
+#### Scenario: One of several agents asks the user for input
+
+- **WHEN** one running change session reports waiting while another is working
+- **THEN** Open work shows one session waiting for the user and lists it above the working session
+
+### Requirement: The lifecycle timeline follows the phase's pull request
+
+A lifecycle checkpoint SHALL offer Retry Ship only after a failed shipment that has no discovered or recorded pull request. An existing pull request SHALL drive its own status and recommended action, including while the change's agent session runs. A standalone action menu SHALL have a visible label.
+
+#### Scenario: A pull request opens after an earlier shipping failure
+
+- **WHEN** a phase has a discovered or recorded pull request and a delivery record still offers retry
+- **THEN** the timeline shows the phase's pull request without a Retry Ship action
+
+#### Scenario: A running session has an open pull request ready to merge
+
+- **WHEN** a change's implementation pull request is ready while its agent session is running
+- **THEN** the timeline offers a labelled Merge action
+
+### Requirement: Fix checks sends a repair prompt for an open pull request
+
+The Fix checks action SHALL ask the agent to diagnose and fix the failing checks of the linked open pull request. The server SHALL verify the PR number and head branch before submitting the prompt or starting an agent. The UI SHALL open the target console and show errors or an unsent prompt when applicable.
+
+#### Scenario: The console is already open
+
+- **WHEN** the user activates Fix checks while a session runs on the pull request branch
+- **THEN** the action sends the repair prompt into that session

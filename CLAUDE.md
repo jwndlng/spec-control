@@ -254,10 +254,10 @@ bun run test:serial # full suite in one process, for diagnosing shared-resource 
 - A running session's badge has exactly two inputs, neither of them the agent's output: the time of its last output
   that counts as activity — output within `ECHO_WINDOW_MS` after a resize or input the dashboard passed on is relayed but
   not stamped, so opening a console does not wake the badge — and the agent's own report, one word (`waiting` or
-  `working`) in the file `SPEC_CONTROL_STATE_FILE` names under `~/.spec-control/sessions/<id>/`
-  (`src/server/sessions/reportedState.ts`). The dashboard only reads that file, removes it before each start, and never
-  configures an agent to write it; a `waiting` report is current until the user's next input (terminal replies such as
-  focus reports do not count).
+  `working`) in the session-local file named by `SPEC_CONTROL_ACTIVITY_FILE` or the legacy `SPEC_CONTROL_STATE_FILE`
+  (`src/server/sessions/reportedState.ts`). The dashboard reads both and removes them before each start. Activity and
+  phase completion can be reported independently. A `waiting` report is current until the user's next input or a
+  newer report (terminal replies such as focus reports do not count).
 - **Integrate** (`src/server/integration.ts`, `POST /api/integrations`) is the second in-place case, and the first one
   in a git repository: the agent runs in the repository's **main checkout**, with no worktree and no branch, because
   `openspec init` has to leave `openspec/config.yaml` where discovery looks for it — on a branch in a worktree the

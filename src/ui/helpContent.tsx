@@ -2,6 +2,7 @@
 // Keep it true to the dashboard: a change that alters behaviour described here updates this file too (CONTRIBUTING.md).
 // Examples use made-up names and paths only.
 import { type ComponentChildren, Fragment, type VNode } from "preact";
+import codexActivityHooks from "./codexActivityHooks.json";
 import { STAGE_COLUMN, type Stage } from "../shared/types.ts";
 import { followInApp, hrefWithQuery } from "./url.ts";
 
@@ -201,7 +202,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           <li>
             Change details show Backlog, Drafts, Ready, Implementing, Done and Archived in a lifecycle timeline. Smaller
             milestones follow the repository's schema and show local artifact and task progress. Phase actions sit beneath
-            the step they advance, and a compact confirmation appears in a phase that needs completion evidence. Open Drafts to read the planning document names and jump to an available file.
+            the step they advance, and a compact confirmation appears in a phase that needs completion evidence. During drafting, the timeline shows document progress. Once the required documents are ready, expand <strong>Open proposal PR manually</strong> if you need to confirm completion yourself. Open Drafts to read the planning document names and jump to an available file.
             Each pull request appears under the phase that created it. Pending checks update there, and a merged implementation
             can still have an archive to deliver. Choose Answer agent to return to a question in this change’s console.
             The selected session's actions are directly available in the Console header, with an accessible actions label
@@ -286,7 +287,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             to remove its record and stored output. Its worktree and branch are kept. Running sessions have no removal control.
           </li>
           <li>
-            <strong>Open work</strong> in the top bar lists running agents and worktrees that still hold something.{" "}
+            <strong>Open work</strong> in the top bar lists running agents and worktrees that still hold something. Its waiting count brings sessions that need an answer to the top.{" "}
             Archived changes whose pull request or session worktree is merged offer <strong>End session</strong> beside
             their running session badge on the board; it opens the same confirmation as the Console tab. <strong>End session</strong> stops an agent and, by default, pulls the repository and — when nothing would be
             lost — removes its worktree; clear either box before confirming to skip it. Confirmed worktree cleanup continues
@@ -339,8 +340,13 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
           <code>echo waiting &gt; "$SPEC_CONTROL_STATE_FILE"</code> when it finishes a turn or asks for permission, and{" "}
           <code>echo working &gt; "$SPEC_CONTROL_STATE_FILE"</code> when you submit a prompt. While the report says{" "}
           <code>waiting</code>, the badge reads <strong>waiting for you</strong> until you type into the session. The file
-          is under <code>~/.spec-control/sessions/</code>, so the hook has to be allowed to write there.
+          is under <code>~/.spec-control/sessions/</code>. New hooks should use <code>SPEC_CONTROL_ACTIVITY_FILE</code> so phase completion can be reported independently.
         </p>
+        <details>
+          <summary>Report Codex approval requests and questions</summary>
+          <p>Merge these events into the hooks object in <code>~/.codex/hooks.json</code>. Review them in Codex with <code>/hooks</code> and start a new dashboard session.</p>
+          <pre>{JSON.stringify(codexActivityHooks, null, 2)}</pre>
+        </details>
       </>
     ),
   },

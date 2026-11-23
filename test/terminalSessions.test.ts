@@ -460,8 +460,8 @@ test("an agent showing a menu gets the text but never an Enter, and keeps runnin
 
 test("an opening prompt typed after start-up is not sent into a dialog", async () => {
   const h = await harness({ agent: { command: [FAKE_AGENT, "--menu"] } });
-  // Use the production startup delay: the harness's 150 ms shortcut can type before the fake agent enters raw mode.
-  const manager = h.newManager({ ...FAST_SUBMIT, typePromptDelayMs: undefined });
+  // Leave enough time for the fake agent to enter raw mode before the opening prompt is submitted.
+  const manager = h.newManager({ ...FAST_SUBMIT, typePromptDelayMs: 5_000 });
   managers.push(manager);
   const submit = spyOn(manager, "submit");
   const s = await manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });

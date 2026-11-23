@@ -1,0 +1,6 @@
+{
+  "id": "2026-11-23-clean-up-leftovers-spacing",
+  "date": "2026-11-23",
+  "title": "Clearer spacing in Clean up leftovers",
+  "summary": "The Clean up leftovers dialog in change detail uses regular spacing between leftover details, warnings, and results."
+}

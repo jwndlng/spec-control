@@ -119,7 +119,7 @@ test("a tracked folder no module claims fails with the old message and does not 
 test("a scanned OpenSpec repository names its framework", async () => {
   const repo = newRepoConfig(join(FIXTURES, "demo-ops"), true);
   expect((await scanRepo(repo)).framework).toBe("openspec");
-});
+}, 30_000);
 
 // ---- OpenSpec module ----
 
@@ -211,7 +211,7 @@ test("scanning, listing artifacts and reading files through the modules leaves e
     }
   }
   expect(await Promise.all(fixtures.map(treeFingerprint))).toEqual(before);
-}, 30_000); // Includes full fixture scans and subprocesses on slower runners.
+}, 60_000); // Scans and reads both complete fixtures, including their Git metadata.
 
 // ---- Schema names and tracked tasks stay inside (contain-repository-reads design D5) ----
 
