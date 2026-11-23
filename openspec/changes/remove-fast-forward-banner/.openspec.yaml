@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-11-21
+spec-control:
+  branch: feat/remove-fast-forward-banner

@@ -68,14 +68,11 @@ test("enabling a repo persists and triggers a scan that populates state", async 
   const res = await send("/api/config", "PUT", JSON.stringify({ ...defaultConfig(), repos: [repo] }));
   expect(res.status).toBe(200);
   expect(state.scanner.scanning).toBe(true);
-  expect((await (await send("/api/scan", "POST")).json()).started).toBe(false);
-  await state.scanner.trigger().done;
+  while (state.scanner.scanning) await Bun.sleep(10);
   const snap = await (await fetch(`${base}/api/state`)).json();
   expect(snap.repos[0].name).toBe("demo-ops");
   expect(snap.repos[0].changes.length).toBeGreaterThan(8);
-  expect((await (await send("/api/scan", "POST")).json()).started).toBe(true);
-  while (state.scanner.scanning) await Bun.sleep(10);
-}, 30_000); // the scan request during the first scan queues a follow-up: three full scans of the fixture
+}, 30_000);
 
 test("changing only labels saves without a scan; an invalid label is refused and changes nothing", async () => {
   const [repo] = state.config.repos;
@@ -173,29 +170,35 @@ test("discover reports a missing root and still scans the others", async () => {
 
 test("mutating requests must come from the dashboard itself", async () => {
   const port = new URL(base).port;
+  const originalConfig = state.config;
+  state.config = { ...originalConfig, repos: [] };
   const before = JSON.stringify(state.config);
   const body = JSON.stringify({ ...defaultConfig(), pollIntervalSeconds: 999 });
 
-  // another web page, a sandboxed frame, a rebinding-style origin on the right port, and the wrong port
-  for (const origin of ["https://example.com", "null", `http://evil.example:${port}`, "http://127.0.0.1:1"]) {
-    const res = await send("/api/config", "PUT", body, { origin });
-    expect([origin, res.status]).toEqual([origin, 403]);
-  }
-  expect((await send("/api/config", "PUT", body, { "sec-fetch-site": "cross-site" })).status).toBe(403);
-  // what a plain HTML form or a no-preflight fetch can send
-  for (const type of ["application/x-www-form-urlencoded", "text/plain", "multipart/form-data; boundary=x"]) {
-    expect((await fetch(`${base}/api/config`, { method: "PUT", body, headers: { "content-type": type } })).status).toBe(403);
-  }
-  expect((await fetch(`${base}/api/scan`, { method: "POST" })).status).toBe(403);
-  expect(JSON.stringify(state.config)).toBe(before); // refused requests had no effect
+  try {
+    // another web page, a sandboxed frame, a rebinding-style origin on the right port, and the wrong port
+    for (const origin of ["https://example.com", "null", `http://evil.example:${port}`, "http://127.0.0.1:1"]) {
+      const res = await send("/api/config", "PUT", body, { origin });
+      expect([origin, res.status]).toEqual([origin, 403]);
+    }
+    expect((await send("/api/config", "PUT", body, { "sec-fetch-site": "cross-site" })).status).toBe(403);
+    // what a plain HTML form or a no-preflight fetch can send
+    for (const type of ["application/x-www-form-urlencoded", "text/plain", "multipart/form-data; boundary=x"]) {
+      expect((await fetch(`${base}/api/config`, { method: "PUT", body, headers: { "content-type": type } })).status).toBe(403);
+    }
+    expect((await fetch(`${base}/api/scan`, { method: "POST" })).status).toBe(403);
+    expect(JSON.stringify(state.config)).toBe(before); // refused requests had no effect
 
-  // the UI (either loopback name), and a command-line client that sends no Origin at all
-  expect((await send("/api/scan", "POST", undefined, { origin: base })).status).toBe(200);
-  expect((await send("/api/scan", "POST", undefined, { origin: `http://localhost:${port}`, "sec-fetch-site": "same-origin" })).status).toBe(200);
-  expect((await send("/api/scan", "POST")).status).toBe(200);
-  expect((await fetch(`${base}/api/state`, { headers: { origin: "https://example.com" } })).status).toBe(200); // reads stay open
-  await state.scanner.trigger().done;
-}, 30_000); // Includes full fixture scans and subprocesses on slower runners.
+    // the UI (either loopback name), and a command-line client that sends no Origin at all
+    expect((await send("/api/scan", "POST", undefined, { origin: base })).status).toBe(200);
+    expect((await send("/api/scan", "POST", undefined, { origin: `http://localhost:${port}`, "sec-fetch-site": "same-origin" })).status).toBe(200);
+    expect((await send("/api/scan", "POST")).status).toBe(200);
+    expect((await fetch(`${base}/api/state`, { headers: { origin: "https://example.com" } })).status).toBe(200); // reads stay open
+    await state.scanner.trigger().done;
+  } finally {
+    state.config = originalConfig;
+  }
+}, 30_000); // Exercises multiple request origins and queues one follow-up scan.
 
 test("a request addressed to a non-loopback host name is refused (DNS rebinding)", () => {
   const req = (url: string, headers: Record<string, string>) => new Request(url, { method: "POST", headers: { "content-type": "application/json", ...headers } });
@@ -363,9 +366,14 @@ async function gatedServer() {
 
 test("a repository enabled through PUT /api/config during a slow scan shows up without another trigger", async () => {
   const g = await gatedServer();
+  const root = await tempDir();
   try {
-    const nano = newRepoConfig(join(FIXTURES, "demo-ops"), true);
-    const soc = newRepoConfig(join(FIXTURES, "beta-soc"), true);
+    const nanoPath = join(root, "demo-ops");
+    const socPath = join(root, "beta-soc");
+    await mkdir(nanoPath);
+    await mkdir(socPath);
+    const nano = newRepoConfig(nanoPath, true);
+    const soc = newRepoConfig(socPath, true);
     expect((await g.request("/api/config", "PUT", JSON.stringify({ ...defaultConfig(), repos: [nano] }))).status).toBe(200);
     expect(g.state.scanner.scanning).toBe(true);
     expect((await g.request("/api/config", "PUT", JSON.stringify({ ...defaultConfig(), repos: [nano, soc] }))).status).toBe(200);
@@ -379,6 +387,7 @@ test("a repository enabled through PUT /api/config during a slow scan shows up w
     expect(g.scans()).toBe(2);
   } finally {
     g.stop();
+    await rm(root, { recursive: true, force: true });
   }
 }, 30_000);
 

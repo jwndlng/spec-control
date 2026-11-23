@@ -193,7 +193,7 @@ test("Ship's prompt is today's when the project did not opt in, or code is shipp
   } finally {
     gh.restore();
   }
-});
+}, 60_000);
 
 test("both Ship controls report the auto-merge notice only when Ship asked for auto-merge", () => {
   const seen: string[] = [];

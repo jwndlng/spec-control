@@ -44,6 +44,14 @@ function mount(node: ComponentChildren) {
 }
 
 describe("lifecycleTimelineModel", () => {
+  test("renders the Backlog step without a separate Fast-forward route banner", () => {
+    const model = lifecycleTimelineModel(change({ stage: "backlog" }), [], []);
+    const view = mount(h(LifecycleTimeline, { model }));
+    expect(view.querySelector('[data-phase="Backlog"][aria-current="step"]')).not.toBeNull();
+    expect(view.querySelector('[aria-label="Fast-forward route from Backlog to Implementing"]')).toBeNull();
+    expect(view.textContent).not.toContain("Fast-forward is in the action menu");
+  });
+
   test("manual shipping waits for the evidence required by each delivery phase", () => {
     const incomplete = change({ stage: "implementing", tasks: { total: 2, done: 1 } });
     const done = change({ stage: "done", tasks: { total: 2, done: 2 } });
