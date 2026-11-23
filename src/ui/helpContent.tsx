@@ -205,7 +205,8 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             Each pull request appears under the phase that created it. Pending checks update there, and a merged implementation
             can still have an archive to deliver. Choose Answer agent to return to a question in this change’s console.
             The selected session's actions are directly available in the Console header, with an accessible actions label
-            and no visible heading. The copy icon beside a worktree path copies the path itself.
+            and no visible heading. Console shows that session’s path and work status. When a linked checkout supplies the artifacts, the copy icon beside its path in the change header copies the path itself.
+            Implementing shows the recorded model when available.
           </li>
           <li>
             In the demo, <strong>idempotency-keys</strong> shows a proposal waiting on PR #42, and <strong>deprecate-v1-auth</strong>

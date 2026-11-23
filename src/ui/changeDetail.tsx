@@ -10,14 +10,14 @@ import { CopyButton, CopyRefButton, Meter } from "./kanban.tsx";
 import { type LinkResolver, renderMarkdown } from "./markdown.tsx";
 import { backTarget, CONSOLE_TAB, PROMPT_TAB, changePath, type DetailQuery, parseDetailQuery, repoPath, serializeDetailQuery } from "./routes.ts";
 import { ConsolePanel, ConsoleSessionList, ResolveConflicts, ShipOperationStatus } from "./sessionPanel.tsx";
-import { changeWorktreePath, consoleAvailable, consoleSession, consoleSessions, consoleTabAvailable, lifecycleSession } from "./sessionState.ts";
-import { useSessionUi, WorkStatus } from "./sessions.tsx";
+import { consoleAvailable, consoleSession, consoleSessions, consoleTabAvailable, lifecycleSession } from "./sessionState.ts";
+import { useSessionUi } from "./sessions.tsx";
 import { isComplete } from "../shared/columns.ts";
 import { promptBody } from "./boardMarks.ts";
 import { BranchBadge } from "./checkout.tsx";
 import { IconCheck, IconCopy } from "./icons.tsx";
 import { SourceIssueLink } from "./importIssues.tsx";
-import { type DetailPr, DetailPullRequest, detailPullRequest, usePullRequests } from "./pullRequests.tsx";
+import { usePullRequests } from "./pullRequests.tsx";
 import { StaleCleanupDialog } from "./staleCleanup.tsx";
 import { DeleteFilesDialog, DismissDialog } from "./dismissChange.tsx";
 import { duplicateNotice, staleHint, staleReason } from "./staleState.ts";
@@ -251,10 +251,6 @@ export function CloseButton({ onClose }: { onClose: () => void }) {
   );
 }
 
-/**
- * Identity only: where the change lives, its name, and a way out. The status labels stay on the board's card; warnings
- * are the exception, because they say something is broken.
- */
 // The change is a full snapshot entry in the ordinary case, and just a name for a worktree whose change is gone.
 export function DetailHeader({
   repo,
@@ -263,7 +259,6 @@ export function DetailHeader({
   onClose,
   onDismiss,
   onDeleteFiles,
-  pullRequest,
 }: {
   repo: RepoSnapshot;
   change: ChangeSnapshot | Pick<ChangeSnapshot, "name" | "warnings">;
@@ -272,8 +267,6 @@ export function DetailHeader({
   /** Opens the dismiss confirmation; absent where dismissing is not offered at all. */
   onDismiss?: () => void;
   onDeleteFiles?: () => void;
-  /** The change's pull request, or why pull requests are unavailable; absent when there is nothing to say. */
-  pullRequest?: DetailPr;
 }) {
   // The repository's board, with its filters when that is the board the view was opened from.
   const back = backTarget(from, repo.id);
@@ -287,13 +280,13 @@ export function DetailHeader({
           </AppLink>
           <span class="sep">/</span>
           <span class="mono change-name">{change.name}</span>
-          <CopyRefButton project={repo.name} change={change.name} />
+          {"column" in change && <CopyRefButton project={repo.name} change={change.name} />}
         </h1>
         {onDismiss && "column" in change && <DismissButton change={change} failing={!repo.ok} onDismiss={onDismiss} />}
         {onDeleteFiles && "column" in change && !change.archived && <button type="button" class="btn sm ghost delete-change-files" disabled={!repo.ok} title="Delete only the main checkout's change files" onClick={onDeleteFiles}>Delete change files</button>}
         <CloseButton onClose={onClose} />
       </div>
-      {"column" in change && <ChangeFacts change={change} pullRequest={pullRequest} />}
+      {"column" in change && <ChangeFacts change={change} />}
       {"column" in change && <ChangeDependencies change={change} repo={repo} from={from} />}
       {change.warnings?.map((w) => (
         <div key={w} class="notice warn">
@@ -320,12 +313,7 @@ function DismissButton({ change, failing, onDismiss }: { change: ChangeSnapshot;
   );
 }
 
-/**
- * What the card leaves out: where the change lives and what state it is in — column, tasks, last update, how long it
- * has been complete, its branch and checkouts, an archive the main checkout lacks or an active copy left next to one,
- * its worktree's work status. The tabs below say which artifacts are written and provide the change prompt.
- */
-function ChangeFacts({ change, pullRequest, now = Date.now() }: { change: ChangeSnapshot; pullRequest?: DetailPr; now?: number }) {
+function ChangeFacts({ change, now = Date.now() }: { change: ChangeSnapshot; now?: number }) {
   const age = daysSince(change.lastActivityAt, now);
   const pending = pendingArchiveHint(change);
   const leftover = leftoverHint(change);
@@ -335,7 +323,6 @@ function ChangeFacts({ change, pullRequest, now = Date.now() }: { change: Change
         <span class="badge" title="The column this change is in">
           {change.column}
         </span>
-        {change.implementModel && <span class="badge" title="Recorded model for Implement">Implement model: {change.implementModel}</span>}
         <span class="badge" title={change.lastActivityAt ? `last activity ${change.lastActivityAt}` : "no activity date"}>
           {change.archived ? `archived ${change.archived}` : `updated ${relTime(change.lastActivityAt, now)} ago`}
         </span>
@@ -351,10 +338,8 @@ function ChangeFacts({ change, pullRequest, now = Date.now() }: { change: Change
           </span>
         )}
         {change.branchMatch && <BranchBadge branch={change.branchMatch} hint={checkoutHint(change)} />}
-        <WorktreePath change={change} />
+        {change.checkout && !change.checkout.isMain && <WorktreePath path={change.checkout.path} />}
         {change.sourceIssue && <SourceIssueLink issue={change.sourceIssue} place="detail" />}
-        {pullRequest && <DetailPullRequest info={pullRequest} />}
-        <WorkStatus repoId={change.repoId} name={change.name} />
       </div>
     </>
   );
@@ -365,16 +350,13 @@ function ChangeFacts({ change, pullRequest, now = Date.now() }: { change: Change
  * worktree path"). The path's parent is clipped, its last segment — the worktree's own name — always shows; it confirms
  * only once the clipboard took the text.
  */
-export function WorktreePath({ change }: { change: Pick<ChangeSnapshot, "repoId" | "name" | "checkout"> }) {
-  const ui = useSessionUi();
-  const path = changeWorktreePath(change, ui.worktrees);
+export function WorktreePath({ path }: { path: string }) {
   const [done, setDone] = useState(false);
   useEffect(() => {
     if (!done) return;
     const t = setTimeout(() => setDone(false), 1500);
     return () => clearTimeout(t);
   }, [done]);
-  if (!path) return null;
   const { head, tail } = splitPathLabel(path);
   const label = done ? "Copied" : `Copy worktree path ${path}`;
   return (
@@ -893,7 +875,6 @@ export function ChangeDetail({
         onClose={close}
         onDismiss={onDismissed ? () => setDismissing(true) : undefined}
         onDeleteFiles={onDismissed ? () => setDeletingFiles(true) : undefined}
-        pullRequest={detailPullRequest(change, pullRequests.data)}
       />
       <LifecycleTimeline
         key={changePath(repoId, changeName)}

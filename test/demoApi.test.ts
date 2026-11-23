@@ -4,9 +4,10 @@ import { revisionOf } from "../src/ui/api.ts";
 import { createDemoApi } from "../src/ui/demo/demoApi.ts";
 import { DEMO_ROOT } from "../src/ui/demo/sampleData.ts";
 import { candidateBranches } from "../src/shared/pullRequestLink.ts";
-import type { ChangeSnapshot, SharedConfigAssignment } from "../src/shared/types.ts";
+import type { SharedConfigAssignment } from "../src/shared/types.ts";
 import { boardCards, ChangeCard } from "../src/ui/kanban.tsx";
-import { type DetailPr, DetailPullRequest, detailPullRequest } from "../src/ui/pullRequests.tsx";
+import { DetailHeader } from "../src/ui/changeDetail.tsx";
+import { lifecycleTimelineModel } from "../src/ui/lifecycleTimeline.tsx";
 import { createPrRefresher } from "../src/ui/pullRequestsState.ts";
 import { textOf } from "./vnode.ts";
 
@@ -346,7 +347,7 @@ test("switching agent sessions off in the demo turns the checks it makes unneces
   expect(report.status).toBe("ok");
 });
 
-test("the demo links pull requests to changes on cards and in the header, shows the absence too, and a board fetches nothing", async () => {
+test("the demo links pull requests to changes on cards and timeline checkpoints, shows the absence too, and a board fetches nothing", async () => {
   const { api, tick } = demo();
   const snapshot = await api.state();
   const prs = await api.pullRequests();
@@ -363,13 +364,15 @@ test("the demo links pull requests to changes on cards and in the header, shows 
   expect(textOf(ChangeCard({ card: first, now: Date.now(), from: "/board" }))).toContain(`PR #${first.pullRequest?.number}`);
   // A card with a branch and no pull request.
   expect(cards.some((c) => c.branchMatch && !c.pullRequest && !c.archived)).toBe(true);
-  // The detail header line for a linked change: number, title, state, review and checks.
-  const reviewed = linked.find((c) => c.pullRequest?.review !== "none" && c.pullRequest?.checks !== "none");
-  expect(reviewed).toBeDefined();
-  const info = detailPullRequest(reviewed as ChangeSnapshot, prs);
-  const line = textOf(DetailPullRequest({ info: info as DetailPr }));
-  expect(line).toContain(`#${reviewed?.pullRequest?.number}`);
-  expect(line).toContain(reviewed?.pullRequest?.title as string);
+  for (const card of linked) {
+    const repo = snapshot.repos.find((repo) => repo.id === card.repoId)!;
+    const header = DetailHeader({ repo, change: card, onClose: () => {} });
+    const pr = card.pullRequest!;
+    expect(textOf(header)).not.toContain(pr.title);
+    const deliveries = await api.lifecycleDeliveries(repo.id, card.name);
+    const model = lifecycleTimelineModel(card, card.artifacts, deliveries, pr, prs.repos.find((list) => list.repoId === repo.id)?.pullRequests);
+    expect(Object.values(model.pullRequests).some((checkpoint) => checkpoint.url === pr.url)).toBe(true);
+  }
 
   // Opening a board in the demo never asks for a refresh, however old the made-up lists are.
   expect(api.syntheticPullRequests).toBe(true);

@@ -1879,8 +1879,6 @@ body:has(.detail-overlay) { overflow: hidden; }
 /* The change's state and where it lives, which the card leaves out. */
 .detail-facts { flex-wrap: wrap; gap: 8px; }
 .detail-facts .meter { width: 220px; }
-.detail-pr { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; min-width: 0; }
-.detail-pr-unavailable { font-size: 12px; }
 /* Depends on / Required by: two short lists under the facts, names linking to their changes. */
 .detail-deps { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 8px; font-size: 12px; }
 .detail-deps-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; }

@@ -194,13 +194,23 @@ describe("lifecycleTimelineModel", () => {
     expect(lifecycleTimelineModel(done, [], [], pullRequest({ state: "merged" })).pullRequest.state).toBe("merged");
   });
 
+  test("Implementing shows its recorded model even when another phase owns the action", () => {
+    for (const implementModel of ["reasoning-model", undefined]) {
+      const model = lifecycleTimelineModel(change({ stage: "drafts", implementModel }), [], []);
+      const view = mount(h(LifecycleTimeline, { model }));
+      const phase = view.querySelector('[data-phase="Implementing"]')!;
+      expect(phase.querySelector(".lifecycle-phase-action")).toBeNull();
+      expect(phase.textContent?.includes("Implement model: reasoning-model")).toBe(Boolean(implementModel));
+    }
+  });
+
   test("maps each lifecycle delivery to its own pull request checkpoint", () => {
     const deliveries = [
       delivery({ id: "proposal", phase: "proposal", pullRequestNumber: 11 }),
       delivery({ id: "implementation", phase: "implementation", pullRequestNumber: 22 }),
       delivery({ id: "archive", phase: "archive", pullRequestNumber: 33 }),
     ];
-    const prs = [pullRequest({ number: 11, state: "merged" }), pullRequest({ number: 22, checks: "pending" }), pullRequest({ number: 33, mergeable: "conflicting" })];
+    const prs = [pullRequest({ number: 11, url: "/pull/11", state: "merged" }), pullRequest({ number: 22, url: "/pull/22", checks: "pending" }), pullRequest({ number: 33, url: "/pull/33", mergeable: "conflicting" })];
     const model = lifecycleTimelineModel(change({ stage: "archived", archived: "2026-11-18" }), [], deliveries, undefined, prs);
     expect(model.pullRequests.proposal).toMatchObject({ state: "merged", number: 11 });
     expect(model.pullRequests.implementation).toMatchObject({ state: "checking", number: 22 });
@@ -211,6 +221,7 @@ describe("lifecycleTimelineModel", () => {
     ])).toEqual([
       ["Proposal pull request", "Merged"], ["Implementation pull request", "Checks running"], ["Archive pull request", "Conflicts"],
     ]);
+    expect([...view.querySelectorAll(".lifecycle-phase-delivery a")].map((link) => link.getAttribute("href"))).toEqual(["/pull/11", "/pull/22", "/pull/33"]);
     expect(view.querySelectorAll(".lifecycle-pr-checkpoint")).toHaveLength(0);
     expect(view.querySelector('.lifecycle-phase[data-phase="Drafts"] .lifecycle-phase-delivery')).not.toBeNull();
     expect(view.querySelector('.lifecycle-phase[data-phase="Implementing"] .lifecycle-phase-delivery')).not.toBeNull();

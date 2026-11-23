@@ -4,7 +4,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ChangeSnapshot, PullRequest, PullRequestsResponse, RepoPullRequests, RepoSnapshot } from "../src/shared/types.ts";
 import { boardCards, type Card, ChangeCard } from "../src/ui/kanban.tsx";
-import { type DetailPr, DetailPullRequest, detailPullRequest } from "../src/ui/pullRequests.tsx";
 import { waitingLabel } from "../src/shared/nextStep.ts";
 import { armWatch, createPrRefresher, FRESHNESS_MS, watchPlan } from "../src/ui/pullRequestsState.ts";
 import { defaultConfig, newRepoConfig } from "../src/server/config.ts";
@@ -400,7 +399,7 @@ test("nothing fetched, or gh unavailable: no card is tinted by a pull request", 
 
 // ---- the proposal pull request (ship-proposals-as-docs-prs) ----
 
-test("a proposal pull request is labelled as such on the card and in the detail header, nothing else differs", () => {
+test("a proposal pull request is labelled as such on the card", () => {
   const ready = change({ name: "rotate-keys", branchMatch: undefined, stage: "ready", column: "Ready" });
   const proposal = pr({ number: 90, head: "docs/rotate-keys", checks: "pending" });
   const card = cardOf(ready, { repos: [list("alpha", ago(MIN), [proposal])] });
@@ -410,16 +409,10 @@ test("a proposal pull request is labelled as such on the card and in the detail 
   expect(textOf(link)).toContain("checks running");
   expect(link?.props["aria-label"]).toStartWith("Proposal pull request #90 of alpha-infra, open, not ready: checks running");
   expect(card.column).toBe("Ready");
-  const header = DetailPullRequest({ info: detailPullRequest(ready, { repos: [list("alpha", ago(MIN), [proposal])] }) as DetailPr });
-  expect(textOf(header)).toContain("Proposal pull request");
-  expect(textOf(header)).toContain("#90");
   // The implementation's pull request is not labelled.
   const implementation = cardOf(ready, { repos: [list("alpha", ago(MIN), [{ ...proposal, state: "merged", mergedAt: ago(MIN) }, pr({ number: 94, head: "feat/rotate-keys" })])] });
   expect(implementation.proposalPullRequest).toBeUndefined();
   expect(textOf(prLink(implementation)).replace(/\s+/g, " ")).toStartWith("PR #94");
-  const implHeader = detailPullRequest(ready, { repos: [list("alpha", ago(MIN), [pr({ number: 94, head: "feat/rotate-keys" })])] }) as DetailPr & { proposal?: boolean };
-  expect(implHeader.proposal).toBeUndefined();
-  expect(textOf(DetailPullRequest({ info: implHeader }))).not.toContain("Proposal");
 });
 
 test("while the proposal session runs, the card shows its badge and no starter; once it ended, Implement", () => {
