@@ -13,4 +13,4 @@
 ## 3. Release and verification
 
 - [x] 3.1 Add an independent What’s new JSON entry under `src/ui/changelog/entries/` describing where to find phase and session details.
-- [ ] 3.2 Verify the entry and integrated UI changes with `bun run check`. The latest run failed 23 of 2,496 tests, including scanner, API, agent-session and GitHub-query failures. The serial suite passed 2,493 of 2,496; its three failures were fake GitHub issue-list cases in `test/issues.test.ts`, which passed alone (9/9). Rerun `bun run check` once the full suite is stable.
+- [x] 3.2 Verify the entry and integrated UI changes with `bun run check`. GitHub CI's `check (ubuntu-latest)` job ran `bun run check` on merge commit `76076db1` and passed. The local rerun on this checkout failed (2,259 passed, 104 failed, 3 errors); its log included local server startup failures and resulting timeouts.
