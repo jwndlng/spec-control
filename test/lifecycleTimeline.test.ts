@@ -258,6 +258,30 @@ describe("lifecycleTimelineModel", () => {
     expect(view.querySelector('.lifecycle-phase[data-phase="Implementing"] .lifecycle-phase-delivery')?.textContent).not.toContain("#17");
   });
 
+  test("keeps the implementation PR out of the Archive checkpoint even with a legacy archive delivery", () => {
+    const implementation = pullRequest({ head: "feat/rotate-keys" });
+    const active = change({ stage: "done", recorded: { archiveBranch: implementation.head } });
+    for (const branch of [undefined, implementation.head]) {
+      const legacy = delivery({ phase: "archive", branch, state: "waiting-to-merge", pullRequestNumber: implementation.number, pullRequestUrl: implementation.url });
+      const model = lifecycleTimelineModel(active, [], [legacy], implementation, [implementation]);
+      expect(model.pullRequests.implementation).toMatchObject({ state: "ready", number: implementation.number });
+      expect(model.pullRequests.archive.number).toBeUndefined();
+      expect(model.persistence).toEqual([]);
+      const view = mount(h(LifecycleTimeline, { model, archivePrerequisite: "Merge #42 to archive" }));
+      expect(view.querySelectorAll('a[href="https://github.com/example/repo/pull/42"]')).toHaveLength(1);
+      expect(view.querySelector('[data-phase="Archived"]')?.textContent).toContain("Merge #42 to archive");
+    }
+  });
+
+  test("associates a distinct archive delivery with the Archive checkpoint", () => {
+    const implementation = pullRequest({ head: "feat/rotate-keys", state: "merged" });
+    const archive = pullRequest({ number: 43, head: "chore/archive-rotate-keys", url: "https://github.com/example/repo/pull/43" });
+    const record = delivery({ phase: "archive", branch: archive.head, pullRequestNumber: archive.number });
+    const model = lifecycleTimelineModel(change({ stage: "archived" }), [], [record], undefined, [implementation, archive]);
+    expect(model.pullRequests.implementation).toMatchObject({ state: "merged", number: 42 });
+    expect(model.pullRequests.archive).toMatchObject({ state: "ready", number: 43 });
+  });
+
   test("keeps the artifact milestone label row on one line", async () => {
     const css = await Bun.file(new URL("../src/ui/styles.css", import.meta.url)).text();
     const labelRule = css.match(/\.lifecycle-artifact-label\s*\{([^}]*)\}/)?.[1];

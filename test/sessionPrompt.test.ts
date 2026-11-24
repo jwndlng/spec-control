@@ -6,7 +6,7 @@ import { createFetchHandler, type AppState } from "../src/server/api.ts";
 import { worktreesDir } from "../src/server/paths.ts";
 import { Scanner } from "../src/server/scanner.ts";
 import { CLAUDE_PROFILE } from "../src/shared/agentDefaults.ts";
-import type { AgentAvailability, ChangeSession, ChangeSnapshot, Session } from "../src/shared/types.ts";
+import type { AgentAvailability, ChangeSession, ChangeSnapshot, PullRequest, Session } from "../src/shared/types.ts";
 import { nextStepFor, startersFor } from "../src/ui/sessionState.ts";
 import { tempDir, useTempHome } from "./helpers.ts";
 import { fakeProfile, FAKE_AGENT, harness, waitFor, watch, type Harness } from "./sessionHelpers.ts";
@@ -155,6 +155,38 @@ test("one open session per change: opening any action returns the running sessio
   expect((await h.manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "archive" })).id).toBe(a.id);
   expect(h.manager.list().filter((x) => x.state === "running")).toHaveLength(1);
   expect(existsSync(join(worktreesDir(), h.repoId, "archive-upgrade-runtime"))).toBe(false);
+});
+
+test("Archive waits for the open implementation PR before starting or prompting the agent", async () => {
+  const h = await harness();
+  const implementation: PullRequest = {
+    number: 42, title: "Upgrade runtime", url: "https://github.com/example/repo/pull/42", author: "agent",
+    head: "feat/upgrade-runtime", base: "main", draft: false, state: "open",
+    createdAt: "2026-11-23T10:00:00Z", review: "none", reviewRequestedFromViewer: false, checks: "passing",
+  };
+  let known = true;
+  const manager = h.newManager({ listPullRequests: async () => known ? [implementation] : [] });
+  managers.push(manager);
+  const session = await manager.open({ repoId: h.repoId, change: "upgrade-runtime", action: "implement" });
+  Object.assign(changeOf(h, "upgrade-runtime"), { stage: "done" });
+
+  const refusal = { status: 409, message: "Merge implementation PR #42 before archiving." };
+  await expect(manager.open({ repoId: h.repoId, change: session.change, action: "archive" })).rejects.toMatchObject(refusal);
+  await expect(manager.prompt(session.id, { action: "archive" })).rejects.toMatchObject(refusal);
+  expect(manager.get(session.id).action).toBe("implement");
+  expect(existsSync(join(worktreesDir(), h.repoId, "archive-upgrade-runtime"))).toBe(false);
+
+  // Older versions could already have switched the running implementation session to Archive.
+  known = false;
+  await manager.prompt(session.id, { action: "archive" });
+  known = true;
+  await expect(manager.shipSession(session.id)).rejects.toMatchObject(refusal);
+
+  implementation.state = "merged";
+  await expect(manager.prompt(session.id, { action: "archive" })).rejects.toThrow(/Start Archive in its own session/);
+  await manager.close(session.id);
+  const archive = await manager.open({ repoId: h.repoId, change: session.change, action: "archive" });
+  expect(archive.branch).toBe("chore/archive-upgrade-runtime");
 });
 
 test("Archive goes into the running session: submitted there, one session, no archive worktree", async () => {

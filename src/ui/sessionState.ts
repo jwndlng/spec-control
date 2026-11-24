@@ -1,7 +1,7 @@
 // Pure helpers for the agent-session UI; free of DOM access at import time so they can be unit-tested.
 import { menuActions, type NextStep, recommendedAction } from "../shared/nextStep.ts";
 import { conflictSignal, type ConflictSignal } from "../shared/conflictSignal.ts";
-import { linkedPullRequest } from "../shared/pullRequestLink.ts";
+import { isImplementationPullRequest, linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { relTime } from "./format.ts";
 import { isEndedProposalSession, isProposalSession, receivingSession } from "../shared/sessionBranch.ts";
 import { mergePending, pullRequestReadiness, readinessDetail } from "../shared/pullRequestReadiness.ts";
@@ -105,17 +105,18 @@ export function cardSessionControls(
   // A running session's badge stands in for the whole split button, pull-request steps included — a session drafting the
   // proposal on its own branch too: its next steps are in its console, which ends it first (one-console-per-change D1).
   if (shown.some((s) => s.state === "running")) return { shown, starters: [], menu: [] };
-  const starters = startersFor(config, card);
-  return { shown, starters, ...starterSplit(card, starters, card.pullRequest) };
+  return { shown, ...starterSplit(card, startersFor(config, card), card.pullRequest) };
 }
 
 /**
  * The split button for a set of starters (kanban-board: "A change's actions are one split button"): the recommended
  * action and the menu of every other one. Display only — `starters` is already what the server would accept.
  */
-export function starterSplit(card: Pick<ChangeSnapshot, "stage" | "subState" | "archived">, starters: readonly SessionAction[], pullRequest: PullRequest | undefined): { main?: NextStep; menu: NextStep[] } {
-  const main = recommendedAction(card, starters, pullRequest);
-  return { main, menu: menuActions(card, starters, pullRequest, main) };
+export function starterSplit(card: Pick<ChangeSnapshot, "name" | "recorded" | "stage" | "subState" | "archived">, starters: readonly SessionAction[], pullRequest: PullRequest | undefined): { starters: SessionAction[]; main?: NextStep; menu: NextStep[] } {
+  const actions = pullRequest?.state === "open" && isImplementationPullRequest(card, pullRequest)
+    ? starters.filter((action) => action !== "archive") : starters;
+  const main = recommendedAction(card, actions, pullRequest);
+  return { starters: [...actions], main, menu: menuActions(card, actions, pullRequest, main) };
 }
 
 /**

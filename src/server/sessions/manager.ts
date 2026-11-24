@@ -28,7 +28,7 @@ import { baseRef, headCommit, listWorktrees, readWorkStatus, shipsOnlyOpenSpec, 
 import { currentBranch, defaultBranch, hasLocalBranch, originUrl, worktrees as listCheckouts } from "../git.ts";
 import { frameworkById } from "../frameworks/registry.ts";
 import { conflictSignal } from "../../shared/conflictSignal.ts";
-import { mergedImplementation, linkedPullRequest } from "../../shared/pullRequestLink.ts";
+import { isArchiveBranch, isImplementationPullRequest, mergedImplementation, linkedPullRequest } from "../../shared/pullRequestLink.ts";
 import { mergeReady, pullRequestReadiness, readinessDetail } from "../../shared/pullRequestReadiness.ts";
 import { BackgroundCleanups, removalOutcome, staleOutcome } from "./backgroundCleanup.ts";
 import { checkWorktreeRemovable, copyChangeIfMissing, ensureWorktree, implementStartPoint, linkedWorktreeOf, NoCommitError, removeWorktree, UnknownBranchError, WorktreeMismatchError, type Removable } from "./worktree.ts";
@@ -459,6 +459,8 @@ export class SessionManager {
     if (heldBack) throw new SessionError(400, heldBack);
     // A stranded archive exists whatever the change's stage on the main checkout; that is the whole point of carrying it over.
     if (!followupPrompt && !stranded && !duplicate && !availableActions(snapshot).includes(action)) throw new SessionError(400, `"${action}" is not available for this change in its current stage`);
+
+    if (action === "archive" && !stranded && !duplicate) await this.checkArchiveDelivery(snapshot);
 
     // One open session per change, whatever the action: a change never has two consoles, and Archive is no exception.
     // Nothing is typed here — a starter for a change whose agent is up goes through `prompt`, which reports whether
@@ -1161,6 +1163,21 @@ export class SessionManager {
     return promise;
   }
 
+  private async checkArchiveDelivery(
+    change: Pick<ChangeSnapshot, "repoId" | "name" | "created" | "recorded" | "branchMatch">,
+    reuseBranch?: string,
+  ): Promise<void> {
+    const implementation = (await this.deps.listPullRequests?.(change.repoId) ?? [])
+      .filter((pr) => isImplementationPullRequest(change, pr));
+    const openPrs = implementation.filter((pr) => pr.state === "open");
+    const open = openPrs.find((pr) => pr.head === reuseBranch)
+      ?? linkedPullRequest(change, [{ repoId: change.repoId, status: "ok", pullRequests: openPrs }]);
+    if (open) throw new SessionError(409, `Merge implementation PR #${open.number} before archiving.`);
+    if (reuseBranch && implementation.some((pr) => pr.head === reuseBranch)) {
+      throw new SessionError(409, "Start Archive in its own session after ending the implementation session.");
+    }
+  }
+
   private async shipNow(id: string, options?: ShipRequest, automatic = false, progress?: (stage: ShipOperationStage, patch?: Partial<ShipOperationStatus>) => void, lifecycle?: LifecycleDeliveryRecord, recoveringOperation = false): Promise<ShipResult> {
     const session = this.get(id);
     if (isChangeless(session)) throw new SessionError(409, notAChange(session));
@@ -1177,11 +1194,15 @@ export class SessionManager {
       if (await lifecycleContentHash(session.worktreePath) !== lifecycle.contentHash && !recoveringOperation) throw new SessionError(409, "worktree contents changed before Ship could start; wait for a fresh stable snapshot");
     }
 
+    const scanned = this.deps.getSnapshot().repos.find((r) => r.id === session.repoId);
+    const change = scanned?.changes.find((c) => c.name === session.change) ?? { name: session.change, repoId: session.repoId };
+    if (session.action === "archive" && !isArchiveBranch(change, session.branch)) {
+      await this.checkArchiveDelivery(change, session.branch);
+    }
     const { work } = await readWorkStatus(repo.path, session.worktreePath);
     if (!SHIPPABLE_WORK.includes(work.state)) throw new SessionError(409, `there is nothing to ship (${work.state})`);
 
     if (options?.finishTasks) return this.finishTasksNow(session);
-    const scanned = this.deps.getSnapshot().repos.find((r) => r.id === session.repoId);
     const document = await readShipTaskDocument(session.worktreePath, session.change, scanned?.framework);
     if (!document.artifactsReady) throw new SessionError(409, "Required change artifacts are not ready in this checkout.");
     const preflightRequired = !tasksSettled(document.summary);
@@ -1559,7 +1580,7 @@ export class SessionManager {
    * the agent has shown the text, so a selection menu is never confirmed.
    *
    * Every action the change's stage allows may be sent, Archive included — it is how a completed change is archived
-   * without ending the agent that worked on it — and the action the session was started with restricts nothing. The
+   * without ending the agent that worked on it when there is no implementation pull request to keep separate. The
    * prompt runs where that session runs: the change's own worktree, or the folder itself for a repository without
    * git. Nothing is created and no git command that writes runs for it — only Archive's read-only docs-only check, in
    * a project with Docs auto-merge on; what the agent then does there is the agent's own doing.
@@ -1588,6 +1609,9 @@ export class SessionManager {
     if (!agent || !openingPrompt(agent, action, session.change, { implementModelCandidates })) throw new SessionError(400, `${session.agentName} has no "${action}" prompt configured`);
     // The proposal's session drafts and nothing else: implementing there would put code into the proposal pull request.
     if (action !== "draft" && isProposalSession(session)) throw new SessionError(409, `this session drafts the proposal on ${session.branch}; start "${action}" as a session of its own`);
+    if (action === "archive" && !session.inPlace && !isArchiveBranch(change, session.branch)) {
+      await this.checkArchiveDelivery(change, session.branch);
+    }
     // Archive sent here runs where this session runs — often an Implement worktree with code in it, which the check sees.
     const repo = config.repos.find((r) => r.id === session.repoId);
     const autoMerge = repo !== undefined && (await this.docsAutoMerge(repo, session, action));

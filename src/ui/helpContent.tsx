@@ -204,7 +204,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
             milestones follow the repository's schema and show local artifact and task progress. Phase actions sit beneath
             the step they advance, and a compact confirmation appears in a phase that needs completion evidence. During drafting, the timeline shows document progress. Once the required documents are ready, expand <strong>Open proposal PR manually</strong> if you need to confirm completion yourself. Open Drafts to read the planning document names and jump to an available file.
             Each pull request appears under the phase that created it. Pending checks update there, and a merged implementation
-            can still have an archive to deliver. Choose Answer agent to return to a question in this change’s console.
+            can still have an archive to deliver. Merge the implementation pull request before starting Archive. Choose Answer agent to return to a question in this change’s console.
             The selected session's actions are directly available in the Console header, with an accessible actions label
             and no visible heading. The copy icon beside a worktree path copies the path itself.
           </li>
