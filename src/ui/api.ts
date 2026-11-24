@@ -23,6 +23,7 @@ export interface LifecycleDeliveryView {
   phase: "proposal" | "implementation" | "archive";
   revision: number;
   state: string;
+  branch?: string;
   head?: string;
   pullRequestNumber?: number;
   pullRequestUrl?: string;

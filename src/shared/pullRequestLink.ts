@@ -47,6 +47,17 @@ export function isProposalPullRequest(change: Pick<ChangeSnapshot, "name">, pr: 
   return pr !== undefined && typeof change.name === "string" && change.name !== "" && pr.head === proposalBranch(change.name);
 }
 
+/** Archive and duplicate cleanup use separate branches from implementation. */
+export function isArchiveBranch(change: Pick<ChangeSnapshot, "name" | "recorded">, branch: string | undefined): boolean {
+  return Boolean(branch && branch !== proposalBranch(change.name) && branch !== sessionBranch("implement", change.name) &&
+    (branch === sessionBranch("archive", change.name) || branch === `chore/remove-duplicate-${change.name}` ||
+      (branch === change.recorded?.archiveBranch && branch !== change.recorded?.branch)));
+}
+
+export function isImplementationPullRequest(change: Pick<ChangeSnapshot, "name" | "recorded">, pr: Pick<PullRequest, "head">): boolean {
+  return !isProposalPullRequest(change, pr) && !isArchiveBranch(change, pr.head);
+}
+
 const DAY = 86_400_000;
 
 /**
@@ -103,10 +114,11 @@ export function phasePullRequest(
   const managedBranch = phase === "proposal" ? proposalBranch(change.name)
     : phase === "archive" ? sessionBranch("archive", change.name)
       : sessionBranch("implement", change.name);
-  const recordedBranch = phase === "implementation"
-    ? change.recorded?.branch === proposalBranch(change.name) ? undefined : change.recorded?.branch
-    : phase === "archive" ? change.recorded?.archiveBranch
-      : undefined;
+  const implementation = change.recorded?.branch;
+  const archive = change.recorded?.archiveBranch;
+  const recordedBranch = phase === "implementation" && implementation && isImplementationPullRequest(change, { head: implementation })
+    ? implementation
+    : phase === "archive" && isArchiveBranch(change, archive) ? archive : undefined;
   const branches = new Set([recordedBranch, managedBranch].filter((branch): branch is string => typeof branch === "string" && branch !== ""));
   let best: PullRequest | undefined;
   for (const pr of pullRequests) {

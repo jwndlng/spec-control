@@ -4,8 +4,7 @@ import type { ComponentChildren } from "preact";
 import type { PullRequest } from "../shared/types.ts";
 import type { LifecycleDeliveryView } from "./api.ts";
 import { Meter } from "./kanban.tsx";
-import { phasePullRequest, isProposalPullRequest } from "../shared/pullRequestLink.ts";
-import { sessionBranch } from "../shared/sessionBranch.ts";
+import { isArchiveBranch, isImplementationPullRequest, phasePullRequest } from "../shared/pullRequestLink.ts";
 
 export const LIFECYCLE_PHASES = ["Backlog", "Drafts", "Ready", "Implementing", "Done", "Archived"] as const;
 export type LifecyclePhase = (typeof LIFECYCLE_PHASES)[number];
@@ -124,7 +123,21 @@ export function lifecycleTimelineModel(
     : current === "Archived" ? "Archived" as const
       : nextPhase === "Archived" && visualCurrent === "Archived" ? undefined
       : nextPhase;
-  const latestDeliveries = new Map(latestLifecycleDeliveries(deliveries).map((delivery) => [delivery.phase, delivery]));
+  const implementationPr = phasePullRequest(change, "implementation", prs)
+    ?? (pr && isImplementationPullRequest(change, pr) ? pr : undefined);
+  const proposalPr = phasePullRequest(change, "proposal", prs);
+  const otherPrs = [implementationPr, proposalPr].filter((item) => item !== undefined);
+  const otherDeliveries = latestLifecycleDeliveries(deliveries).filter((item) => item.phase !== "archive");
+  const ownedDeliveries = deliveries.filter((delivery) => {
+    if (delivery.phase !== "archive") return true;
+    if (delivery.branch && !isArchiveBranch(change, delivery.branch)) return false;
+    const cached = prs.find((candidate) => candidate.number === delivery.pullRequestNumber);
+    if (delivery.branch && cached && cached.head !== delivery.branch) return false;
+    return !otherPrs.some((pr) => pr.number === delivery.pullRequestNumber || pr.url === delivery.pullRequestUrl) &&
+      !otherDeliveries.some((item) => (item.pullRequestNumber !== undefined && item.pullRequestNumber === delivery.pullRequestNumber) ||
+        (item.pullRequestUrl !== undefined && item.pullRequestUrl === delivery.pullRequestUrl));
+  });
+  const latestDeliveries = new Map(latestLifecycleDeliveries(ownedDeliveries).map((delivery) => [delivery.phase, delivery]));
   const persistence = [...latestDeliveries.values()].map((delivery) => ({
     id: delivery.id,
     label: `${humanize(delivery.phase)} delivery: ${humanize(delivery.state)}${delivery.blocker ? ` · ${delivery.blocker}` : ""}`,
@@ -155,9 +168,8 @@ export function lifecycleTimelineModel(
   };
   const pullRequests = Object.fromEntries((['proposal', 'implementation', 'archive'] as const).map((phase) => {
     const delivery = latestDeliveries.get(phase);
-    const recordedPr = phasePullRequest(change, phase, prs);
-    const genericImplementationPr = phase === "implementation" && pr && !isProposalPullRequest(change, pr) && pr.head !== sessionBranch("archive", change.name) && pr.head !== change.recorded?.archiveBranch ? pr : undefined;
-    const phasePr = (delivery?.pullRequestNumber ? prs.find((candidate) => candidate.number === delivery.pullRequestNumber) : undefined) ?? recordedPr ?? genericImplementationPr;
+    const detectedPr = phase === "implementation" ? implementationPr : phase === "proposal" ? proposalPr : phasePullRequest(change, phase, prs);
+    const phasePr = (delivery?.pullRequestNumber ? prs.find((candidate) => candidate.number === delivery.pullRequestNumber) : undefined) ?? detectedPr;
     return [phase, stateFor(phase, delivery, phasePr)];
   })) as LifecycleTimelineModel["pullRequests"];
   return {
@@ -179,13 +191,14 @@ export function lifecycleTimelineModel(
   };
 }
 
-export function LifecycleTimeline({ model, documentLink, question, children, draftChildren, deliveryChildren, deliveryActions = {}, completionPhase, completionChildren }: {
+export function LifecycleTimeline({ model, documentLink, question, children, draftChildren, deliveryChildren, deliveryActions = {}, archivePrerequisite, completionPhase, completionChildren }: {
   model: LifecycleTimelineModel;
   documentLink?: (id: string) => string | undefined;
   question?: { phase: LifecyclePhase; open: () => void };
   children?: ComponentChildren;
   draftChildren?: ComponentChildren;
   deliveryChildren?: ComponentChildren;
+  archivePrerequisite?: ComponentChildren;
   deliveryActions?: Partial<Record<LifecycleDeliveryView["phase"], ComponentChildren>>;
   completionPhase?: LifecyclePhase;
   completionChildren?: ComponentChildren;
@@ -221,6 +234,7 @@ export function LifecycleTimeline({ model, documentLink, question, children, dra
               {phase.label === question?.phase && <button class="btn sm" type="button" onClick={question.open}>Answer agent</button>}
               {phase.label === "Archived" && model.archivePendingDelivery && <small>Archived locally</small>}
               {renderPhaseDelivery(phase.label)}
+              {phase.label === "Archived" && archivePrerequisite}
               {phase.label === model.actionPhase && <section class="lifecycle-phase-action" aria-label={`Available action for ${phase.label}`}>{children}</section>}
               {phase.label === model.draftActionPhase && <section class="lifecycle-phase-action" aria-label="Draft action">{draftChildren}</section>}
               {phase.label === "Drafts" && model.artifacts.length > 0 && <ol class="lifecycle-artifact-segments" aria-label="Draft artifact progress">

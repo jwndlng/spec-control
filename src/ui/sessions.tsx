@@ -575,6 +575,7 @@ export function SessionControls({
   into,
   steps,
   timelineAction,
+  holdArchive = false,
   suppressSessionStatus = false,
 }: {
   card: Pick<ChangeSnapshot, "repoId" | "name" | "archived" | "artifacts" | "stage" | "subState" | "blocked">;
@@ -583,6 +584,7 @@ export function SessionControls({
   into?: ChangeSession;
   steps?: Partial<Record<PullRequestStep, ActionItem | ActionStatus>>;
   timelineAction?: "draft" | "main";
+  holdArchive?: boolean;
   /** A lifecycle timeline shows phase progress; session status belongs in the Console tab. */
   suppressSessionStatus?: boolean;
 }) {
@@ -597,7 +599,8 @@ export function SessionControls({
   // step as ending it first (`consoleSteps`).
   const offered = into ? consoleSteps(ui.config, ui.sessions, card, into) : undefined;
   const endsProposal = (action: SessionAction) => offered?.endFirst.includes(action) === true;
-  const defaultSplit = into ? starterSplit(card, offered ? [...offered.into, ...offered.endFirst] : [], pullRequest) : controls;
+  const offeredActions = offered ? [...offered.into, ...offered.endFirst] : [];
+  const defaultSplit = into ? starterSplit(card, holdArchive ? offeredActions.filter((action) => action !== "archive") : offeredActions, pullRequest) : controls;
   const mainMenu = timelineAction === "main" && !into
     ? starterSplit(card, controls.starters.filter((action) => action !== "draft"), pullRequest)
     : defaultSplit;

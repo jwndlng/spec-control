@@ -3,7 +3,7 @@
 // task and dismissing the change, each after its own user action and server-side recheck.
 import type { ComponentChildren, RefObject } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, DeleteFilesPreview, DeleteFilesResult, DismissPreview, DismissResult, RepoSnapshot, Snapshot, TaskProgress } from "../shared/types.ts";
+import type { ChangeArtifactEntry, ChangeArtifacts, ChangeSession, ChangeSnapshot, DeleteFilesPreview, DeleteFilesResult, DismissPreview, DismissResult, RepoSnapshot, Snapshot, TaskProgress } from "../shared/types.ts";
 import { parseTaskLine } from "../shared/taskLine.ts";
 import { ApiError, api, type LifecycleDeliveryView } from "./api.ts";
 import { CopyButton, CopyRefButton, Meter } from "./kanban.tsx";
@@ -27,7 +27,7 @@ import { currentQuery, followInApp, href, hrefWithQuery, navigate, onRouteChange
 import { dismissActiveSelect } from "./select.tsx";
 import { phaseReadyForVerification, LifecycleTimeline, lifecycleTimelineModel, shouldShowDirectShipAction, visibleLifecycleDeliveries } from "./lifecycleTimeline.tsx";
 import { SessionControls, ShipButton } from "./sessions.tsx";
-import { linkedPullRequest } from "../shared/pullRequestLink.ts";
+import { isArchiveBranch, isImplementationPullRequest, linkedPullRequest, phasePullRequest } from "../shared/pullRequestLink.ts";
 
 export function artifactLabel(id: string): string {
   return id.replace(/[-_]+/g, " ").replace(/^./, (c) => c.toUpperCase());
@@ -847,21 +847,30 @@ export function ChangeDetail({
   };
   const filePath = listing && file ? absoluteFilePath(listing.change.dir, file) : undefined;
   const current = fileState && fileState.path === file ? fileState : null;
-  const checkpointPr = linkedPullRequest(change, pullRequests.data?.repos);
-  const activeAction = activeSession && !activeSession.waitingReportedAt ? activeSession.action : undefined;
+  const linkedPr = linkedPullRequest(change, pullRequests.data?.repos);
+  const remote = pullRequests.data?.repos.find((entry) => entry.repoId === repoId);
+  const implementationPr = phasePullRequest(change, "implementation", remote?.pullRequests)
+    ?? (linkedPr && isImplementationPullRequest(change, linkedPr) ? linkedPr : undefined);
+  const checkpointPr = implementationPr?.state === "open" ? implementationPr : linkedPr;
+  const archiveBlocked = implementationPr?.state === "open" && (change.stage === "done" || change.stage === "archived");
+  const archiveHandoff = change.stage === "done" && implementationPr && implementationPr.state !== "open" &&
+    activeSession?.branch === implementationPr.head ? activeSession : undefined;
+  const lifecycleAction = (session: ChangeSession | undefined) =>
+    session?.action === "archive" && (archiveBlocked || archiveHandoff) && !isArchiveBranch(change, session.branch) ? undefined : session?.action;
+  const activeAction = activeSession && !activeSession.waitingReportedAt ? lifecycleAction(activeSession) : undefined;
   const workingPhase = activeAction === "draft" ? "Drafts" : activeAction === "implement" || activeAction === "fastForward" ? "Implementing" : activeAction === "archive" ? "Archived" : activeAction === "validate" ? "Done" : undefined;
   const relevantSessions = sessions
     .filter((session) => session.repoId === repoId && session.change === changeName && ["draft", "implement", "fastForward", "validate", "archive"].includes(session.action))
     .filter((session) => !change.created || Date.parse(session.createdAt) >= Date.parse(change.created))
     .sort((a, b) => (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt));
-  const archiveSession = lifecycleSession(relevantSessions, "archive");
+  const archiveSession = lifecycleSession(relevantSessions.filter((session) =>
+    session.inPlace || isArchiveBranch(change, session.branch)), "archive");
   const archiveWorktree = archiveSession && worktrees.find((worktree) => worktree.path === archiveSession.worktreePath);
   const implementationSession = relevantSessions.find((session) => session.action === "implement" || session.action === "fastForward")
     ?? (shownSession?.action === "custom" || shownSession?.action === "validate" ? shownSession : undefined);
   const implementationWorktree = implementationSession && worktrees.find((tree) => tree.path === implementationSession.worktreePath);
-  const latestLifecycleAction = relevantSessions[0]?.action;
+  const latestLifecycleAction = lifecycleAction(relevantSessions[0]);
   const progressPhase = latestLifecycleAction === "draft" ? "Drafts" : latestLifecycleAction === "implement" || latestLifecycleAction === "fastForward" ? "Implementing" : latestLifecycleAction === "validate" ? "Done" : latestLifecycleAction === "archive" ? "Archived" : undefined;
-  const remote = pullRequests.data?.repos.find((entry) => entry.repoId === repoId);
   const localOnly = repo?.isGit === false || remote?.reason === "not on GitHub";
   const timelineModel = lifecycleTimelineModel(change, change.artifacts, deliveries, change.archived ? undefined : checkpointPr, remote?.pullRequests ?? [], workingPhase, progressPhase, {
     unavailable: remote?.status === "failed" || remote?.status === "unavailable", localOnly, fetchedAt: remote?.fetchedAt,
@@ -870,11 +879,13 @@ export function ChangeDetail({
   if (checkpointPr?.state === "open" && prOwner && !change.archived) {
     timelineModel.actionPhase = { proposal: "Drafts", implementation: "Implementing", archive: "Archived" }[prOwner] as typeof timelineModel.actionPhase;
   }
-  const visibleDeliveries = visibleLifecycleDeliveries(deliveries, timelineModel.pullRequests);
+  const visibleDeliveries = visibleLifecycleDeliveries(
+    deliveries.filter((delivery) => timelineModel.persistence.some(({ id }) => id === delivery.id)), timelineModel.pullRequests,
+  );
   const deliveryFor = (phase: LifecycleDeliveryView["phase"]) => visibleDeliveries.find((delivery) => delivery.phase === phase);
   const implementationDelivery = deliveryFor("implementation");
   const refreshFailed = remote?.status === "failed" || (remote?.status === "unavailable" && !localOnly);
-  const completionAction = activeSession?.state === "running" && activeSession.managedActionId && ["draft", "implement", "fastForward", "archive"].includes(activeSession.action)
+  const completionAction = activeSession?.state === "running" && activeSession.managedActionId && (activeSession.action !== "archive" || archiveSession?.id === activeSession.id) && ["draft", "implement", "fastForward", "archive"].includes(activeSession.action)
     ? activeSession.action
     : undefined;
   const completionPhase = completionAction === "draft" ? "Drafts" : completionAction === "archive" ? "Archived" : completionAction ? "Implementing" : undefined;
@@ -918,7 +929,7 @@ export function ChangeDetail({
           card={change}
           place="console"
           suppressSessionStatus
-          pullRequest={linkedPullRequest(change, pullRequests.data?.repos)}
+          pullRequest={checkpointPr}
           timelineAction="draft"
         />}
         completionChildren={confirmationMode === "optional" ? <details>
@@ -933,6 +944,9 @@ export function ChangeDetail({
           {!refreshFailed && (!prOwner || prOwner === "implementation") && timelineModel.pullRequest.state !== "merged" && <ResolveConflicts change={change} compact />}
         </>
       }
+        archivePrerequisite={archiveBlocked ? <small>Merge #{implementationPr.number} to archive</small>
+          : archiveHandoff ? <button type="button" class="btn sm" onClick={() => ui.requestEnd(archiveHandoff.id)}>End implementation session to archive</button>
+            : undefined}
         deliveryActions={{
           proposal: deliveryFor("proposal")?.recovery.includes("retry") && <button type="button" class="btn sm" disabled={retryingDelivery !== undefined} onClick={() => { const item = deliveryFor("proposal"); if (item) void retryDelivery(item); }}>{retryingDelivery === deliveryFor("proposal")?.id ? "Retrying…" : "Retry delivery"}</button>,
           archive: <>
@@ -946,8 +960,9 @@ export function ChangeDetail({
           card={change}
           place="console"
           suppressSessionStatus
-          pullRequest={linkedPullRequest(change, pullRequests.data?.repos)}
+          pullRequest={checkpointPr}
           into={activeSession}
+          holdArchive={Boolean(archiveHandoff)}
           timelineAction={timelineModel.draftActionPhase && !activeSession ? "main" : undefined}
         />}
       </LifecycleTimeline>

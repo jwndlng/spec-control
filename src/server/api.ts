@@ -346,6 +346,7 @@ function lifecycleDeliveryJson(record: import("../shared/types.ts").LifecycleDel
     phase: record.phase,
     revision: record.revision,
     state: record.state,
+    branch: record.branch,
     ...(record.head ? { head: record.head } : {}),
     ...(record.pullRequestNumber ? { pullRequestNumber: record.pullRequestNumber } : {}),
     ...(record.pullRequestUrl ? { pullRequestUrl: record.pullRequestUrl } : {}),

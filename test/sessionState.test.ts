@@ -76,15 +76,14 @@ test("dependency blockers withhold fast-forward and Implement while leaving Draf
   expect(cardSessionControls(disabled, [], card()).starters).toEqual([]);
 });
 
-test("a card whose pull request's checks run shows the waiting label with its starters in the menu", () => {
+test("an open implementation pull request keeps Validate available while withholding Archive", () => {
   const controls = cardSessionControls(config, [session()], card({ stage: "done", subState: "validate", pullRequest: pr({ checks: "pending" }) }));
   expect(controls.main).toEqual({ kind: "waiting", reason: "checks running" });
   expect(controls.menu).toEqual([
     { kind: "start", action: "validate" },
-    { kind: "start", action: "archive" },
     { kind: "start", action: "custom" },
   ]);
-  expect(controls.starters).toEqual(["validate", "archive", "custom"]);
+  expect(controls.starters).toEqual(["validate", "custom"]);
 });
 
 test("a running session's badge stands in for the whole split button", () => {
