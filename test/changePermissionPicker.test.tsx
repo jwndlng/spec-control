@@ -4,7 +4,7 @@ import { render } from "preact";
 import { useState } from "preact/hooks";
 import { act } from "preact/test-utils";
 import { defaultConfig } from "../src/server/config.ts";
-import type { ChangeArtifacts, ChangeSession, Config, Snapshot, SessionWorktree } from "../src/shared/types.ts";
+import type { ChangeArtifacts, ChangeSession, Config, RepoPullRequests, Snapshot, SessionWorktree } from "../src/shared/types.ts";
 import { revisionOf, api } from "../src/ui/api.ts";
 import { ChangeDetail } from "../src/ui/changeDetail.tsx";
 import { ChangePermissionPicker } from "../src/ui/changePermissionPicker.tsx";
@@ -12,8 +12,10 @@ import { createDemoApi } from "../src/ui/demo/demoApi.ts";
 import { consoleSession } from "../src/ui/sessionState.ts";
 import { SessionProvider } from "../src/ui/sessions.tsx";
 
-const originalApi = { openSession: api.openSession, resumeSession: api.resumeSession, openTerminal: api.openTerminal, sessions: api.sessions, changeArtifacts: api.changeArtifacts, artifactFile: api.artifactFile, setChangePermissionProfile: api.setChangePermissionProfile };
-const originalDom = { window: globalThis.window, document: globalThis.document, HTMLElement: globalThis.HTMLElement, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, location: globalThis.location, history: globalThis.history };
+import { PullRequestsProvider } from "../src/ui/pullRequests.tsx";
+
+const originalApi = { pullRequests: api.pullRequests, refreshPullRequests: api.refreshPullRequests, lifecycleDeliveries: api.lifecycleDeliveries, openSession: api.openSession, resumeSession: api.resumeSession, openTerminal: api.openTerminal, sessions: api.sessions, changeArtifacts: api.changeArtifacts, artifactFile: api.artifactFile, setChangePermissionProfile: api.setChangePermissionProfile };
+const originalDom = { getComputedStyle: globalThis.getComputedStyle, ResizeObserver: globalThis.ResizeObserver, window: globalThis.window, document: globalThis.document, HTMLElement: globalThis.HTMLElement, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, location: globalThis.location, history: globalThis.history };
 let browser: Window;
 let root: HTMLElement;
 afterEach(async () => {
@@ -29,11 +31,13 @@ const configForTest = (): Config => {
   return { ...config, agentSessions: { ...config.agentSessions, enabled: true, agents: [...config.agentSessions.agents, { ...agent, id: "other", name: "Other" }] }, repos: [{ id: "demo", name: "Demo", path: "/w/acme/demo", enabled: true, agentOverrides: { one: { agentId: "other" } } }] };
 };
 const record = (profile?: ChangeSession["permissionProfile"]): ChangeSession => ({ id: "running", state: "running", agentId: "fake", agentName: "Fake", repoId: "demo", change: "one", action: "implement", worktreePath: "/w/acme/demo", createdAt: "2026-11-10", updatedAt: "2026-11-10", resumable: false, permissionProfile: profile });
-async function setup(config = configForTest(), records: ChangeSession[] = [], detail = false, worktrees: SessionWorktree[] = []) {
+async function setup(config = configForTest(), records: ChangeSession[] = [], detail = false, worktrees: SessionWorktree[] = [], cached?: RepoPullRequests) {
   browser = new Window({ url: "http://localhost/" });
-  Object.assign(globalThis, { window: browser, document: browser.document, HTMLElement: browser.HTMLElement, location: browser.location, history: browser.history, requestAnimationFrame: () => 0, cancelAnimationFrame: () => {} });
+  Object.assign(globalThis, { window: browser, getComputedStyle: browser.getComputedStyle.bind(browser), ResizeObserver: browser.ResizeObserver, document: browser.document, HTMLElement: browser.HTMLElement, location: browser.location, history: browser.history, requestAnimationFrame: () => 0, cancelAnimationFrame: () => {} });
   root = document.createElement("div");
   document.body.append(root);
+  api.lifecycleDeliveries = async () => [];
+  api.pullRequests = async () => ({ repos: cached ? [cached] : [] });
   api.sessions = async () => ({ sessions: records, agents: [], worktrees, presets: [] });
   api.changeArtifacts = async (_repo, name) => ({ change: { repoId: "demo", schema: "spec-driven", archived: false, name, dir: "/w/acme/demo/openspec/changes/one" }, artifacts: [{ id: "proposal", status: "done", files: [{ path: "proposal.md", bytes: 10 }] }] }) as ChangeArtifacts;
   api.artifactFile = async () => ({ path: "proposal.md", text: "# Proposal", bytes: 10 });
@@ -47,7 +51,7 @@ async function setup(config = configForTest(), records: ChangeSession[] = [], de
     const [state, scan] = useState(snapshot);
     setConfig = update; setName = navigate; setSnapshot = scan;
     return <SessionProvider config={current} snapshot={state} onConfig={update}>
-      {detail ? <ChangeDetail snapshot={state} repoId="demo" changeName={name} /> : <ChangePermissionPicker key={name} repoId="demo" changeName={name} />}
+      {detail ? <PullRequestsProvider><ChangeDetail snapshot={state} repoId="demo" changeName={name} /></PullRequestsProvider> : <ChangePermissionPicker key={name} repoId="demo" changeName={name} />}
     </SessionProvider>;
   }
   await act(async () => { render(<Harness />, root); });
@@ -63,6 +67,57 @@ async function setup(config = configForTest(), records: ChangeSession[] = [], de
 const selection = () => root.querySelector<HTMLButtonElement>('[aria-label="Permission profile for this change"]')!;
 const selectedLabel = () => root.querySelector('.detail-permission-picker .shared-select-label')?.textContent;
 const text = () => root.textContent!;
+
+for (const scenario of ["linked", "absent", "unavailable"]) test(`change header retains the source issue with ${scenario} PR data`, async () => {
+  const makePr = (number: number, head: string, state: "open" | "merged") => ({
+    number, head, state, title: `Delivery ${number}`, url: `https://github.com/acme/demo/pull/${number}`,
+    author: "octo", base: "main", draft: false, createdAt: "2026-11-09", review: "none" as const,
+    reviewRequestedFromViewer: false, checks: "passing" as const, mergeable: "mergeable" as const,
+  });
+  const prs = scenario === "linked" ? [makePr(11, "docs/one", "merged"), makePr(22, "feat/one", "open")] : [];
+  let refreshes = 0;
+  api.refreshPullRequests = async () => { refreshes++; return { repos: [] }; };
+  const view = await setup(configForTest(), [], true, [], {
+    repoId: "demo", status: scenario === "unavailable" ? "unavailable" : "ok", reason: "unavailable in fixture", pullRequests: prs,
+  });
+  const snapshot = structuredClone(view.initialSnapshot);
+  snapshot.repos[0].isGit = true;
+  Object.assign(snapshot.repos[0].changes[0], { repoId: "demo", stage: "implementing", column: "Implementing", branchMatch: "feat/one", sourceIssue: { github: "acme/demo", number: 7 } });
+  await view.snapshot(snapshot);
+  const header = root.querySelector(".detail-head")!;
+  expect([...header.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual(["/repo/demo", "https://github.com/acme/demo/issues/7"]);
+  expect(header.querySelector(".copy-ref")).not.toBeNull();
+  expect(header.textContent).not.toMatch(/pull request|delivery|unavailable|checks|review/i);
+  expect([...root.querySelectorAll(".lifecycle-phase-delivery a")].map((link) => link.getAttribute("href"))).toEqual(prs.map((pr) => pr.url));
+  expect(refreshes).toBe(0);
+});
+
+test("switching Console sessions shows their own paths and work status below a main-checkout header", async () => {
+  const sessions: ChangeSession[] = ["first", "second"].map((id) => ({
+    ...record(), id, branch: `feat/${id}`, state: "exited", worktreePath: `/w/acme/${id}`,
+  }));
+  const worktrees: SessionWorktree[] = sessions.map((session, i) => ({
+    repoId: "demo", change: "one", name: session.id, path: session.worktreePath, action: "implement",
+    work: i === 0 ? { state: "uncommitted", count: 3 } : { state: "unpushed", count: 2 },
+  }));
+  api.openTerminal = () => ({ send: () => {}, close: () => {} });
+  const view = await setup(configForTest(), sessions, true, worktrees);
+  const snapshot = structuredClone(view.initialSnapshot);
+  snapshot.repos[0].isGit = true;
+  Object.assign(snapshot.repos[0].changes[0], { repoId: "demo", stage: "implementing", checkout: { isMain: true, path: "/w/main", branch: "main" } });
+  await view.snapshot(snapshot);
+  await act(() => [...root.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Console")!.click());
+  for (const [i, session] of sessions.entries()) {
+    const button = [...root.querySelectorAll<HTMLButtonElement>(".console-session-select")].find((b) => b.textContent?.includes(session.branch!))!;
+    await act(() => button.click());
+    const facts = root.querySelector(".console-session-facts")!.textContent;
+    expect(facts).toContain(session.worktreePath);
+    expect(facts).toContain(i === 0 ? "3 uncommitted" : "2 not pushed");
+    const header = root.querySelector(".detail-head")!;
+    expect(header.textContent).not.toMatch(/uncommitted|not pushed|\/w\//);
+    expect(header.querySelector(".worktree-path")).toBeNull();
+  }
+});
 
 test("inheritance resolves project, global and Minimum and preserves explicit equal choice", async () => {
   const config = configForTest();

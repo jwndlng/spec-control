@@ -19,6 +19,7 @@ export interface LifecycleTimelineModel {
   artifacts: { id: string; label: string; status: string }[];
   artifactProgress?: { done: number; total: number };
   taskProgress?: { done: number; total: number; awaiting?: number };
+  implementModel?: string;
   validation?: string;
   localProgress?: string;
   persistence: { id: string; label: string; pullRequestNumber?: number; pullRequestUrl?: string }[];
@@ -100,7 +101,7 @@ export function shouldShowDirectShipAction(
 }
 
 export function lifecycleTimelineModel(
-  change: Pick<ChangeSnapshot, "repoId" | "name" | "created" | "recorded" | "stage" | "archived" | "subState" | "tasks">,
+  change: Pick<ChangeSnapshot, "repoId" | "name" | "created" | "recorded" | "stage" | "archived" | "subState" | "tasks" | "implementModel">,
   artifacts: readonly Pick<ArtifactStatus, "id" | "status" | "required">[],
   deliveries: readonly LifecycleDeliveryView[],
   pr?: PullRequest,
@@ -175,6 +176,7 @@ export function lifecycleTimelineModel(
   return {
     current,
     visualCurrent,
+    implementModel: change.implementModel,
     archivePendingDelivery: current === "Archived" && !remote?.localOnly && pullRequests.archive.state !== "merged",
     ...(actionPhase ? { actionPhase } : {}),
     ...(current === "Ready" && artifacts.some((artifact) => artifact.required === false && artifact.status !== "done") ? { draftActionPhase: "Drafts" as const } : {}),
@@ -231,6 +233,7 @@ export function LifecycleTimeline({ model, documentLink, question, children, dra
           {model.phases.map((phase) => <li key={phase.label} data-phase={phase.label} class={`lifecycle-phase timeline-node ${phase.state}${phase.label === model.actionPhase || phase.label === model.draftActionPhase ? " actionable" : ""}${phase.label === "Drafts" && model.artifacts.length ? " has-artifacts" : ""}${phase.label === "Implementing" && model.taskProgress ? " has-progress" : ""}${phase.label === model.workingPhase ? " working" : ""}`} style={{ gridColumn: PHASE_TRACK_COLUMN[phase.label], gridRow: 1 }} aria-current={phase.state === "current" ? "step" : undefined}>
               <span class="lifecycle-phase-marker" aria-hidden="true">{phase.state === "complete" ? "✓" : ""}</span>
               <span class="lifecycle-phase-label">{phase.label === "Drafts" && model.artifacts.length ? <button class="draft-documents-toggle" type="button" aria-expanded={documentsOpen} aria-controls={documentsId} onClick={() => setDocumentsOpen(!documentsOpen)}>{phaseLabel(phase.label)} ▾</button> : phaseLabel(phase.label)}</span>
+              {phase.label === "Implementing" && model.implementModel && <small>Implement model: {model.implementModel}</small>}
               {phase.label === question?.phase && <button class="btn sm" type="button" onClick={question.open}>Answer agent</button>}
               {phase.label === "Archived" && model.archivePendingDelivery && <small>Archived locally</small>}
               {renderPhaseDelivery(phase.label)}

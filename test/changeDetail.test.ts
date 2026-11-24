@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, PullRequest, PullRequestsResponse, RepoPullRequests, RepoSnapshot } from "../src/shared/types.ts";
+import type { ChangeArtifactEntry, ChangeArtifacts, ChangeSnapshot, RepoSnapshot } from "../src/shared/types.ts";
 import { ApiError } from "../src/ui/api.ts";
 import {
   ArtifactTabs,
@@ -29,7 +29,6 @@ import {
 import { type Card, ChangeCard, ConsoleLink, CopyButton, cardLink, consoleTarget, initialFilters } from "../src/ui/kanban.tsx";
 import { renderMarkdown } from "../src/ui/markdown.tsx";
 import { promptBody } from "../src/ui/boardMarks.ts";
-import { detailPullRequest } from "../src/ui/pullRequests.tsx";
 import { backTarget, CONSOLE_TAB, PROMPT_TAB, parseDetailQuery, routeFromPath, serializeDetailQuery } from "../src/ui/routes.ts";
 import { FIXTURES } from "./helpers.ts";
 import { byComponent, byTag, elements, textOf } from "./vnode.ts";
@@ -105,9 +104,9 @@ test("dismiss and delete change files keep their visible outline at rest", () =>
   expect(styles).toMatch(/\.btn\.ghost\.delete-change-files\s*\{[^}]*border-color:\s*var\(--border-strong\)/);
 });
 
-test("detail header labels a recorded implementation model only when present", () => {
+test("detail header omits the phase-specific implementation model", () => {
   const withChoice = DetailHeader({ repo, change: { ...change, implementModel: "reasoning-model" }, onClose: noop });
-  expect(textOf(withChoice)).toContain("Implement model: reasoning-model");
+  expect(textOf(withChoice)).not.toContain("Implement model: reasoning-model");
   expect(textOf(DetailHeader({ repo, change, onClose: noop }))).not.toContain("Implement model:");
 });
 
@@ -528,95 +527,6 @@ test("a poll changes neither the selected tab nor the selected session", () => {
   // A refreshed snapshot can update prompt text without changing the URL-selected tab.
   expect(resolveSelection(unchangedPromptListing.artifacts, promptQuery, false, true)).toEqual({ artifactId: PROMPT_TAB });
   expect(textOf(PromptContent({ prompt: "updated prompt" }))).toContain("updated prompt");
-});
-
-// ---- the change's pull request in the header ----
-
-const headerPr: PullRequest = {
-  number: 125,
-  title: "Add the validate phase",
-  url: "https://github.com/acme/forum-admin/pull/125",
-  author: "octo",
-  head: "feat/multi-tenant-sync",
-  base: "main",
-  draft: false,
-  state: "open",
-  createdAt: "2026-03-09T12:00:00Z",
-  review: "approved",
-  reviewRequestedFromViewer: false,
-  checks: "failing",
-  mergeable: "mergeable",
-};
-const prResponse = (patch: Partial<RepoPullRequests> = {}, pullRequests: PullRequest[] = [headerPr]): PullRequestsResponse => ({
-  repos: [{ repoId: "r1", github: "acme/forum-admin", status: "ok", fetchedAt: "2026-03-10T11:58:00Z", pullRequests, ...patch }],
-});
-const headerWith = (response: PullRequestsResponse | undefined, c: ChangeSnapshot = change) => DetailHeader({ repo, change: c, onClose: noop, pullRequest: detailPullRequest(c, response) });
-
-test("header: the change's pull request beside its branch — number, title link, state, review and checks", () => {
-  const header = headerWith(prResponse());
-  const facts = classed(header, "detail-facts")[0];
-  const line = classed(facts, "detail-pr")[0];
-  expect(line).toBeDefined();
-  // Beside the branch: the pull request follows the branch badge in the facts row.
-  const order = elements(facts).map((el) => String(el.props.class ?? "")).filter((c) => c === "detail-pr" || c.includes("branch"));
-  expect(order.indexOf("detail-pr")).toBeGreaterThan(0);
-  const text = textOf(line);
-  expect(text).toContain("#125");
-  const link = byTag(line, "a")[0];
-  expect(link.props.href).toBe("https://github.com/acme/forum-admin/pull/125");
-  expect(link.props.target).toBe("_blank");
-  expect(link.props.rel).toBe("noopener noreferrer");
-  expect(textOf(link)).toBe("Add the validate phase");
-  // State, review decision and checks as the Pull requests view says them, with words a screen reader reads.
-  const chips = classed(line, "pr-chip");
-  expect(chips.map((c) => c.props.title)).toEqual(["Open on GitHub", "Review decision: approved", "At least one check failed", expect.stringContaining("Not ready: at least one check failed")]);
-  expect(chips.map((c) => textOf(classed(c, "visually-hidden")))).toEqual(["Open on GitHub", "Review decision: approved", "At least one check failed", expect.stringContaining("Not ready")]);
-  expect(text).toContain("✕ Checks");
-  // Its readiness, in the card's words and role, with when the list was fetched.
-  expect(text).toContain("✕ checks failing");
-  expect(String(chips[3].props.class)).toContain("danger");
-  expect(String(chips[3].props.title)).toContain("list fetched");
-});
-
-test("header: no pull request means the branch alone, with nothing in its place", () => {
-  const header = headerWith(prResponse({}, []));
-  expect(classed(header, "detail-pr")).toEqual([]);
-  expect(classed(header, "detail-pr-unavailable")).toEqual([]);
-  expect(textOf(header)).toContain("feat/multi-tenant-sync");
-  expect(classed(headerWith(undefined), "detail-pr")).toEqual([]);
-  expect(classed(DetailHeader({ repo, change, onClose: noop }), "detail-pr")).toEqual([]);
-});
-
-test("header: an archived change shows the pull request of its archive branch", () => {
-  const archived: ChangeSnapshot = { ...change, archived: "2026-03-09", column: "Archived", stage: "archived", branchMatch: undefined };
-  const archivePr: PullRequest = { ...headerPr, number: 131, url: "https://github.com/acme/forum-admin/pull/131", head: "chore/archive-multi-tenant-sync" };
-  const header = headerWith(prResponse({}, [{ ...headerPr, state: "merged", mergedAt: "2026-03-09T10:00:00Z" }, archivePr]), archived);
-  const line = classed(header, "detail-pr")[0];
-  expect(textOf(line)).toContain("#131");
-  expect(byTag(line, "a")[0]?.props.href).toBe(archivePr.url);
-});
-
-test("header: no way to act on the pull request", () => {
-  const line = classed(headerWith(prResponse({}, [{ ...headerPr, review: "review_required", checks: "pending" }])), "detail-pr")[0];
-  expect(byTag(line, "button")).toEqual([]);
-  expect(byTag(line, "form")).toEqual([]);
-  expect(byTag(line, "a")).toHaveLength(1);
-  expect(textOf(line)).not.toMatch(/approve\b|merge\b|comment|close\b|reopen/i);
-});
-
-test("header: unavailable pull requests are explained once, with the capability's reason", () => {
-  const missing = headerWith(prResponse({ status: "unavailable", setup: "gh-missing", reason: "gh: command not found" }));
-  const notes = classed(missing, "detail-pr-unavailable");
-  expect(notes).toHaveLength(1);
-  expect(textOf(notes[0])).toBe("pull requests unavailable: The GitHub CLI is not installed.");
-  expect(classed(missing, "detail-pr")).toEqual([]);
-
-  const notGithub = headerWith(prResponse({ status: "unavailable", github: undefined, reason: "origin is not on github.com" }, []));
-  expect(classed(notGithub, "detail-pr-unavailable").map((n) => textOf(n))).toEqual(["pull requests unavailable: origin is not on github.com"]);
-
-  // Never fetched and failed are not "unavailable": a failed list still links from its last good copy.
-  expect(classed(headerWith(prResponse({ status: "never", fetchedAt: undefined }, [])), "detail-pr-unavailable")).toEqual([]);
-  expect(classed(headerWith(prResponse({ status: "failed", reason: "timed out" })), "detail-pr")).toHaveLength(1);
 });
 
 test("the header lists what the change depends on, with states in words, and what depends on it", () => {

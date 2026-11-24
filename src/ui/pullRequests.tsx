@@ -1,5 +1,5 @@
 // The Pull requests view, the dialog on a repository board, the cache they and the board's cards read from, and what a
-// card and the detail header show of a change's pull request.
+// card shows of a change's pull request.
 //
 // GitHub is contacted only from here, and only because the user activated Refresh, opened one of the three views that
 // show pull requests — this view, a repository's dialog, a Kanban board — with a stale cache, or an open, visible board
@@ -7,9 +7,8 @@
 // to github.com are ordinary links the user follows.
 import { type ComponentChildren, createContext } from "preact";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { isProposalPullRequest, linkedPullRequest } from "../shared/pullRequestLink.ts";
 import { type Readiness, pullRequestReadiness, readinessDetail, readinessRole, readinessWord } from "../shared/pullRequestReadiness.ts";
-import type { ChangeSnapshot, PullRequest, PullRequestsResponse, Snapshot } from "../shared/types.ts";
+import type { PullRequest, PullRequestsResponse, Snapshot } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { Stat } from "./band.tsx";
 import { relTime } from "./format.ts";
@@ -147,26 +146,9 @@ const CHECKS_CHIP: Record<PullRequest["checks"], { text: string; title: string; 
   none: undefined,
 };
 
-/**
- * Text plus a symbol plus a tooltip — never colour alone. `spoken` puts the tooltip's words in the text a screen reader
- * reads instead of the short symbol form (`✕ Checks` is read as "At least one check failed").
- */
-function Chip({ chip, spoken = false }: { chip: { text: string; title: string; tone: string }; spoken?: boolean }) {
-  return (
-    <span class={`badge pr-chip ${chip.tone}`} title={chip.title}>
-      {spoken ? (
-        <>
-          <span aria-hidden="true">{chip.text}</span>
-          <span class="visually-hidden">{chip.title}</span>
-        </>
-      ) : (
-        chip.text
-      )}
-    </span>
-  );
+function Chip({ chip }: { chip: { text: string; title: string; tone: string } }) {
+  return <span class={`badge pr-chip ${chip.tone}`} title={chip.title}>{chip.text}</span>;
 }
-
-// ---- entries ----
 
 const repoHue = (hue: number) => ({ "--repo-hue": String(hue) });
 
@@ -244,67 +226,9 @@ export function CardPullRequest({ pr, proposal = false, repoName, fetchedAt, now
   );
 }
 
-/** What the detail header knows about a change's pull request: the linked one (and when its list was fetched), or why there can be none. */
-export type DetailPr = { pr: PullRequest; fetchedAt?: string; proposal?: boolean; unavailable?: undefined } | { pr?: undefined; unavailable: string };
-
 /** When the change's repository's list was last fetched, for saying how fresh a readiness is. */
 export function listFetchedAt(response: PullRequestsResponse | undefined, repoId: string): string | undefined {
   return response?.repos.find((r) => r.repoId === repoId)?.fetchedAt;
-}
-
-/** The linked pull request; else, when the repository's pull requests cannot be read, the reason — said once. */
-export function detailPullRequest(change: Pick<ChangeSnapshot, "repoId" | "name" | "branchMatch" | "created" | "recorded">, response: PullRequestsResponse | undefined): DetailPr | undefined {
-  const pr = linkedPullRequest(change, response?.repos);
-  if (pr) return { pr, fetchedAt: listFetchedAt(response, change.repoId), ...(isProposalPullRequest(change, pr) ? { proposal: true } : {}) };
-  const list = response?.repos.find((r) => r.repoId === change.repoId);
-  if (!response || !list || list.status !== "unavailable") return undefined;
-  return { unavailable: ghSetup(response)?.what ?? list.reason ?? "this repository's pull requests cannot be read" };
-}
-
-const CONFLICTS_CHIP = { text: "⚠ Conflicts", title: "Conflicts with its base branch", tone: "warning" };
-
-/**
- * The detail header's pull-request line: number, title, state, review, checks, conflicts and — for an open one — its
- * readiness with the card's words, symbols and roles, read-only and as the view shows them.
- */
-export function DetailPullRequest({ info }: { info: DetailPr }) {
-  if (info.unavailable !== undefined) {
-    return (
-      <span class="hint detail-pr-unavailable" title="Why no pull request is shown for this change">
-        pull requests unavailable: {info.unavailable}
-      </span>
-    );
-  }
-  const { pr } = info;
-  const review = REVIEW_CHIP[pr.review];
-  const checks = CHECKS_CHIP[pr.checks];
-  const readiness = pullRequestReadiness(pr);
-  const ready = readiness && readinessChip(readiness, info.fetchedAt);
-  // The readiness already says "conflicts" when that is its reason; a draft that also conflicts says it here.
-  const conflicts = readiness && pr.mergeable === "conflicting" && ready?.word !== "conflicts";
-  return (
-    <span class="detail-pr">
-      <span class="pr-number mono">
-        {info.proposal ? (
-          <>
-            <span class="visually-hidden">Proposal pull request </span>
-            <span aria-hidden="true">Proposal </span>
-          </>
-        ) : (
-          <span class="visually-hidden">Pull request </span>
-        )}
-        #{pr.number}
-      </span>
-      <a class="pr-title" href={pr.url} target="_blank" rel="noopener noreferrer" title={`${pr.title} — open on GitHub`}>
-        {pr.title}
-      </a>
-      <Chip chip={stateChip(pr)} spoken />
-      {review && <Chip chip={review} spoken />}
-      {checks && <Chip chip={checks} spoken />}
-      {conflicts && <Chip chip={CONFLICTS_CHIP} spoken />}
-      {ready && <Chip chip={ready} spoken />}
-    </span>
-  );
 }
 
 function Entry({ entry, hue, showRepo }: { entry: PrEntry; hue?: number; showRepo: boolean }) {

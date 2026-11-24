@@ -552,17 +552,6 @@ export function worktreeForChange(worktrees: SessionWorktree[], repoId: string, 
 }
 
 /**
- * The worktree the detail header shows and copies (change-detail: "The detail header shows and copies the change's
- * worktree path"): the linked worktree the change's data comes from, else its most recently active session worktree.
- * Undefined for a change only in the main checkout with no session worktree.
- */
-export function changeWorktreePath(change: Pick<ChangeSnapshot, "repoId" | "name" | "checkout">, worktrees: readonly SessionWorktree[]): string | undefined {
-  if (change.checkout && !change.checkout.isMain) return change.checkout.path;
-  const mine = worktrees.filter((w) => w.repoId === change.repoId && w.change === change.name);
-  return mine.reduce<SessionWorktree | undefined>((latest, w) => (!latest || (w.lastActivityAt ?? "") > (latest.lastActivityAt ?? "") ? w : latest), undefined)?.path;
-}
-
-/**
  * An archived change that still has to be pushed or merged: its agent worktree holds unshipped work, or its archive is
  * only in a linked worktree that is not known to be merged. Everything else — the main checkout holds the archive, or
  * there is no git — is wrapped up. From local git only, so "merged" is as of the user's last fetch or pull.

@@ -27,7 +27,7 @@ async function setup(writeText: (text: string) => Promise<void>) {
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: { writeText } } });
   root = document.createElement("div");
   document.body.appendChild(root);
-  await act(() => render(<WorktreePath change={{ repoId: "d1", name: "api", checkout: { path: "/w/acme/api", branch: "feat/api", isMain: false } }} />, root!));
+  await act(() => render(<WorktreePath path="/w/acme/api" />, root!));
 }
 
 test("copy icon writes exactly the absolute path and announces success only after clipboard resolves", async () => {

@@ -486,6 +486,7 @@ export function ConsolePanel({ session, worktree, of, lifecycleActionsInTimeline
               in the folder — no undo
             </span>
           )}
+          {session && <span class="hint mono truncate" title={session.worktreePath}>{session.worktreePath}</span>}
           {badge && <SessionBadgeView badge={badge} />}
           {work && (
             <span class={`badge ${work.tone}`} title={merged && session?.state !== "running" ? `${work.title}: use Clean up.` : work.title}>
