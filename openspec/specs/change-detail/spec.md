@@ -99,7 +99,7 @@ The route SHALL work in both routing modes the UI supports (path routing on the 
 - **THEN** the same detail view is shown
 
 ### Requirement: Detail header shows the change's state
-The detail view SHALL show, above the artifacts: the change name in monospace, the repository name linking to that repository's board, a close control, and every warning the snapshot carries for the change. Below them it SHALL show its column; the relative age of its last activity, or its archive date when archived; how long it has been complete when it is in `Done` or `Synced`; its branch badge when `branchMatch` is set, whose tooltip names the worktree the data comes from and lists the other checkouts holding a copy with their branch and column; for an archive found only in a linked worktree, a badge naming the branch that holds it and stating that the main checkout does not have it yet, with a tooltip listing the checkouts still holding an active copy and how to resolve it; when agent sessions apply and a session worktree exists for the change, the work-status badge (uncommitted files, commits not pushed, `pushed` or `merged`, highlighted as stale by the same rules as before), which opens the change's Console tab; a **Prompt** tab in the detail view when its `prompt.md` has non-empty body text after the generated heading is removed; the tab SHALL show that body as plain text that scrolls when long, and the prompt body MUST NOT appear in the header; when the change declares dependencies, a *Depends on* list giving each dependency's name and its state in words (`met`, `waiting`, `missing`, `cycle`), headed by whether the change is blocked; and when other active changes depend on it, a *Required by* list of their names. Every name in either list that is a change in the snapshot SHALL link to that change's detail view; a `missing` name SHALL be shown as text, not a link. Status SHALL be conveyed by text as well as colour. All of these SHALL come from the existing snapshot; the detail view MUST NOT introduce facts about a change that the snapshot does not carry, and it SHALL NOT show the change's creation date or schema. Local artifact and task progress SHALL NOT appear as a bar in the header; it SHALL appear in the lifecycle timeline under its corresponding phase. For a change that is gone from the snapshot but whose worktree remains, the header SHALL show only its name, the repository and the close control.
+The detail view SHALL show, above the artifacts: the change name in monospace, the repository name linking to that repository's board, a close control, and every warning the snapshot carries for the change. Below them it SHALL show its column; the relative age of its last activity, or its archive date when archived; how long it has been complete when it is in `Done` or `Synced`; its branch badge when `branchMatch` is set, whose tooltip names the worktree the data comes from and lists the other checkouts holding a copy with their branch and column; for an archive found only in a linked worktree, a badge naming the branch that holds it and stating that the main checkout does not have it yet, with a tooltip listing the checkouts still holding an active copy and how to resolve it; the header SHALL omit facts specific to one session or lifecycle phase; a **Prompt** tab in the detail view when its `prompt.md` has non-empty body text after the generated heading is removed; the tab SHALL show that body as plain text that scrolls when long, and the prompt body MUST NOT appear in the header; when the change declares dependencies, a *Depends on* list giving each dependency's name and its state in words (`met`, `waiting`, `missing`, `cycle`), headed by whether the change is blocked; and when other active changes depend on it, a *Required by* list of their names. Every name in either list that is a change in the snapshot SHALL link to that change's detail view; a `missing` name SHALL be shown as text, not a link. Status SHALL be conveyed by text as well as colour. All of these SHALL come from the existing snapshot; the detail view MUST NOT introduce facts about a change that the snapshot does not carry, and it SHALL NOT show the change's creation date or schema. Local artifact and task progress SHALL NOT appear as a bar in the header; it SHALL appear in the lifecycle timeline under its corresponding phase. For a change that is gone from the snapshot but whose worktree remains, the header SHALL show only its name, the repository and the close control.
 
 #### Scenario: Header content
 - **WHEN** a change `cloud-deployment` of repository `demo-ops` is in `Implementing` with `tasks 4/12`, created `2026-03-02`, last activity 3 days ago and `branchMatch: feat/cloud-deployment`
@@ -111,7 +111,7 @@ The detail view SHALL show, above the artifacts: the change name in monospace, t
 
 #### Scenario: Work status
 - **WHEN** a change's session has ended and its worktree holds 3 uncommitted files
-- **THEN** the detail header shows "3 uncommitted", and activating it opens the Console tab
+- **THEN** the selected session’s Console shows "3 uncommitted" and the detail header omits that status
 
 #### Scenario: Pending archive
 - **WHEN** `audit-trail` is archived only in a worktree on `chore/archive-audit-trail`
@@ -144,7 +144,6 @@ The detail view SHALL show, above the artifacts: the change name in monospace, t
 #### Scenario: No dependencies
 - **WHEN** a change declares no dependencies and nothing depends on it
 - **THEN** the header shows neither list
-
 ### Requirement: Prompt tab selection is retained in the detail route
 When a non-empty prompt body is available, the Prompt tab SHALL be selectable through the detail view's tab strip and SHALL use the detail route's `artifact` query selection. A prompt selection SHALL survive refreshes while the prompt remains available, and a stale prompt selection SHALL fall back to the normal available content selection.
 
@@ -581,37 +580,6 @@ The detail header SHALL offer **Dismiss change** for a change that is not archiv
 - **WHEN** the dismissal is refused because the change changed since the confirmation was shown
 - **THEN** the confirmation stays open, says why, and offers to show the current state again
 
-### Requirement: The detail header shows the change's pull request
-When a change has a linked pull request (`pull-requests`: "A pull request is linked to a change by its head branch"), the detail header SHALL show it beside the branch the match was made on: `#<number>`, the title as a link opening the pull request on GitHub in a new browser tab, its state (draft, open, merged or closed), its review decision, its checks summary and, when it conflicts with its base, that it has conflicts. For an open pull request it SHALL also show its readiness (`pull-requests`: "A linked open pull request has a readiness") — `ready`, or the one reason it is not ready — in the same words and roles the card uses, with the time its list was last fetched. Each SHALL be conveyed as text or a symbol with a tooltip and never by colour alone, using the same symbols the Pull requests view uses so that the two read alike.
-
-When the change has no linked pull request the header SHALL show the branch as it does today and nothing in place of the pull request. When pull requests are unavailable for the repository the header SHALL say so once, quietly, with the reason the `pull-requests` capability gives — the detail view is where a user who wonders why a card shows no pull request will look.
-
-The header MUST NOT offer any action on the pull request: the dashboard stays read-only towards GitHub. The detail view does not run the pull-request watch: it shows the readiness of the last fetch.
-
-#### Scenario: Header with a pull request
-- **WHEN** the detail view is open for a change whose branch `feat/add-validate-phase` has open pull request `#125`, approved, with passing checks, mergeable
-- **THEN** the header shows `#125` with its title as a link, that it is open, that it is approved, that its checks pass and that it is ready, beside the branch
-
-#### Scenario: Header with a conflicting pull request
-- **WHEN** the change's open pull request `#125` has passing checks and conflicts with its base
-- **THEN** the header shows that `#125` has conflicts and is not ready, with when that was last fetched
-
-#### Scenario: Header without a pull request
-- **WHEN** the change's branch has no cached pull request
-- **THEN** the header shows the branch and nothing in place of a pull request
-
-#### Scenario: Unavailable is explained here
-- **WHEN** `gh` is not signed in and the detail view is open
-- **THEN** the header says once that pull requests are unavailable, with the reason
-
-#### Scenario: No actions
-- **WHEN** the header shows a pull request awaiting review
-- **THEN** it offers no way to approve, merge, comment on or close it
-
-#### Scenario: Checks and review are not colour alone
-- **WHEN** a screen reader reads the header of a change whose pull request has failing checks
-- **THEN** it reads that the checks are failing and that the pull request is not ready
-
 ### Requirement: The detail header copies the change's reference
 The detail header SHALL offer, directly after the change name, a copy control drawn as a copy icon. Activating it SHALL write the change's reference — the repository's name as the header shows it, a slash, and the change name, e.g. `demo-ops/cloud-deployment` — to the clipboard, and nothing else: no whitespace, no path, no quoting. It SHALL then show for a short while, as a check mark with the text `Copied` as its tooltip and accessible name, that the reference was copied; when the clipboard refuses the write, it SHALL NOT claim success. Because the control is an icon only, its tooltip and accessible name SHALL name what it copies (`Copy demo-ops/cloud-deployment`). The control SHALL be offered for every change the header names, including an archived change and a change gone from the snapshot whose worktree remains. It SHALL NOT shorten or move the change name or the repository link, and it SHALL NOT be mistaken for the change's next step: it is drawn as quietly as the close control. Copying writes nothing to any repository and contacts no other host.
 
@@ -633,11 +601,7 @@ The detail header SHALL offer, directly after the change name, a copy control dr
 
 ### Requirement: The detail header shows and copies the change's worktree path
 The detail header's facts row SHALL show, when the change has a worktree, a worktree badge: a folder glyph and the
-worktree's absolute path in monospace. The worktree SHALL be, in this order: the linked worktree the change's data comes
-from (the snapshot's `checkout`, when it is not the main checkout); otherwise the change's session worktree under the
-dashboard home, and of several the one with the most recent activity. A change whose data comes from the main checkout
-and that has no session worktree, a change of a repository that is not a git repository, and a change gone from the
-snapshot SHALL show no worktree badge. The badge MUST NOT extend beyond its container: a path that does not fit SHALL
+worktree's absolute path in monospace. The badge SHALL identify only the linked checkout supplying the snapshot. A main checkout, a non-git repository or a change gone from the snapshot SHALL yield no header path badge. The badge MUST NOT extend beyond its container: a path that does not fit SHALL
 be shortened before its last segment with an ellipsis so that its end — the worktree directory's own name — stays readable,
 and the full path SHALL be its tooltip.
 
@@ -645,8 +609,7 @@ Activating the adjacent copy icon SHALL write the worktree's absolute path to th
 no whitespace. It SHALL then show for a short while that the path was copied, announced as `Copied`; when the clipboard
 refuses the write, it SHALL NOT claim success. Its accessible name SHALL say what it copies (`Copy worktree path
 <path>`). The copy icon SHALL be reachable with the keyboard, SHALL NOT open the Console tab, start a session or otherwise
-act on the change, and is drawn as quietly as the branch badge. It is derived from the snapshot and the session
-worktree list the view already has: showing or copying it writes nothing to any repository, runs no git command and
+act on the change, and is drawn as quietly as the branch badge. It is derived from the snapshot checkout: showing or copying it writes nothing to any repository, runs no git command and
 contacts no other host.
 
 #### Scenario: A change in a linked worktree
@@ -655,11 +618,11 @@ contacts no other host.
 
 #### Scenario: A change with a session worktree
 - **WHEN** a change's data comes from the main checkout and an agent session worktree exists for it under the dashboard home
-- **THEN** its detail header shows that session worktree's path as the worktree badge
+- **THEN** its detail header omits the session path and the selected session’s Console provides it
 
 #### Scenario: Several session worktrees
 - **WHEN** a change has two session worktrees, one last active yesterday and one an hour ago
-- **THEN** the worktree badge shows the one active an hour ago
+- **THEN** switching Console sessions shows each session’s own path and leaves the header tied to the snapshot checkout
 
 #### Scenario: No worktree
 - **WHEN** a change lives only in the main checkout and has no session worktree
@@ -672,7 +635,6 @@ contacts no other host.
 #### Scenario: Clipboard refused
 - **WHEN** the browser refuses the clipboard write
 - **THEN** the badge does not announce `Copied`
-
 ### Requirement: The console tab chooses the change's agent
 When more than one agent profile is configured, the Console tab SHALL offer an **Agent** picker for the change, listing
 "Project agent" with the name of the repository's agent, followed by every configured profile by name, and showing the
@@ -701,12 +663,11 @@ Console tab is not shown.
 - **THEN** the Console tab shows no Agent picker
 
 ### Requirement: The detail view shows a change's implementation model choice
-When a change has a recorded implementation model choice, its detail view SHALL show that model as the choice for Implement.
+When a change has a recorded implementation model choice, its Implementing timeline phase SHALL show that model as the choice for Implement.
 
 #### Scenario: Recorded choice is shown
 - **WHEN** change `cache-api-calls` records `reasoning-model` as its implementation model
-- **THEN** its detail view identifies `reasoning-model` as the model selected for Implement
-
+- **THEN** its Implementing phase identifies `reasoning-model` as the model selected for Implement
 ### Requirement: One change permission profile control across detail tabs
 For an active change with agent sessions enabled, the Console tab SHALL show exactly one control labelled "Permission profile for this change", beside the change's agent picker. Artifact tabs SHALL NOT show this control. Switching away from and back to Console SHALL retain the saved selection. Archived changes, changes absent from the snapshot, and views with agent sessions disabled SHALL show no change permission selector.
 
@@ -1017,3 +978,14 @@ The UI SHALL support the following user journeys.
 #### Scenario: Ship once
 - **WHEN** phase verification is required before shipping
 - **THEN** show one shipping action under that phase and replace it with progress after acceptance
+
+### Requirement: Phase pull requests stay within their checkpoints
+The header above the timeline SHALL omit PR links, titles, readiness, checks, review, fetch times and availability messages. The timeline SHALL continue to associate each known PR with its own delivery checkpoint.
+
+#### Scenario: More than one delivery
+- **WHEN** a change has a merged proposal PR and an open implementation PR
+- **THEN** each checkpoint links its own PR and the header displays neither PR
+
+#### Scenario: No usable PR data
+- **WHEN** the repository has no matching PR or pull requests are unavailable
+- **THEN** the header shows no PR row, placeholder or availability message

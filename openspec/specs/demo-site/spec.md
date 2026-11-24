@@ -311,7 +311,7 @@ makes unnecessary SHALL read as `not-needed`, as in the dashboard.
 - **THEN** the agent, committer-identity and GitHub CLI checks read as not needed while agent sessions are off
 
 ### Requirement: Linked pull requests are simulated in the demo
-The demo's synthetic data SHALL give at least one change a pull request whose head branch equals that change's `branchMatch`, and at least one change a branch with no pull request, so that both the card link and the detail header line are reachable, and so that the absence case is visible too. At least one simulated pull request SHALL be merged or closed and one a draft, so the states render. The demo MUST NOT start a process or make a network request for any of this, and opening a demo board MUST NOT attempt a refresh.
+The demo's synthetic data SHALL give at least one change a pull request whose head branch equals that change's `branchMatch`, and at least one change a branch with no pull request, so that both the card link and the matching timeline checkpoint are reachable, and so that the absence case is visible too. At least one simulated pull request SHALL be merged or closed and one a draft, so the states render. The demo MUST NOT start a process or make a network request for any of this, and opening a demo board MUST NOT attempt a refresh.
 
 #### Scenario: A card links to a simulated pull request
 - **WHEN** the demo board is opened
@@ -319,12 +319,11 @@ The demo's synthetic data SHALL give at least one change a pull request whose he
 
 #### Scenario: The detail header in the demo
 - **WHEN** the visitor opens the detail view of a change with a simulated pull request
-- **THEN** the header shows its number, title, state, review decision and checks summary
+- **THEN** the matching delivery checkpoint links to the simulated PR and the header omits its details
 
 #### Scenario: The demo stays offline
 - **WHEN** the visitor opens a demo board
 - **THEN** no refresh is attempted and no network request is made
-
 ### Requirement: Adding from GitHub is simulated in the demo
 The demo's mock API SHALL implement the GitHub repository listing, the clone endpoints and the workspace-folder
 endpoint in memory, without a process, a network connection or a write anywhere. The listing SHALL return a fixed set

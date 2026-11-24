@@ -635,7 +635,7 @@ without a reload.
 #### Scenario: A session that ends leaves the running rows
 - **WHEN** the list shows a running session and that session's agent exits with unpushed commits in its worktree
 - **THEN** the entry leaves the running rows and its worktree takes a place among the work left behind, so the count
-  does not drop, and the change's detail header still shows the worktree's work-status badge
+  does not drop, and the session’s Console still shows its worktree’s status
 
 #### Scenario: Archive worktree of an archived change
 - **WHEN** the archive worktree of a change that is already archived holds a commit that is not pushed
@@ -644,7 +644,6 @@ without a reload.
 #### Scenario: Nothing open
 - **WHEN** no session runs and no session worktree holds anything
 - **THEN** the top bar shows no Open work control
-
 ### Requirement: The running session badge shows activity through motion
 The session badge of a running session whose terminal is producing output — the badge that reads `working` — SHALL be animated wherever it is shown (cards, the Open work list and the Console tab): its dot pulses and a lighter colour sweeps across its label, in a loop of about two seconds that never hides the label or reduces its contrast below that of the static badge. The card of a change whose session badge is in that same state SHALL also show it as a whole: the card's background and edge SHALL take a soft tint of the `info` role, and a band in the `info` colour SHALL sweep across the change name in the same loop, never hiding the name, and the name SHALL keep a contrast ratio of at least 4.5:1 against the tinted background at every point of the sweep. The tint SHALL change the background's hue, not its lightness, so that every role's text keeps its contrast ratio of at least 4.5:1 against the role's soft background laid over the tinted card in both themes; hovering a tinted card SHALL give it the usual hover edge and lift but keep the tint. The `may need you`, ended and failed badges, work-status badges and every other badge MUST NOT be animated, and a card whose change has no session in that state — including every card of a repository with agent sessions disabled — MUST NOT be tinted and its name MUST NOT be animated, so that motion means exactly "an agent is working now". The animation and the tint MUST be decorative only: the badge still reads `working`, the name still reads the change name, the dot is hidden from assistive technology, and status remains conveyed by text as well as colour. When the user prefers reduced motion (`prefers-reduced-motion: reduce`) the badge and the name MUST be static and look as they did without this requirement; the card's tint SHALL remain, as it is not motion. Colours MUST come from the theme tokens so that both themes apply.
 
@@ -1073,7 +1072,7 @@ The readiness SHALL use the status roles: `success` for ready, `danger` for fail
 
 A card whose change has no linked pull request SHALL show nothing in its place and SHALL NOT reserve space for it, so a board with no pull requests renders exactly as it does without this requirement. A merged or closed pull request SHALL still be shown, more quietly than an open one. Cards in `Archived` SHALL follow the same rule as every other card, so an archive whose pull request still awaits review shows it. Nothing SHALL be shown when pull requests are unavailable for the repository — the Pull requests view reports the reason, and repeating it per card would be noise.
 
-The link MUST NOT change the card's column, progress bar, counts, warnings, starters or session badge, MUST NOT become a board filter or a column count, MUST NOT decide whether an archived card is hidden by **Hide merged**, and MUST NOT be the only way to reach the pull request: the change's detail header carries it in full. The one thing beyond its own badge that it changes on the card is the working state ("A card keeps its working state until its pull request is ready").
+The link MUST NOT change the card's column, progress bar, counts, warnings, starters or session badge, MUST NOT become a board filter or a column count, MUST NOT decide whether an archived card is hidden by **Hide merged**, and MUST NOT be the only way to reach the pull request: the matching delivery checkpoint links to it in change detail. The one thing beyond its own badge that it changes on the card is the working state ("A card keeps its working state until its pull request is ready").
 
 #### Scenario: Card with an open pull request
 - **WHEN** a card's change has an open pull request `#125`
@@ -1118,7 +1117,6 @@ The link MUST NOT change the card's column, progress bar, counts, warnings, star
 #### Scenario: The link is not a filter
 - **WHEN** the user clears filters on a board whose cards show pull requests
 - **THEN** the same cards are shown and the links are unaffected
-
 ### Requirement: Starting a session from a card stays on the board
 Activating a session starter on a card SHALL start the session and SHALL leave the user on the board they activated it
 from: the dashboard MUST NOT navigate to the change's detail view, select its Console tab or otherwise move away from
@@ -1369,7 +1367,7 @@ the split button on a card exactly as it does for the starters today.
 - **THEN** the card shows that session's badge and no split button
 
 ### Requirement: A card names a proposal pull request as such
-When a change's linked pull request is its proposal pull request (`pull-requests`: "A proposal pull request is linked to its change"), the change's card and its detail header SHALL label the pull-request badge as the proposal pull request — for example `Proposal #90` — together with the readiness every linked pull request shows, and any recommended step the card derives from that pull request SHALL name it the same way. Nothing else about the badge, the card's column, counts or available actions SHALL differ from any other linked pull request.
+When a change's linked pull request is its proposal pull request (`pull-requests`: "A proposal pull request is linked to its change"), the change's card SHALL label the pull-request badge as the proposal pull request — for example `Proposal #90` — together with the readiness every linked pull request shows, and any recommended step the card derives from that pull request SHALL name it the same way. Nothing else about the badge, the card's column, counts or available actions SHALL differ from any other linked pull request.
 
 #### Scenario: Proposal checks running
 - **WHEN** `rotate-keys` is `Ready` and its linked pull request `#90` from `docs/rotate-keys` is open with checks running
@@ -1378,7 +1376,6 @@ When a change's linked pull request is its proposal pull request (`pull-requests
 #### Scenario: Implementation pull request
 - **WHEN** the linked pull request is `#94` from `feat/rotate-keys`
 - **THEN** the badge shows `#94` without the proposal label
-
 ### Requirement: An older snapshot never replaces a newer one
 Whatever fetched it — the initial load, the poll interval, the Refresh button, auto-refresh or a refresh after an
 action — the dashboard SHALL replace the snapshot it shows only with one whose `generatedAt` is the same as or later
